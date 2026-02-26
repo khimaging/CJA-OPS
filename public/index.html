@@ -927,6 +927,13 @@
         </select>
       </div>
     </div>
+    <div class="form-group" id="d-collected-group">
+      <label class="form-label" style="display:flex;align-items:center;gap:8px">
+        Amount Collected ($)
+        <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);background:var(--bg3);padding:2px 7px;border-radius:3px">Deposits, partials, etc.</span>
+      </label>
+      <input class="form-input" id="d-collected" type="number" placeholder="0" min="0">
+    </div>
     <div class="form-group">
       <label class="form-label" style="margin-bottom:10px">Fund Allocation — applied to Net Revenue (must total 100%)</label>
       <div style="display:grid;grid-template-columns:12px 1fr 60px 1fr;gap:8px;padding:0 2px;margin-bottom:6px">
@@ -1570,6 +1577,7 @@ async function saveDeal() {
   const closeDate    = document.getElementById('d-closedate').value;
   const expenses     = parseFloat(document.getElementById('d-expenses').value) || 0;
   const invoiceStatus = stage === 'Closed Won' ? document.getElementById('d-invoice').value : 'none';
+  const amountCollected = parseFloat(document.getElementById('d-collected').value) || 0;
 
   if (!name || !client || isNaN(value)) { notify('Please fill in all required fields'); return; }
   const buckets = DEFAULT_BUCKETS.map((b, i) => ({
@@ -1582,7 +1590,7 @@ async function saveDeal() {
 
   const editId    = document.getElementById('deal-modal').dataset.editId;
   const prevStage = editId ? (state.deals.find(d => d.id === editId)?.stage || '') : '';
-  const payload   = { name, client, value, expenses, stage, owner, closeDate, invoiceStatus, buckets };
+  const payload   = { name, client, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
 
   closeModal('deal-modal');
 
@@ -2185,7 +2193,10 @@ function renderExpensesView(){
                     </label>`
                   :`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">—</span>`}
               </div>
-              <div><button class="exp-delete-btn" onclick="deleteExpense('${e.id}')" title="Delete expense"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/></svg></button></div>
+              <div style="display:flex;gap:4px;align-items:center">
+                ${can.manageTeam()?`<button class="exp-delete-btn" onclick="openExpenseModal('${e.id}')" title="Edit expense" style="color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`:''}
+                ${can.delete()?`<button class="exp-delete-btn" onclick="deleteExpense('${e.id}')" title="Delete expense"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/></svg></button>`:''}
+              </div>
             </div>`;
           }).join('')}
           <div class="exp-breakdown">
@@ -2218,7 +2229,7 @@ function openExpenseModal(editId, preselectedProjectId){
   const e=editId?state.expenses.find(x=>x.id===editId):null;
   document.querySelector('#expense-modal .modal-title').childNodes[0].nodeValue=e?'Edit Expense ':'Add Expense ';
   document.getElementById('exp-project').innerHTML=
-    state.projects.map(p=>`<option value="${p.id}" ${(e?.projectId||preselectedProjectId)===p.id?'selected':''}>${p.name}</option>`).join('');
+    state.projects.filter(p=>p.status!=='complete'&&!p.archived).map(p=>`<option value="${p.id}" ${(e?.projectId||preselectedProjectId)===p.id?'selected':''}>${p.name}</option>`).join('');
   document.getElementById('exp-submitted-by').innerHTML=
     state.team.map(m=>`<option value="${m.id}" ${e?.submittedBy===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('exp-desc').value=e?e.description:'';
@@ -2256,13 +2267,17 @@ function renderCRM(){
   const pipe=state.deals.filter(d=>d.stage!=='Closed Won');
   const pipeV=pipe.reduce((s,d)=>s+netRev(d),0);
   const collected=won.filter(d=>d.invoiceStatus==='paid').reduce((s,d)=>s+netRev(d),0);
+  const totalCollected=won.reduce((s,d)=>s+(d.amountCollected||0),0);
+  const unpaidWon=won.filter(d=>d.invoiceStatus!=='paid');
+  const arGross=unpaidWon.reduce((s,d)=>s+netRev(d),0);
+  const ar=Math.max(0,arGross-totalCollected);
   const canEdit=can.edit();
   document.getElementById('crm-stats').innerHTML=`
     <div class="stat-card stat-card-gross"><div class="stat-label" style="color:var(--gold)">Gross Revenue</div><div class="stat-value" style="color:var(--gold)">${fmt(total)}</div><div class="stat-delta" style="color:var(--text3)">${totalExp>0?`− ${fmt(totalExp)} expenses`:''} · ${state.deals.length} deals</div></div>
     <div class="stat-card"><div class="stat-label">Net Revenue</div><div class="stat-value">${fmt(totalNet)}</div><div class="stat-delta" style="color:var(--text3)">After expenses</div></div>
     <div class="stat-card"><div class="stat-label">Closed Won (Net)</div><div class="stat-value">${fmt(wonV)}</div><div class="stat-delta">${won.length} deals</div></div>
-    <div class="stat-card"><div class="stat-label">Open Pipeline (Net)</div><div class="stat-value">${fmt(pipeV)}</div><div class="stat-delta" style="color:var(--blue)">${pipe.length} active</div></div>
     <div class="stat-card"><div class="stat-label">Collected (Paid in Full)</div><div class="stat-value" style="color:var(--green)">${fmt(collected)}</div><div class="stat-delta" style="color:var(--text3)">${won.filter(d=>d.invoiceStatus==='paid').length} deals fully paid</div></div>
+    <div class="stat-card" style="border-color:rgba(224,90,90,0.25)"><div class="stat-label" style="color:var(--red)">Accounts Receivable</div><div class="stat-value" style="color:var(--red)">${fmt(ar)}</div><div class="stat-delta" style="color:var(--text3)">${fmt(totalCollected)} collected · ${unpaidWon.length} unpaid deals</div></div>
   `;
   // Role-gate topbar
   const taEl=document.getElementById('crm-topbar-actions');
@@ -2955,6 +2970,50 @@ function renderTeamView(){
 }
 
 // ── Shared earnings calculator ────────────────────────────────
+function calcExpectedEarnings(){
+  // Pending = projects that are incomplete OR complete but deal not fully paid
+  const pendingProjects=state.projects.filter(proj=>{
+    if(proj.archived) return false;
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal) return false;
+    const incomplete=proj.status!=='complete';
+    const unpaid=deal.invoiceStatus!=='paid';
+    return incomplete||unpaid;
+  });
+
+  const prodPay={},feePay={},psPay={};
+  state.team.forEach(m=>{prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
+
+  pendingProjects.forEach(proj=>{
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal) return;
+    const pb=deal.buckets.find(b=>b.name==='Production Pool');
+    if(pb){
+      const pool=netRev(deal)*pb.pct/100;
+      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+      const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      if(tH){
+        const uh={};
+        tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});
+        Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});
+      }
+    }
+    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{
+      if(feePay[b.assignedTo]!==undefined) feePay[b.assignedTo]+=netRev(deal)*b.pct/100;
+    });
+  });
+
+  // Expected profit share — deals in Closed Won but not yet paid
+  const psEligible=state.deals.filter(d=>d.stage==='Closed Won'&&d.invoiceStatus!=='paid');
+  const totalPsPool=psEligible.reduce((s,d)=>{
+    const psB=d.buckets.find(b=>b.name==='Profit Share');
+    return s+netRev(d)*(psB?psB.pct:17.5)/100;
+  },0);
+  state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
+
+  return{prodPay,feePay,psPay,pendingProjects};
+}
+
 function calcTeamEarnings(filterFn){
   // filterFn(deal) => bool — lets monthly view scope to a specific month
   const totH={},prodPay={},feePay={},psPay={};
@@ -2992,6 +3051,7 @@ function calcTeamEarnings(filterFn){
 
 function renderTeamOverview(){
   const{totH,prodPay,feePay,psPay,eligibleDeals}=calcTeamEarnings(null);
+  const{prodPay:expProd,feePay:expFee,psPay:expPs,pendingProjects}=calcExpectedEarnings();
   const totalPsPct=state.team.filter(m=>m.active!==false).reduce((s,m)=>s+(m.profitSharePct||0),0);
   const pctValid=Math.abs(totalPsPct-100)<0.5;
 
@@ -3030,6 +3090,13 @@ function renderTeamOverview(){
             <span class="pay-row-label" style="color:var(--text2);font-weight:600;font-size:12px">Total earnings</span>
             <span class="pay-row-value" style="color:var(--gold);font-size:14px;font-weight:600">${fmt(total)}</span>
           </div>
+          <div class="pay-row" style="margin-top:2px">
+            <span class="pay-row-label" style="display:flex;align-items:center;gap:5px">
+              Expected (pending)
+              <span style="font-family:'DM Mono',monospace;font-size:7px;color:var(--blue);background:rgba(100,160,255,0.1);padding:1px 5px;border-radius:3px">${pendingProjects.length} proj</span>
+            </span>
+            <span class="pay-row-value" style="color:var(--blue)">${fmt((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0))}</span>
+          </div>
           <div class="pay-row"><span class="pay-row-label">Active tasks</span><span class="pay-row-value">${state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done').length}</span></div>
         </div>`}
       </div>`;
@@ -3063,7 +3130,8 @@ function renderTeamMonthly(){
   }
   const sparkMax=Math.max(...sparkMonths.map(x=>x.total),1);
 
-  const colW=`1fr 120px 120px 120px 140px`;
+  const colW=`1fr 110px 110px 110px 120px 120px`;
+  const{prodPay:expProd,feePay:expFee,psPay:expPs}=calcExpectedEarnings();
   document.getElementById('team-content').innerHTML=`
     <div class="team-month-nav">
       <button class="month-nav-btn" onclick="changeTeamMonth(-1)">‹</button>
@@ -3092,6 +3160,7 @@ function renderTeamMonthly(){
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Fees</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Profit Share</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--blue)">Expected</span>
       </div>
       ${activeMembers.map(m=>{
         const prod=prodPay[m.id]||0, fees=feePay[m.id]||0, ps=psPay[m.id]||0;
@@ -3109,6 +3178,7 @@ function renderTeamMonthly(){
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${total>0?'var(--text)':'var(--text3)'}">${total>0?fmt(total):'$0'}</div>
             ${grandTotal>0&&total>0?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% of total</div>`:''}
           </div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue)">${((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0))>0?fmt((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0)):'—'}</div>
         </div>`;
       }).join('')}
       <!-- Total row -->
@@ -3118,6 +3188,7 @@ function renderTeamMonthly(){
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--teal);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(feePay[m.id]||0),0))}</div>
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(psPay[m.id]||0),0))}</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--gold)">${fmt(grandTotal)}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0),0))}</div>
       </div>
     </div>
     ${eligibleDeals.length===0?`<div style="margin-top:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center">No qualifying profit share deals closed in ${lbl}</div>`:''}
@@ -3396,6 +3467,7 @@ function openDealModal(editId){
   document.getElementById('d-closedate').value=d?(d.closeDate||''):'';
   document.getElementById('d-stage').value=d?d.stage:'Lead';
   document.getElementById('d-invoice').value=d?(d.invoiceStatus||'none'):'none';
+  document.getElementById('d-collected').value=d?(d.amountCollected||0):0;
   toggleInvoiceStatus();
   updateNetRevPreview();
   document.getElementById('deal-modal').dataset.editId=editId||'';
@@ -3458,7 +3530,7 @@ function openProjectModal(){
 function openTaskModal(editId){
   const t=editId?state.tasks.find(x=>x.id===editId):null;
   document.querySelector('#task-modal .modal-title').childNodes[0].nodeValue=t?'Edit Task ':'New Task ';
-  document.getElementById('t-project').innerHTML=state.projects.map(p=>`<option value="${p.id}" ${t&&t.projectId===p.id?'selected':''}>${p.name}</option>`).join('')||'<option>No projects yet</option>';
+  document.getElementById('t-project').innerHTML=state.projects.filter(p=>p.status!=='complete'&&!p.archived).map(p=>`<option value="${p.id}" ${t&&t.projectId===p.id?'selected':''}>${p.name}</option>`).join('')||'<option>No active projects</option>';
   document.getElementById('t-assignee').innerHTML=state.team.map(m=>`<option value="${m.id}" ${t&&t.assigneeId===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('t-title').value=t?t.title:'';
   document.getElementById('t-due').value=t?(t.due||''):'';
