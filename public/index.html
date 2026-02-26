@@ -3141,7 +3141,7 @@ function renderTeamMonthly(){
   const sparkMax=Math.max(...sparkMonths.map(x=>x.total),1);
 
   // Column layout: Member | Act.Prod | Act.Fees | Act.PS | separator | Prj.Prod | Prj.Fees | Prj.PS | Total
-  const colW=`1fr 90px 80px 90px 4px 90px 80px 90px 110px`;
+  const colW=`1fr 90px 80px 90px 4px 90px 80px 90px 4px 100px 100px 110px`;
 
   document.getElementById('team-content').innerHTML=`
     <div class="team-month-nav">
@@ -3178,6 +3178,9 @@ function renderTeamMonthly(){
         <span></span>
         <span colspan="3" style="grid-column:span 3;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);padding-bottom:4px;border-bottom:2px solid var(--blue);text-align:center">— PROJECTED —</span>
         <span></span>
+        <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);text-align:center">Act. Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);text-align:center">Proj. Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);text-align:center">Combined</span>
       </div>
       <!-- Column headers -->
       <div class="team-monthly-head" style="grid-template-columns:${colW}">
@@ -3189,7 +3192,10 @@ function renderTeamMonthly(){
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Prod.</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Fees</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Profit Shr.</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Total</span>
+        <span></span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Combined</span>
       </div>
       <!-- Member rows -->
       ${activeMembers.map(m=>{
@@ -3210,6 +3216,9 @@ function renderTeamMonthly(){
           ${cell(pP,'var(--blue)')}
           ${cell(pF,'var(--blue)')}
           ${cell(pPs,'var(--blue)')}
+          <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${(aP+aF+aPs)>0?'var(--gold)':'var(--text3)'}">${(aP+aF+aPs)>0?fmt(aP+aF+aPs):'—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${(pP+pF+pPs)>0?'var(--blue)':'var(--text3)'}">${(pP+pF+pPs)>0?fmt(pP+pF+pPs):'—'}</div>
           <div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${total>0?'var(--text)':'var(--text3)'}">${total>0?fmt(total):'$0'}</div>
             ${grandTotal>0&&total>0?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% of total</div>`:''}
@@ -3226,7 +3235,10 @@ function renderTeamMonthly(){
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjProd[m.id]||0),0))}</div>
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjFee[m.id]||0),0))}</div>
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjPs[m.id]||0),0))}</div>
-        <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--gold)">${fmt(grandTotal)}</div>
+        <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--gold)">${fmt(grandActual)}</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--blue)">${fmt(grandProj)}</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${fmt(grandTotal)}</div>
       </div>
     </div>
     ${eligibleDeals.length===0&&grandProj===0?`<div style="margin-top:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center">No qualifying deals with close month set to ${lbl}</div>`:''}
