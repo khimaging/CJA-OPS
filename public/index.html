@@ -1214,9 +1214,9 @@ let state={
 // ============================================================
 //  CONFIG  — set these to your deployed values
 // ============================================================
-const API_BASE        = window.CJ_API_BASE        || 'https://cja-ops.vercel.app';          // e.g. 'https://cj-agency.vercel.app'
-const SUPABASE_URL    = window.CJ_SUPABASE_URL    || 'https://rehalrapulxkvnftfody.supabase.co';          // e.g. 'https://xxxx.supabase.co'
-const SUPABASE_ANON   = window.CJ_SUPABASE_ANON   || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJlaGFscmFwdWx4a3ZuZnRmb2R5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5ODc1NjksImV4cCI6MjA4NzU2MzU2OX0.Y7M84Jl_iIFrYB32BSxZfOqpPjL9iaSQk_ymXCYoIis';          // anon/public key only
+const API_BASE        = window.CJ_API_BASE        || '';          // e.g. 'https://cj-agency.vercel.app'
+const SUPABASE_URL    = window.CJ_SUPABASE_URL    || '';          // e.g. 'https://xxxx.supabase.co'
+const SUPABASE_ANON   = window.CJ_SUPABASE_ANON   || '';          // anon/public key only
 
 // ============================================================
 //  API HELPER
@@ -1422,8 +1422,15 @@ async function _rtPullTable(table) {
     }
     case 'team': {
       const data = await api('GET', '/team');
-      state.team = data;
-      if (state.currentPage === 'team') renderTeamView();
+      // Don't re-render if user is actively editing profit share % inputs
+      const editing = document.querySelectorAll('input[oninput*="updateMemberPsPct"]');
+      const activeEdits = {};
+      editing.forEach(el => {
+        const match = el.getAttribute('oninput').match(/'([^']+)'/);
+        if (match) activeEdits[match[1]] = parseFloat(el.value) || 0;
+      });
+      state.team = data.map(m => activeEdits[m.id] !== undefined ? { ...m, profitSharePct: activeEdits[m.id] } : m);
+      if (state.currentPage === 'team' && Object.keys(activeEdits).length === 0) renderTeamView();
       break;
     }
     case 'payStatus': {
@@ -1858,8 +1865,14 @@ async function toggleMemberActive(id) {
 async function updateMemberPsPct(mid, val) {
   const m = state.team.find(x => x.id === mid);
   if (m) m.profitSharePct = parseFloat(val) || 0;
-  if (state.currentPage === 'team') renderTeamView();
-  if (state.currentPage === 'profitshare') renderProfitShareView();
+  // Update the validation badge without full re-render (avoids resetting other inputs)
+  const totalPsPct = state.team.filter(x => x.active !== false).reduce((s,x) => s + (x.profitSharePct||0), 0);
+  const pctValid = Math.abs(totalPsPct - 100) < 0.5;
+  document.querySelectorAll('.ps-total-badge').forEach(el => {
+    el.textContent = `Profit share total: ${Math.round(totalPsPct*10)/10}% ${pctValid ? '✓' : '— must total 100%'}`;
+    el.style.color = pctValid ? 'var(--text3)' : 'var(--red)';
+    el.style.borderColor = pctValid ? 'var(--border)' : 'rgba(224,90,90,0.4)';
+  });
   // Debounce API write (wait 800ms after last keystroke)
   clearTimeout(m._psTimer);
   m._psTimer = setTimeout(async () => {
@@ -2956,7 +2969,7 @@ function renderTeamOverview(){
       </div>`;
     }).join('')}
     </div>
-    ${state.isAdmin?`<div style="margin-top:16px;padding:10px 16px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">Active member profit share total: <strong>${Math.round(totalPsPct*10)/10}%</strong>${pctValid?' ✓':' — must total 100%'}</div>`:''}`;
+    ${state.isAdmin?`<div class="ps-total-badge" style="margin-top:16px;padding:10px 16px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">Active member profit share total: <strong>${Math.round(totalPsPct*10)/10}%</strong>${pctValid?' ✓':' — must total 100%'}</div>`:''}`;
 }
 
 function renderTeamMonthly(){
