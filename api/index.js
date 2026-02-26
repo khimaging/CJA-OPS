@@ -409,9 +409,10 @@ function mapDeal(d) {
     stage:         d.stage,
     owner:         d.owner,
     closeDate:     d.close_date,
-    invoiceStatus: d.invoice_status || 'none',
-    buckets:       d.buckets || [],
-    prob:          d.prob || 0,
+    invoiceStatus:   d.invoice_status || 'none',
+    amountCollected: d.amount_collected || 0,
+    buckets:         d.buckets || [],
+    prob:            d.prob || 0,
   };
 }
 
@@ -467,8 +468,9 @@ function dealToRow(body, partial = false) {
   if (!partial || body.stage         !== undefined) row.stage          = body.stage;
   if (!partial || body.owner         !== undefined) row.owner          = body.owner;
   if (!partial || body.closeDate     !== undefined) row.close_date     = body.closeDate || null;
-  if (!partial || body.invoiceStatus !== undefined) row.invoice_status = body.invoiceStatus || 'none';
-  if (!partial || body.buckets       !== undefined) row.buckets        = body.buckets || [];
+  if (!partial || body.invoiceStatus    !== undefined) row.invoice_status    = body.invoiceStatus || 'none';
+  if (!partial || body.amountCollected !== undefined) row.amount_collected = body.amountCollected || 0;
+  if (!partial || body.buckets         !== undefined) row.buckets          = body.buckets || [];
   if (!partial || body.prob          !== undefined) row.prob           = body.prob || 0;
   return row;
 }
