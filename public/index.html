@@ -506,7 +506,7 @@
     .main{padding-top:54px;}
 
     /* Topbar: stack title+actions on 2 lines */
-    .topbar{padding:10px 14px;flex-wrap:wrap;gap:8px;position:sticky;top:54px;}
+    .topbar{padding:10px 14px;flex-wrap:wrap;gap:8px;position:relative;top:auto;}
     .page-title{font-size:17px;}
     .topbar-actions{margin-left:0;width:100%;justify-content:flex-end;flex-wrap:wrap;gap:6px;}
     .content{padding:14px;}
@@ -666,11 +666,11 @@
     </div>
     <div class="nav-section">
       <div class="nav-label">Finance</div>
-      <div class="nav-item" onclick="switchView('pay')">
+      <div class="nav-item" id="nav-pay" onclick="switchView('pay')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         Pay Calculator
       </div>
-      <div class="nav-item" onclick="switchView('profitshare')">
+      <div class="nav-item" id="nav-profitshare" onclick="switchView('profitshare')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93V18h-2v1.93A8.001 8.001 0 014.07 13H6v-2H4.07A8.001 8.001 0 0111 4.07V6h2V4.07A8.001 8.001 0 0119.93 11H18v2h1.93A8.001 8.001 0 0113 19.93z"/></svg>
         Profit Share
       </div>
@@ -685,7 +685,7 @@
     </div>
     <div class="nav-section">
       <div class="nav-label">Team</div>
-      <div class="nav-item" onclick="switchView('team')">
+      <div class="nav-item" id="nav-team" onclick="switchView('team')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
         Team Members
       </div>
@@ -1038,6 +1038,43 @@
       </label>
       <input class="form-input" id="tm-ps" type="number" placeholder="0" min="0" max="100" step="0.5" value="0">
     </div>
+    <!-- Access level — admin only -->
+    <div class="form-group" id="tm-authrole-group" style="display:none">
+      <label class="form-label" style="display:flex;align-items:center;gap:8px">
+        Access Level
+        <span style="background:var(--gold-dim);color:var(--gold);font-family:'DM Mono',monospace;font-size:8px;padding:2px 7px;border-radius:3px;letter-spacing:.1em">ADMIN ONLY</span>
+      </label>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;cursor:pointer;flex:1;transition:all .15s">
+          <input type="radio" name="tm-authrole" id="tm-authrole-admin" value="admin" style="accent-color:var(--gold)">
+          <div>
+            <div style="font-size:12px;font-weight:500;color:var(--text)">Admin</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Full access</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;cursor:pointer;flex:1;transition:all .15s">
+          <input type="radio" name="tm-authrole" id="tm-authrole-class_a" value="class_a" style="accent-color:var(--blue)">
+          <div>
+            <div style="font-size:12px;font-weight:500;color:var(--text)">Class A</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Full access, no team mgmt</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;cursor:pointer;flex:1;transition:all .15s">
+          <input type="radio" name="tm-authrole" id="tm-authrole-class_b" value="class_b" checked style="accent-color:var(--green)">
+          <div>
+            <div style="font-size:12px;font-weight:500;color:var(--text)">Class B</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Add & edit, no delete</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;cursor:pointer;flex:1;transition:all .15s">
+          <input type="radio" name="tm-authrole" id="tm-authrole-va" value="va" style="accent-color:var(--text3)">
+          <div>
+            <div style="font-size:12px;font-weight:500;color:var(--text)">VA</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Add & edit, no delete</div>
+          </div>
+        </label>
+      </div>
+    </div>
     <!-- Active/inactive toggle — admin only, shown when editing -->
     <div class="form-group" id="tm-active-group" style="display:none">
       <label class="form-label">Status</label>
@@ -1243,6 +1280,25 @@ let auth = { user: null, role: null };
 let loginTeamMembers = [];    // loaded from API for login screen
 let loginSelectedId  = null;
 
+// ============================================================
+//  PERMISSION HELPERS
+//  Roles: 'admin' | 'class_a' | 'class_b' | 'va'
+// ============================================================
+const can = {
+  // Only admin can manage team profiles and profit share %
+  manageTeam:       () => auth.role === 'admin',
+  // Only admin can change invoice status or mark pay/profit share paid
+  markPaid:         () => auth.role === 'admin',
+  // Admin and Class A can delete
+  delete:           () => auth.role === 'admin' || auth.role === 'class_a',
+  // Admin, Class A, Class B, VA can all create and edit
+  edit:             () => !!auth.role,
+  // Admin, Class A, VA can see Pay Calculator and Profit Share
+  viewFinance:      () => auth.role === 'admin' || auth.role === 'class_a' || auth.role === 'va',
+  // Only admin can see profit share paid toggles and edit % inline
+  adminFinance:     () => auth.role === 'admin',
+};
+
 async function initLogin() {
   // Show loading state
   const grid = document.getElementById('login-user-grid');
@@ -1300,7 +1356,7 @@ async function attemptLogin() {
     const { token, member } = await api('POST', '/auth/login', { memberId: loginSelectedId, pin });
     _authToken = token;
     auth.user  = member;
-    auth.role  = member.authRole;
+    auth.role  = member.authRole;  // 'admin' | 'class_a' | 'class_b' | 'va'
     state.isAdmin = (member.authRole === 'admin');
 
     // Load all data from the server
@@ -1469,7 +1525,15 @@ function updateNavChip() {
   const nm = document.getElementById('nav-user-name');
   if (nm) nm.textContent = u.name;
   const rl = document.getElementById('nav-user-role');
-  if (rl) rl.textContent = u.authRole === 'admin' ? 'Administrator' : 'Team Member';
+  const roleLabels = { admin:'Administrator', class_a:'Class A Member', class_b:'Class B Member', va:'Virtual Assistant' };
+  if (rl) rl.textContent = roleLabels[u.authRole] || 'Team Member';
+  // Show/hide nav items based on role
+  const payNav    = document.getElementById('nav-pay');
+  const psNav     = document.getElementById('nav-profitshare');
+  const teamNav   = document.getElementById('nav-team');
+  if (payNav)  payNav.style.display  = can.viewFinance()  ? '' : 'none';
+  if (psNav)   psNav.style.display   = can.viewFinance()  ? '' : 'none';
+  if (teamNav) teamNav.style.display = can.manageTeam() || auth.role === 'class_a' || auth.role === 'va' ? '' : 'none';
 }
 
 function showLogoutConfirm() {
@@ -1486,7 +1550,7 @@ function showLogoutConfirm() {
 
 // Guard: prevent team members from triggering CRM edit modals
 function openEditDealModal(id) {
-  if (auth.role !== 'admin') { notify('CRM edits require Admin access'); return; }
+  if (!can.edit()) { notify('You do not have access to edit deals'); return; }
   openDealModal(id);
 }
 
@@ -1662,7 +1726,7 @@ async function saveTask() {
 
 async function deleteTask() {
   const editId = document.getElementById('task-modal').dataset.editId;
-  if (!editId || auth.role !== 'admin') { notify('Admin access required to delete tasks'); return; }
+  if (!editId || !can.delete()) { notify('Deleting tasks requires Admin or Class A access'); return; }
   const task = state.tasks.find(t => t.id === editId);
   if (!task) return;
   if (!confirm(`Delete "${task.title}"? This cannot be undone.`)) return;
@@ -1808,7 +1872,9 @@ async function saveTeamMember() {
   const active = document.getElementById('tm-active-no').checked ? false : true;
   const pinEl  = document.getElementById('tm-pin');
   const pin    = pinEl ? pinEl.value.trim() : '';
+  const authRole = state.isAdmin ? (document.querySelector('input[name="tm-authrole"]:checked')?.value || 'class_b') : undefined;
   const payload = { name, role: document.getElementById('tm-role').value.trim(), profitSharePct: ps, active };
+  if (authRole !== undefined) payload.authRole = authRole;
   if (pin) payload.pin = pin;
 
   closeModal('team-modal');
@@ -1834,7 +1900,7 @@ async function saveTeamMember() {
 
 async function deleteTeamMember() {
   const editId = document.getElementById('team-modal').dataset.editId;
-  if (!editId || auth.role !== 'admin') { notify('Admin access required'); return; }
+  if (!editId || !can.manageTeam()) { notify('Managing team profiles requires Admin access'); return; }
   const m = state.team.find(x => x.id === editId);
   if (!m) return;
   if (!confirm(`Permanently remove ${m.name} from the team? This cannot be undone.`)) return;
@@ -2190,7 +2256,7 @@ function renderCRM(){
   const pipe=state.deals.filter(d=>d.stage!=='Closed Won');
   const pipeV=pipe.reduce((s,d)=>s+netRev(d),0);
   const collected=won.filter(d=>d.invoiceStatus==='paid').reduce((s,d)=>s+netRev(d),0);
-  const canEdit=auth.role==='admin';
+  const canEdit=can.edit();
   document.getElementById('crm-stats').innerHTML=`
     <div class="stat-card stat-card-gross"><div class="stat-label" style="color:var(--gold)">Gross Revenue</div><div class="stat-value" style="color:var(--gold)">${fmt(total)}</div><div class="stat-delta" style="color:var(--text3)">${totalExp>0?`− ${fmt(totalExp)} expenses`:''} · ${state.deals.length} deals</div></div>
     <div class="stat-card"><div class="stat-label">Net Revenue</div><div class="stat-value">${fmt(totalNet)}</div><div class="stat-delta" style="color:var(--text3)">After expenses</div></div>
@@ -2232,7 +2298,7 @@ function renderDealCard(d){
   const isWon=d.stage==='Closed Won';
   const nr=netRev(d);
   const hasExp=d.expenses&&d.expenses>0;
-  const canEdit=auth.role==='admin';
+  const canEdit=can.edit();
   return`<div class="deal-card${canEdit?'':' no-drag'}"
       ${canEdit?`draggable="true" ondragstart="pipelineDragStart(event,'${d.id}')" ondragend="pipelineDragEnd(event)"`:'' }
       onclick="${canEdit?`openEditDealModal('${d.id}')`:'' }">
@@ -2307,17 +2373,17 @@ function renderMonthly(){
                 <div style="font-family:'DM Mono',monospace;color:var(--gold)">${fmt(netRev(d))}<span style="font-size:9px;color:var(--text3);margin-left:3px">net</span></div>
                 ${d.expenses?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${fmt(d.value)} gross</div>`:''}
               </div>
-              <div><select class="form-select" style="padding:5px 10px;font-size:11px" onchange="updateInvStatus('${d.id}',this.value)">
+              <div>${can.markPaid()?`<select class="form-select" style="padding:5px 10px;font-size:11px" onchange="updateInvStatus('${d.id}',this.value)">
                 <option value="none" ${d.invoiceStatus==='none'?'selected':''}>Not Invoiced</option>
                 <option value="sent" ${d.invoiceStatus==='sent'?'selected':''}>Invoice Sent</option>
                 <option value="deposit" ${d.invoiceStatus==='deposit'?'selected':''}>Deposit Collected</option>
                 <option value="paid" ${d.invoiceStatus==='paid'?'selected':''}>Paid in Full</option>
-              </select></div>
+              </select>`:`<span class="inv-badge ${INV_CLS[d.invoiceStatus||'none']}">${INV_LBL[d.invoiceStatus||'none']}</span>`}</div>
               <div style="display:flex;align-items:center;gap:7px">
                 <div class="deal-avatar" style="background:${own?.color||'#555'};width:22px;height:22px;font-size:9px">${init}</div>
                 <span style="font-size:11px;color:var(--text2)">${own?.name||'—'}</span>
               </div>
-              <div>${auth.role==='admin'?`<button class="btn btn-sm" onclick="openEditDealModal('${d.id}')">Edit</button>`:''}</div>
+              <div>${can.edit()?`<button class="btn btn-sm" onclick="openEditDealModal('${d.id}')">Edit</button>`:''}</div>
             </div>`;
           }).join('')}
         </div>`}`;
@@ -2776,7 +2842,7 @@ function renderPayView(){
               <div class="pay-row"><span class="pay-row-label">Tasks</span><span class="pay-row-value">${data.tasks.length}</span></div>
             </div>
             <div class="paid-status">
-              <label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
+              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="togglePaid('${proj.id}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
               <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
             </div>
           </div>`;
@@ -2801,7 +2867,7 @@ function renderPayView(){
               <div class="pay-row"><span class="pay-row-label">Rate</span><span class="pay-row-value">${b.pct}% of ${fmt(netRev(deal))} net</span></div>
             </div>
             <div class="paid-status">
-              <label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
+              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
               <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
             </div>
           </div>`;
@@ -2881,7 +2947,7 @@ function renderTeamView(){
   // Hide manage tab for non-admins
   const manageTab=document.getElementById('ttab-manage');
   if(manageTab) manageTab.style.display=auth.role==='admin'?'':'none';
-  if(state.teamTab==='manage'&&auth.role!=='admin') state.teamTab='overview';
+  if(state.teamTab==='manage'&&!can.manageTeam()) state.teamTab='overview';
 
   if(state.teamTab==='overview') renderTeamOverview();
   else if(state.teamTab==='monthly') renderTeamMonthly();
@@ -2930,7 +2996,7 @@ function renderTeamOverview(){
   const pctValid=Math.abs(totalPsPct-100)<0.5;
 
   document.getElementById('team-content').innerHTML=`
-    ${state.isAdmin?`<div class="admin-banner"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Admin Mode — edit profit share % inline, or use Manage Profiles tab for full control</div>`:''}
+    ${can.adminFinance()?`<div class="admin-banner"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Admin Mode — edit profit share % inline, or use Manage Profiles tab for full control</div>`:''}
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
     ${state.team.map(m=>{
       const inactive=m.active===false;
@@ -2942,7 +3008,7 @@ function renderTeamOverview(){
           <span class="member-status-badge ${inactive?'status-inactive':'status-active'}">${inactive?'Inactive':'Active'}</span>
         </div>
         ${inactive?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center;padding:12px 0">Member is inactive</div>`:`
-        ${state.isAdmin
+        ${can.adminFinance()
           ?`<div style="background:var(--bg3);border:1px solid var(--gold-dim2);border-radius:6px;padding:8px 12px;margin-bottom:12px">
               <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Profit Share %</div>
               <div style="display:flex;align-items:center;gap:8px">
@@ -2969,7 +3035,7 @@ function renderTeamOverview(){
       </div>`;
     }).join('')}
     </div>
-    ${state.isAdmin?`<div class="ps-total-badge" style="margin-top:16px;padding:10px 16px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">Active member profit share total: <strong>${Math.round(totalPsPct*10)/10}%</strong>${pctValid?' ✓':' — must total 100%'}</div>`:''}`;
+    ${can.adminFinance()?`<div class="ps-total-badge" style="margin-top:16px;padding:10px 16px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">Active member profit share total: <strong>${Math.round(totalPsPct*10)/10}%</strong>${pctValid?' ✓':' — must total 100%'}</div>`:''}`;
 }
 
 function renderTeamMonthly(){
@@ -3064,7 +3130,7 @@ function changeTeamMonth(delta){
 }
 
 function renderTeamManage(){
-  if(auth.role!=='admin'){document.getElementById('team-content').innerHTML=`<div class="empty-state"><div class="empty-title">Admin access required</div></div>`;return;}
+  if(!can.manageTeam()){document.getElementById('team-content').innerHTML=`<div class="empty-state"><div class="empty-title">Admin access required</div></div>`;return;}
   const totalPsPct=state.team.filter(m=>m.active!==false).reduce((s,m)=>s+(m.profitSharePct||0),0);
   const pctValid=Math.abs(totalPsPct-100)<0.5;
 
@@ -3119,7 +3185,7 @@ function openTeamModal(editId){
   document.getElementById('tm-name').value=m?m.name:'';
   document.getElementById('tm-role').value=m?m.role:'';
   document.getElementById('tm-ps').value=m?(m.profitSharePct||0):0;
-  document.getElementById('tm-ps-group').style.display=state.isAdmin?'block':'none';
+  document.getElementById('tm-ps-group').style.display=can.manageTeam()?'block':'none';
   // PIN field
   const pinEl=document.getElementById('tm-pin');
   const pinHint=document.getElementById('tm-pin-hint');
@@ -3127,14 +3193,22 @@ function openTeamModal(editId){
   if(pinHint) pinHint.textContent=m?'Leave blank to keep current PIN':'Required for new members';
   // Active toggle — only show when editing
   const activeGroup=document.getElementById('tm-active-group');
-  activeGroup.style.display=m&&state.isAdmin?'block':'none';
+  activeGroup.style.display=m&&can.manageTeam()?'block':'none';
   if(m){
     document.getElementById('tm-active-yes').checked=m.active!==false;
     document.getElementById('tm-active-no').checked=m.active===false;
   }
+  // Auth role — show for admin, default to current value
+  const authRoleGroup=document.getElementById('tm-authrole-group');
+  authRoleGroup.style.display=can.manageTeam()?'block':'none';
+  const currentRole=m?m.authRole:'class_b';
+  ['admin','class_a','class_b','va'].forEach(r=>{
+    const el=document.getElementById('tm-authrole-'+r);
+    if(el) el.checked=(currentRole===r);
+  });
   // Delete button — only when editing
   const delWrap=document.getElementById('tm-delete-wrap');
-  delWrap.style.display=m&&state.isAdmin?'block':'none';
+  delWrap.style.display=m&&can.manageTeam()?'block':'none';
   const saveBtn=document.getElementById('tm-save-btn');
   if(saveBtn) saveBtn.textContent=m?'Save Changes':'Add Member';
   document.getElementById('team-modal').dataset.editId=editId||'';
@@ -3296,7 +3370,7 @@ function renderProfitShareView(){
               <div class="ps-row"><span class="ps-row-label">Quarter</span><span class="ps-row-val">${q.label}</span></div>
             </div>
             <div class="paid-status">
-              <label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="toggleProfitSharePaid('${pkey}',this.checked)"><span class="toggle-slider"></span></label>
+              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="toggleProfitSharePaid('${pkey}',this.checked)"><span class="toggle-slider"></span></label>
               <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
               ${paid?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:auto">✓ Disbursed</span>`:''}
             </div>
