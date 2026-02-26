@@ -2168,8 +2168,6 @@ function setCrmTab(tab){
   if(tab==='monthly')renderMonthly();
 }
 
-function openExpenseModal(editId, preselectedProjectId){
-
 function renderCRM(){
   const total=state.deals.reduce((s,d)=>s+d.value,0);
   const totalNet=state.deals.reduce((s,d)=>s+netRev(d),0);
