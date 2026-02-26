@@ -2970,88 +2970,97 @@ function renderTeamView(){
 }
 
 // ── Shared earnings calculator ────────────────────────────────
-function calcExpectedEarnings(){
-  // Pending = projects that are incomplete OR complete but deal not fully paid
-  const pendingProjects=state.projects.filter(proj=>{
-    if(proj.archived) return false;
-    const deal=state.deals.find(d=>d.id===proj.dealId);
-    if(!deal) return false;
-    const incomplete=proj.status!=='complete';
-    const unpaid=deal.invoiceStatus!=='paid';
-    return incomplete||unpaid;
-  });
+// ============================================================
+//  EARNINGS CALCULATIONS
+//  Actual   = deal paid in full + project complete + all tasks done
+//  Projected = deal Closed Won (not yet paid in full)
+//  filterFn(deal) = optional month scope for monthly view
+// ============================================================
 
+function calcActualEarnings(filterFn){
   const prodPay={},feePay={},psPay={};
   state.team.forEach(m=>{prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
 
-  pendingProjects.forEach(proj=>{
+  state.projects.forEach(proj=>{
     const deal=state.deals.find(d=>d.id===proj.dealId);
     if(!deal) return;
+    if(deal.stage!=='Closed Won'||deal.invoiceStatus!=='paid') return;
+    if(proj.status!=='complete') return;
+    if(filterFn&&!filterFn(deal)) return;
+    // All tasks on this project must be done
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return;
+    // Production pool
+    const pb=deal.buckets.find(b=>b.name==='Production Pool');
+    if(pb){
+      const pool=netRev(deal)*pb.pct/100;
+      const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      if(tH){const uh={};tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});}
+    }
+    // Personal fees
+    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
+  });
+
+  // Actual profit share — paid + complete project + all tasks done
+  const eligibleDeals=state.deals.filter(d=>{
+    if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    if(!proj||proj.status!=='complete') return false;
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return false;
+    return filterFn?filterFn(d):true;
+  });
+  const totalPsPool=eligibleDeals.reduce((s,d)=>{const psB=d.buckets.find(b=>b.name==='Profit Share');return s+netRev(d)*(psB?psB.pct:17.5)/100;},0);
+  state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
+
+  return{prodPay,feePay,psPay,eligibleDeals};
+}
+
+function calcProjectedEarnings(filterFn){
+  const prodPay={},feePay={},psPay={};
+  state.team.forEach(m=>{prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
+
+  // Only Closed Won deals NOT yet paid in full
+  state.projects.forEach(proj=>{
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal) return;
+    if(deal.stage!=='Closed Won'||deal.invoiceStatus==='paid') return;
+    if(proj.archived) return;
+    if(filterFn&&!filterFn(deal)) return;
     const pb=deal.buckets.find(b=>b.name==='Production Pool');
     if(pb){
       const pool=netRev(deal)*pb.pct/100;
       const tasks=state.tasks.filter(t=>t.projectId===proj.id);
       const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
-      if(tH){
-        const uh={};
-        tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});
-        Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});
-      }
+      if(tH){const uh={};tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});}
     }
-    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{
-      if(feePay[b.assignedTo]!==undefined) feePay[b.assignedTo]+=netRev(deal)*b.pct/100;
-    });
-  });
-
-  // Expected profit share — deals in Closed Won but not yet paid
-  const psEligible=state.deals.filter(d=>d.stage==='Closed Won'&&d.invoiceStatus!=='paid');
-  const totalPsPool=psEligible.reduce((s,d)=>{
-    const psB=d.buckets.find(b=>b.name==='Profit Share');
-    return s+netRev(d)*(psB?psB.pct:17.5)/100;
-  },0);
-  state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
-
-  return{prodPay,feePay,psPay,pendingProjects};
-}
-
-function calcTeamEarnings(filterFn){
-  // filterFn(deal) => bool — lets monthly view scope to a specific month
-  const totH={},prodPay={},feePay={},psPay={};
-  state.team.forEach(m=>{totH[m.id]=0;prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
-
-  state.tasks.forEach(t=>{
-    if(totH[t.assigneeId]!==undefined) totH[t.assigneeId]+=(t.estHours||0);
-  });
-  state.projects.forEach(proj=>{
-    const deal=state.deals.find(d=>d.id===proj.dealId);
-    if(!deal||!(filterFn?filterFn(deal):true)) return;
-    const pb=deal.buckets.find(b=>b.name==='Production Pool');if(!pb)return;
-    const pool=netRev(deal)*pb.pct/100;
-    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
-    const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
-    if(tH){const uh={};tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});}
     deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
   });
 
-  // Profit share — scoped qualifying deals
-  const eligibleDeals=state.deals.filter(d=>{
-    if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
-    const proj=state.projects.find(p=>p.dealId===d.id);
-    if(!proj||proj.status!=='complete') return false;
+  // Projected profit share — Closed Won not yet paid
+  const projectedDeals=state.deals.filter(d=>{
+    if(d.stage!=='Closed Won'||d.invoiceStatus==='paid') return false;
     return filterFn?filterFn(d):true;
   });
-  const totalPsPool=eligibleDeals.reduce((s,d)=>{
-    const psB=d.buckets.find(b=>b.name==='Profit Share');
-    return s+netRev(d)*(psB?psB.pct:17.5)/100;
-  },0);
+  const totalPsPool=projectedDeals.reduce((s,d)=>{const psB=d.buckets.find(b=>b.name==='Profit Share');return s+netRev(d)*(psB?psB.pct:17.5)/100;},0);
   state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
 
-  return{totH,prodPay,feePay,psPay,eligibleDeals};
+  return{prodPay,feePay,psPay,projectedDeals};
+}
+
+// Legacy wrapper used by pay calculator and profit share views
+function calcTeamEarnings(filterFn){
+  const actual=calcActualEarnings(filterFn);
+  const totH={};
+  state.team.forEach(m=>{totH[m.id]=0;});
+  state.tasks.forEach(t=>{if(totH[t.assigneeId]!==undefined)totH[t.assigneeId]+=(t.estHours||0);});
+  return{totH,prodPay:actual.prodPay,feePay:actual.feePay,psPay:actual.psPay,eligibleDeals:actual.eligibleDeals};
 }
 
 function renderTeamOverview(){
-  const{totH,prodPay,feePay,psPay,eligibleDeals}=calcTeamEarnings(null);
-  const{prodPay:expProd,feePay:expFee,psPay:expPs,pendingProjects}=calcExpectedEarnings();
+  const{totH}=calcTeamEarnings(null);
+  const{prodPay,feePay,psPay,eligibleDeals}=calcActualEarnings(null);
+  const{prodPay:projProd,feePay:projFee,psPay:projPs,projectedDeals}=calcProjectedEarnings(null);
   const totalPsPct=state.team.filter(m=>m.active!==false).reduce((s,m)=>s+(m.profitSharePct||0),0);
   const pctValid=Math.abs(totalPsPct-100)<0.5;
 
@@ -3078,24 +3087,19 @@ function renderTeamOverview(){
             </div>`
           :`<div class="pay-row" style="margin-bottom:4px"><span class="pay-row-label">Profit share allocation</span><span class="pay-row-value" style="color:var(--green)">${m.profitSharePct||0}%</span></div>`
         }
-        <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;flex-direction:column;gap:6px">
           <div class="pay-row"><span class="pay-row-label">Hours allocated</span><span class="pay-row-value">${totH[m.id]||0}h</span></div>
-          <div class="pay-row"><span class="pay-row-label">Production pool</span><span class="pay-row-value" style="color:var(--gold)">${fmt(prodPay[m.id]||0)}</span></div>
-          <div class="pay-row"><span class="pay-row-label">Fee earnings</span><span class="pay-row-value" style="color:var(--teal)">${fmt(feePay[m.id]||0)}</span></div>
-          <div class="pay-row">
-            <span class="pay-row-label" style="display:flex;align-items:center;gap:5px">Profit share${eligibleDeals.length===0?`<span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);background:var(--bg3);padding:1px 5px;border-radius:3px">no qualifying deals</span>`:''}</span>
-            <span class="pay-row-value" style="color:var(--green)">${fmt(psPay[m.id]||0)}</span>
-          </div>
-          <div class="pay-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:2px">
-            <span class="pay-row-label" style="color:var(--text2);font-weight:600;font-size:12px">Total earnings</span>
-            <span class="pay-row-value" style="color:var(--gold);font-size:14px;font-weight:600">${fmt(total)}</span>
-          </div>
-          <div class="pay-row" style="margin-top:2px">
-            <span class="pay-row-label" style="display:flex;align-items:center;gap:5px">
-              Expected (pending)
-              <span style="font-family:'DM Mono',monospace;font-size:7px;color:var(--blue);background:rgba(100,160,255,0.1);padding:1px 5px;border-radius:3px">${pendingProjects.length} proj</span>
-            </span>
-            <span class="pay-row-value" style="color:var(--blue)">${fmt((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0))}</span>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);padding:6px 0 2px;border-top:1px solid var(--border);margin-top:2px">Actual Earnings</div>
+          <div class="pay-row"><span class="pay-row-label">Production</span><span class="pay-row-value" style="color:var(--gold)">${fmt(prodPay[m.id]||0)}</span></div>
+          <div class="pay-row"><span class="pay-row-label">Fees</span><span class="pay-row-value" style="color:var(--teal)">${fmt(feePay[m.id]||0)}</span></div>
+          <div class="pay-row"><span class="pay-row-label">Profit share</span><span class="pay-row-value" style="color:var(--green)">${fmt(psPay[m.id]||0)}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);padding:6px 0 2px;border-top:1px solid var(--border);margin-top:2px">Projected Earnings</div>
+          <div class="pay-row"><span class="pay-row-label">Production</span><span class="pay-row-value" style="color:var(--blue)">${fmt(projProd[m.id]||0)}</span></div>
+          <div class="pay-row"><span class="pay-row-label">Fees</span><span class="pay-row-value" style="color:var(--blue)">${fmt(projFee[m.id]||0)}</span></div>
+          <div class="pay-row"><span class="pay-row-label">Profit share</span><span class="pay-row-value" style="color:var(--blue)">${fmt(projPs[m.id]||0)}</span></div>
+          <div class="pay-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+            <span class="pay-row-label" style="color:var(--text2);font-weight:600;font-size:12px">Total (actual + projected)</span>
+            <span class="pay-row-value" style="color:var(--gold);font-size:14px;font-weight:600">${fmt(total+(projProd[m.id]||0)+(projFee[m.id]||0)+(projPs[m.id]||0))}</span>
           </div>
           <div class="pay-row"><span class="pay-row-label">Active tasks</span><span class="pay-row-value">${state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done').length}</span></div>
         </div>`}
@@ -3111,38 +3115,51 @@ function renderTeamMonthly(){
   const vYM=vd.getFullYear()+'-'+String(vd.getMonth()+1).padStart(2,'0');
   const lbl=MONTHS[vd.getMonth()]+' '+vd.getFullYear();
 
-  // Filter: deals whose closeDate matches this month
-  const{prodPay,feePay,psPay,eligibleDeals}=calcTeamEarnings(d=>d.closeDate===vYM);
+  // Scope both sides to the selected close month
+  const monthFilter=d=>d.closeDate===vYM;
+  const{prodPay:actProd,feePay:actFee,psPay:actPs,eligibleDeals}=calcActualEarnings(monthFilter);
+  const{prodPay:prjProd,feePay:prjFee,psPay:prjPs}=calcProjectedEarnings(monthFilter);
 
   const activeMembers=state.team.filter(m=>m.active!==false);
-  const grandTotal=activeMembers.reduce((s,m)=>{
-    return s+(prodPay[m.id]||0)+(feePay[m.id]||0)+(psPay[m.id]||0);
-  },0);
 
-  // Build last 6 months mini-sparkline data for context bar
+  // Grand totals for the total column (actual + projected, no double-counting)
+  const grandActual=activeMembers.reduce((s,m)=>s+(actProd[m.id]||0)+(actFee[m.id]||0)+(actPs[m.id]||0),0);
+  const grandProj=activeMembers.reduce((s,m)=>s+(prjProd[m.id]||0)+(prjFee[m.id]||0)+(prjPs[m.id]||0),0);
+  const grandTotal=grandActual+grandProj;
+
+  // Sparkline uses actual+projected combined per month
   const sparkMonths=[];
   for(let i=5;i>=0;i--){
     const sd=new Date(now.getFullYear(),now.getMonth()-i,1);
     const sym=sd.getFullYear()+'-'+String(sd.getMonth()+1).padStart(2,'0');
-    const{prodPay:sp,feePay:sf,psPay:ss}=calcTeamEarnings(d=>d.closeDate===sym);
-    const tot=state.team.reduce((s,m)=>(s+(sp[m.id]||0)+(sf[m.id]||0)+(ss[m.id]||0)),0);
+    const mf=d=>d.closeDate===sym;
+    const{prodPay:sa,feePay:fa,psPay:pa}=calcActualEarnings(mf);
+    const{prodPay:sp,feePay:fp,psPay:pp}=calcProjectedEarnings(mf);
+    const tot=state.team.reduce((s,m)=>s+(sa[m.id]||0)+(fa[m.id]||0)+(pa[m.id]||0)+(sp[m.id]||0)+(fp[m.id]||0)+(pp[m.id]||0),0);
     sparkMonths.push({label:MONTHS[sd.getMonth()].substring(0,3),ym:sym,total:tot});
   }
   const sparkMax=Math.max(...sparkMonths.map(x=>x.total),1);
 
-  const colW=`1fr 110px 110px 110px 120px 120px`;
-  const{prodPay:expProd,feePay:expFee,psPay:expPs}=calcExpectedEarnings();
+  // Column layout: Member | Act.Prod | Act.Fees | Act.PS | separator | Prj.Prod | Prj.Fees | Prj.PS | Total
+  const colW=`1fr 90px 80px 90px 4px 90px 80px 90px 110px`;
+
   document.getElementById('team-content').innerHTML=`
     <div class="team-month-nav">
       <button class="month-nav-btn" onclick="changeTeamMonth(-1)">‹</button>
       <span class="team-month-label">${lbl}</span>
       <button class="month-nav-btn" onclick="changeTeamMonth(1)">›</button>
-      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">Total payout: <strong style="color:var(--gold)">${fmt(grandTotal)}</strong></div>
+      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">
+        Actual: <strong style="color:var(--gold)">${fmt(grandActual)}</strong>
+        <span style="margin:0 8px;color:var(--border2)">|</span>
+        Projected: <strong style="color:var(--blue)">${fmt(grandProj)}</strong>
+        <span style="margin:0 8px;color:var(--border2)">|</span>
+        Total: <strong style="color:var(--text)">${fmt(grandTotal)}</strong>
+      </div>
     </div>
 
-    <!-- 6-month sparkline bar -->
+    <!-- 6-month sparkline -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:24px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">6-Month Earnings History</div>
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">6-Month Earnings History (Actual + Projected)</div>
       <div style="display:flex;align-items:flex-end;gap:6px;height:52px;margin-bottom:8px">
         ${sparkMonths.map(s=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
           <div style="width:100%;background:${s.ym===vYM?'var(--gold)':'var(--bg4)'};border-radius:3px 3px 0 0;height:${Math.round((s.total/sparkMax)*44)+4}px;min-height:4px;transition:height .3s" title="${fmt(s.total)}"></div>
@@ -3153,48 +3170,68 @@ function renderTeamMonthly(){
       </div>
     </div>
 
-    <div class="team-monthly-table">
-      <div class="team-monthly-head" style="grid-template-columns:${colW}">
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Member</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Production</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Fees</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Profit Share</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3)">Total</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.13em;text-transform:uppercase;color:var(--blue)">Expected</span>
+    <div class="team-monthly-table" style="overflow-x:auto">
+      <!-- Section headers -->
+      <div style="display:grid;grid-template-columns:${colW};padding:6px 16px 0">
+        <span></span>
+        <span colspan="3" style="grid-column:span 3;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);padding-bottom:4px;border-bottom:2px solid var(--gold);text-align:center">— ACTUAL —</span>
+        <span></span>
+        <span colspan="3" style="grid-column:span 3;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);padding-bottom:4px;border-bottom:2px solid var(--blue);text-align:center">— PROJECTED —</span>
+        <span></span>
       </div>
+      <!-- Column headers -->
+      <div class="team-monthly-head" style="grid-template-columns:${colW}">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Member</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">Prod.</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--teal)">Fees</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green)">Profit Shr.</span>
+        <span></span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Prod.</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Fees</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Profit Shr.</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Total</span>
+      </div>
+      <!-- Member rows -->
       ${activeMembers.map(m=>{
-        const prod=prodPay[m.id]||0, fees=feePay[m.id]||0, ps=psPay[m.id]||0;
-        const total=prod+fees+ps;
+        const aP=actProd[m.id]||0, aF=actFee[m.id]||0, aPs=actPs[m.id]||0;
+        const pP=prjProd[m.id]||0, pF=prjFee[m.id]||0, pPs=prjPs[m.id]||0;
+        const total=aP+aF+aPs+pP+pF+pPs;
         const pct=grandTotal>0?Math.round(total/grandTotal*100):0;
+        const cell=(v,color)=>`<div style="font-family:'DM Mono',monospace;font-size:12px;color:${v>0?color:'var(--text3)'}">${v>0?fmt(v):'—'}</div>`;
         return`<div class="team-monthly-row" style="grid-template-columns:${colW}">
           <div style="display:flex;align-items:center;gap:10px">
             <div class="user-avatar" style="background:${m.color};width:28px;height:28px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
             <div><div style="font-size:12px;font-weight:500;color:var(--text)">${m.name}</div><div style="font-size:10px;color:var(--text3)">${m.role}</div></div>
           </div>
-          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${prod>0?fmt(prod):'—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--teal)">${fees>0?fmt(fees):'—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green)">${ps>0?fmt(ps):'—'}</div>
+          ${cell(aP,'var(--gold)')}
+          ${cell(aF,'var(--teal)')}
+          ${cell(aPs,'var(--green)')}
+          <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
+          ${cell(pP,'var(--blue)')}
+          ${cell(pF,'var(--blue)')}
+          ${cell(pPs,'var(--blue)')}
           <div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${total>0?'var(--text)':'var(--text3)'}">${total>0?fmt(total):'$0'}</div>
             ${grandTotal>0&&total>0?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% of total</div>`:''}
           </div>
-          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue)">${((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0))>0?fmt((expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0)):'—'}</div>
         </div>`;
       }).join('')}
       <!-- Total row -->
       <div class="team-monthly-row" style="grid-template-columns:${colW};background:var(--bg);border-top:2px solid var(--border2)">
         <div style="font-size:12px;font-weight:600;color:var(--text2);font-family:'DM Mono',monospace;letter-spacing:.04em">TOTAL</div>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prodPay[m.id]||0),0))}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--teal);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(feePay[m.id]||0),0))}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(psPay[m.id]||0),0))}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(actProd[m.id]||0),0))}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--teal);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(actFee[m.id]||0),0))}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(actPs[m.id]||0),0))}</div>
+        <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjProd[m.id]||0),0))}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjFee[m.id]||0),0))}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjPs[m.id]||0),0))}</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--gold)">${fmt(grandTotal)}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(expProd[m.id]||0)+(expFee[m.id]||0)+(expPs[m.id]||0),0))}</div>
       </div>
     </div>
-    ${eligibleDeals.length===0?`<div style="margin-top:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center">No qualifying profit share deals closed in ${lbl}</div>`:''}
+    ${eligibleDeals.length===0&&grandProj===0?`<div style="margin-top:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center">No qualifying deals with close month set to ${lbl}</div>`:''}
   `;
 }
-
 function changeTeamMonth(delta){
   state.teamMonthOffset+=delta;
   renderTeamMonthly();
