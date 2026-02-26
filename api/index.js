@@ -3,7 +3,7 @@ const express   = require('express');
 const cors      = require('cors');
 const bcrypt    = require('bcryptjs');
 const supabase  = require('../lib/supabase');
-const { signToken, requireAuth, requireAdmin } = require('../lib/auth');
+const { signToken, requireAuth, requireAdmin, requireCanDelete } = require('../lib/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -189,7 +189,7 @@ app.patch('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/deals/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
     const { error } = await supabase.from('deals').delete().eq('id', req.params.id);
     if (error) throw error;
@@ -258,7 +258,7 @@ app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/tasks/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/tasks/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
     const { error } = await supabase.from('tasks').delete().eq('id', req.params.id);
     if (error) throw error;
@@ -297,7 +297,7 @@ app.patch('/api/expenses/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/expenses/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/expenses/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
     const { error } = await supabase.from('expenses').delete().eq('id', req.params.id);
     if (error) throw error;
@@ -354,11 +354,20 @@ app.post('/api/team', requireAuth, requireAdmin, async (req, res) => {
 
 app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
+    // Prevent admins from demoting themselves
+    if (req.params.id === req.user.sub && req.body.authRole && req.body.authRole !== 'admin') {
+      return res.status(400).json({ error: "You cannot remove your own admin access" });
+    }
     const updates = {};
     if (req.body.name           !== undefined) updates.name             = req.body.name;
     if (req.body.role           !== undefined) updates.role             = req.body.role;
     if (req.body.profitSharePct !== undefined) updates.profit_share_pct = req.body.profitSharePct;
     if (req.body.active         !== undefined) updates.active           = req.body.active;
+    if (req.body.authRole !== undefined) {
+      const validRoles = ['admin','class_a','class_b','va'];
+      if (!validRoles.includes(req.body.authRole)) return res.status(400).json({ error: 'Invalid role' });
+      updates.auth_role = req.body.authRole;
+    }
     if (req.body.pin) updates.pin_hash = await bcrypt.hash(String(req.body.pin), 10);
     const { data, error } = await supabase.from('team_members').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
