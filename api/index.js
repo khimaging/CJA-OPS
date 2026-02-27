@@ -141,10 +141,14 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       payStatus[k] = r.paid;
     });
 
-    // Reshape profitSharePaidStatus
+    // Reshape profitSharePaidStatus — include snapshot data for paid quarters
     const profitSharePaidStatus = {};
     (psStatusRes.data || []).forEach(r => {
-      profitSharePaidStatus[`${r.quarter_key}_${r.member_id}`] = r.paid;
+      profitSharePaidStatus[`${r.quarter_key}_${r.member_id}`] = {
+        paid: r.paid,
+        psPct: r.ps_pct ?? null,
+        allocationAmount: r.allocation_amount ?? null,
+      };
     });
 
     res.json({
@@ -206,8 +210,15 @@ app.get('/api/pay-status', requireAuth, async (req, res) => {
 app.get('/api/profit-share-status', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('profit_share_status').select('*');
   if (error) return res.status(500).json({ error: error.message });
+  // Return full record so frontend can use snapshotted ps_pct for paid quarters
   const out = {};
-  data.forEach(r => { out[`${r.quarter_key}_${r.member_id}`] = r.paid; });
+  data.forEach(r => {
+    out[`${r.quarter_key}_${r.member_id}`] = {
+      paid: r.paid,
+      psPct: r.ps_pct ?? null,
+      allocationAmount: r.allocation_amount ?? null,
+    };
+  });
   res.json(out);
 });
 
@@ -410,14 +421,19 @@ app.post('/api/pay-status', requireAuth, requireAdmin, async (req, res) => {
 
 app.post('/api/profit-share-status', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { quarterKey, memberId, paid } = req.body;
+    const { quarterKey, memberId, paid, psPct, allocationAmount } = req.body;
+    const row = { quarter_key: quarterKey, member_id: memberId, paid };
+    // Snapshot % and amount when marking paid so historical quarters stay accurate
+    if (paid && psPct !== undefined) row.ps_pct = psPct;
+    if (paid && allocationAmount !== undefined) row.allocation_amount = allocationAmount;
+    // Clear snapshot when unmarking
+    if (!paid) { row.ps_pct = null; row.allocation_amount = null; }
     const { data, error } = await supabase
       .from('profit_share_status')
-      .upsert({ quarter_key: quarterKey, member_id: memberId, paid },
-               { onConflict: 'quarter_key,member_id' })
+      .upsert(row, { onConflict: 'quarter_key,member_id' })
       .select().single();
     if (error) throw error;
-    res.json({ ok: true });
+    res.json({ ok: true, data });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
