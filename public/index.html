@@ -1399,6 +1399,7 @@ async function bootstrapState() {
   // archivedProjects derived from projects.archived flag
   state.archivedProjects = {};
   state.projects.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
+  syncDealExpenses(); // compute deal.expenses from expenses table immediately
   updateBadges();
 }
 
