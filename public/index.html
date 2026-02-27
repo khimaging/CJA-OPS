@@ -1712,10 +1712,13 @@ async function setProjectStatusInline(pid, status) {
   if (!p) return;
   const prev = p.status; p.status = status;
   _markRecentWrite('projects', pid);
+  console.log('[CJA] setProjectStatus', pid, status, 'token:', !!_authToken);
   try {
-    await api('PATCH', '/projects/' + pid, { status });
+    const result = await api('PATCH', '/projects/' + pid, { status });
+    console.log('[CJA] setProjectStatus success', result);
     notify(status === 'complete' ? 'Project marked complete ✓' : 'Project marked active');
   } catch(e) {
+    console.error('[CJA] setProjectStatus FAILED', e.message);
     p.status = prev;
     _recentWrites['projects']?.delete(pid);
     notify('Update failed: ' + e.message);
@@ -2521,11 +2524,26 @@ function cycleProjectStatus(pid){
   renderProjects();
 }
 
-function toggleArchiveProject(pid){
-  state.archivedProjects[pid]=!state.archivedProjects[pid];
-  notify(state.archivedProjects[pid]?'Project archived':'Project unarchived');
+async function toggleArchiveProject(pid){
+  const newVal=!state.archivedProjects[pid];
+  state.archivedProjects[pid]=newVal;
+  const proj=state.projects.find(p=>p.id===pid);
+  if(proj) proj.archived=newVal;
+  _markRecentWrite('projects',pid);
+  notify(newVal?'Project archived':'Project unarchived');
   renderProjects();
   renderPayView();
+  try {
+    await api('PATCH','/projects/'+pid,{archived:newVal});
+  } catch(e) {
+    // rollback
+    state.archivedProjects[pid]=!newVal;
+    if(proj) proj.archived=!newVal;
+    _recentWrites['projects']?.delete(pid);
+    notify('Save failed: '+e.message);
+    renderProjects();
+    renderPayView();
+  }
 }
 
 function renderProjMonthly(){
