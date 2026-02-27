@@ -1223,6 +1223,16 @@ function netRev(deal){
   return Math.max(0,gross-exp);
 }
 
+// A project is locked once it is complete AND its deal has been paid in full.
+// Admins are never locked out — they can always unlock by changing invoice status or project status.
+function isProjectLocked(projectId){
+  if (auth.role === 'admin') return false;
+  const proj = state.projects.find(p => p.id === projectId);
+  if (!proj || proj.status !== 'complete') return false;
+  const deal = state.deals.find(d => d.id === proj.dealId);
+  return deal && deal.invoiceStatus === 'paid';
+}
+
 function updateNetRevPreview(){
   const gross=parseFloat(document.getElementById('d-value')?.value)||0;
   const exp=parseFloat(document.getElementById('d-expenses')?.value)||0;
@@ -1735,6 +1745,13 @@ async function saveTask() {
   const projectId = document.getElementById('t-project').value;
   if (!title || !projectId) { notify('Please enter a title and project'); return; }
   const editId = document.getElementById('task-modal').dataset.editId;
+  // Block edits on locked projects (complete + paid)
+  const checkProjId = projectId || (editId ? state.tasks.find(t=>t.id===editId)?.projectId : null);
+  if (isProjectLocked(checkProjId)) {
+    closeModal('task-modal');
+    notify('🔒 Project is complete and paid — tasks are locked');
+    return;
+  }
   const payload = {
     title, projectId,
     assigneeId: document.getElementById('t-assignee').value,
@@ -1764,6 +1781,11 @@ async function deleteTask() {
   if (!editId || !can.delete()) { notify('Deleting tasks requires Admin or Class A access'); return; }
   const task = state.tasks.find(t => t.id === editId);
   if (!task) return;
+  if (isProjectLocked(task.projectId)) {
+    closeModal('task-modal');
+    notify('🔒 Project is complete and paid — tasks are locked');
+    return;
+  }
   if (!confirm(`Delete "${task.title}"? This cannot be undone.`)) return;
   closeModal('task-modal');
   try {
@@ -1780,6 +1802,7 @@ async function kanbanDrop(e, status) {
   if (!taskId) return;
   const task = state.tasks.find(t => t.id === taskId);
   if (!task || task.status === status) return;
+  if (isProjectLocked(task.projectId)) { notify('🔒 Project is complete and paid — tasks are locked'); return; }
   const prev = task.status;
   task.status = status;
   notify('Moved to ' + (status==='todo'?'To Do':status==='progress'?'In Progress':status==='review'?'In Review':'Done'));
@@ -1800,6 +1823,7 @@ async function calDrop(e, dateStr) {
   if (!taskId) return;
   const task = state.tasks.find(t => t.id === taskId);
   if (!task) return;
+  if (isProjectLocked(task.projectId)) { notify('🔒 Project is complete and paid — tasks are locked'); return; }
   const prev = task.due;
   task.due = dateStr;
   const d = new Date(dateStr + 'T12:00:00');
@@ -2720,13 +2744,16 @@ function renderTaskCard(t){
   const dc=ds?getDueClass(t.due):'';
   const h=t.estHours||0;
   const pay=calcTaskPay(t);
+  const locked=isProjectLocked(t.projectId);
   return`<div class="task-card"
       draggable="true"
       data-task-id="${t.id}"
+      data-locked="${locked}"
       ondragstart="kanbanDragStart(event,'${t.id}')"
       ondragend="kanbanDragEnd(event)"
-      onclick="openEditTaskModal('${t.id}')">
-    <div class="task-title">${t.title}</div>
+      onclick="openEditTaskModal('${t.id}')"
+      style="${locked?'opacity:0.7;cursor:default;':''}">
+    <div class="task-title" style="display:flex;align-items:center;gap:6px">${locked?'<span title="Project complete &amp; paid" style="font-size:10px">🔒</span>':''}${t.title}</div>
     <div class="task-meta">
       <span class="task-tag priority-${t.priority}">${t.priority}</span>
       ${proj?`<span style="font-size:10px;color:var(--text3)">${proj.name.length>14?proj.name.substring(0,13)+'…':proj.name}</span>`:''}
@@ -2743,6 +2770,7 @@ function renderTaskCard(t){
 }
 
 function kanbanDragStart(e, taskId){
+  if(e.currentTarget.dataset.locked==='true'){ e.preventDefault(); return; }
   _dragTaskId=taskId;
   e.dataTransfer.effectAllowed='move';
   e.dataTransfer.setData('text/plain', taskId);
@@ -2771,7 +2799,8 @@ function renderList(tasks){
       const a=state.team.find(m=>m.id===t.assigneeId);
       const dc=t.due?getDueClass(t.due):'';
       const pay=calcTaskPay(t);
-      return`<tr style="cursor:pointer" onclick="openEditTaskModal('${t.id}')"><td style="color:var(--text);font-weight:500">${t.title}</td><td style="color:var(--text3)">${proj?.name||'—'}</td>
+      const locked=isProjectLocked(t.projectId);
+      return`<tr style="cursor:pointer;${locked?'opacity:0.7':''}" onclick="openEditTaskModal('${t.id}')"><td style="color:var(--text);font-weight:500">${locked?'🔒 ':''}${t.title}</td><td style="color:var(--text3)">${proj?.name||'—'}</td>
         <td><div style="display:flex;align-items:center;gap:7px"><div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div><span style="color:var(--text2)">${a?.name||'—'}</span></div></td>
         <td class="${'task-due '+dc}">${t.due?formatDue(t.due):'—'}</td>
         <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
