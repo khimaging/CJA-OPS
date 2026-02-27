@@ -1254,6 +1254,23 @@ function netRev(deal){
   return Math.max(0,gross-exp);
 }
 
+// Helpers for profitSharePaidStatus — values are now {paid, psPct, allocationAmount} objects
+function _isPsPaid(pkey) {
+  const v = state.profitSharePaidStatus[pkey];
+  if (!v) return false;
+  return typeof v === 'object' ? v.paid : !!v;
+}
+function _getPsSnapshot(pkey) {
+  const v = state.profitSharePaidStatus[pkey];
+  if (!v || typeof v !== 'object') return null;
+  return v; // { paid, psPct, allocationAmount }
+}
+function _hasPsPaid(memberId) {
+  return Object.entries(state.profitSharePaidStatus).some(([k,v])=>
+    k.endsWith('_'+memberId) && _isPsPaid(k)
+  );
+}
+
 // A project is locked once it is complete AND its deal has been paid in full.
 // Admins are never locked out — they can always unlock by changing invoice status or project status.
 function isProjectLocked(projectId){
@@ -1976,37 +1993,53 @@ async function toggleProfitSharePaid(pkey, checked) {
   if (!checked) {
     if (!confirm('⚠️ You are unmarking a profit share distribution as unpaid.\n\nThis will affect profit share % lock status for this member. Are you sure?')) return;
   }
-  state.profitSharePaidStatus[pkey] = checked;
+  state.profitSharePaidStatus[pkey] = { paid: checked, psPct: null, allocationAmount: null };
   _markRecentWrite('psStatus', pkey);
   renderProfitShareView();
   const lastUnderscore = pkey.lastIndexOf('_');
   const quarterKey = pkey.substring(0, lastUnderscore);
   const memberId = pkey.substring(lastUnderscore + 1);
   try {
-    await api('POST', '/profit-share-status', { quarterKey, memberId, paid: checked });
+    // Compute snapshot values at time of payment
+    const _psMember = state.team.find(m=>m.id===memberId);
+    const [_yr, _qStr] = quarterKey.split('-Q');
+    const _qNum = parseInt(_qStr);
+    const _qStart = new Date(parseInt(_yr), (_qNum-1)*3, 1);
+    const _qEnd   = new Date(parseInt(_yr), _qNum*3, 1);
+    const _pool = state.deals
+      .filter(d=>{
+        if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+        if(!d.closeDate) return false;
+        const cd = new Date(d.closeDate+'-01');
+        return cd>=_qStart&&cd<_qEnd;
+      })
+      .reduce((sum,d)=>{
+        const psB=d.buckets?.find(b=>b.name==='Profit Share');
+        return sum+(psB?netRev(d)*psB.pct/100:netRev(d)*0.175);
+      },0);
+    const _psPct = _psMember ? (_psMember.profitSharePct||0) : 0;
+    const _allocation = Math.round(_pool*_psPct/100*100)/100;
+
+    await api('POST', '/profit-share-status', {
+      quarterKey, memberId, paid: checked,
+      psPct: checked ? _psPct : null,
+      allocationAmount: checked ? _allocation : null,
+    });
+
+    // Update local state with snapshot data
+    state.profitSharePaidStatus[pkey] = {
+      paid: checked,
+      psPct: checked ? _psPct : null,
+      allocationAmount: checked ? _allocation : null,
+    };
+
     notify(checked ? 'Profit share marked as paid ✓' : 'Marked as unpaid');
     if (checked) {
-      // Build snapshot of PS amount from current quarter data
-      const member = state.team.find(m=>m.id===memberId);
+      const member = _psMember;
       if (member) {
-        // Compute quarter pool from deals closed in this quarter
-        const [yr, qStr] = quarterKey.split('-Q');
-        const qNum = parseInt(qStr);
-        const qStart = new Date(parseInt(yr), (qNum-1)*3, 1);
-        const qEnd   = new Date(parseInt(yr), qNum*3, 1);
-        const pool = state.deals
-          .filter(d=>{
-            if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
-            if(!d.closeDate) return false;
-            const cd = new Date(d.closeDate+'-01');
-            return cd>=qStart&&cd<qEnd;
-          })
-          .reduce((sum,d)=>{
-            const psB=d.buckets?.find(b=>b.name==='Profit Share');
-            return sum + (psB?netRev(d)*psB.pct/100:netRev(d)*0.175);
-          },0);
-        const psPct = member.profitSharePct||0;
-        const amount = Math.round(pool*psPct/100*100)/100;
+        const pool = _pool;
+        const psPct = _psPct;
+        const amount = _allocation;
         try {
           const saved = await api('POST','/pay-log',{
             memberId, memberName: member.name,
@@ -2028,7 +2061,7 @@ async function toggleProfitSharePaid(pkey, checked) {
       }
     }
   } catch(e) {
-    state.profitSharePaidStatus[pkey] = !checked;
+    state.profitSharePaidStatus[pkey] = { paid: !checked, psPct: null, allocationAmount: null };
     _recentWrites['psStatus']?.delete(pkey);
     notify('Update failed: ' + e.message);
     renderProfitShareView();
@@ -3648,7 +3681,7 @@ function renderTeamOverview(){
           ?`<div style="background:var(--bg3);border:1px solid var(--gold-dim2);border-radius:6px;padding:8px 12px;margin-bottom:12px">
               <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Profit Share %</div>
               <div style="display:flex;align-items:center;gap:8px">
-                ${(()=>{ const psLocked=Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+                ${(()=>{ const psLocked=_hasPsPaid(m.id);
                   return psLocked
                     ? `<span style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;display:inline-flex;align-items:center;gap:4px">🔒 ${m.profitSharePct||0}%</span>`
                     : `<input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">`;
@@ -3719,7 +3752,7 @@ function calcPaidEarnings(filterFn){
   // Profit share paid — sum across all quarters for each member
   // Key format: YYYY-QN_memberId
   state.team.forEach(m=>{
-    Object.entries(state.profitSharePaidStatus).forEach(([pkey,paid])=>{
+    Object.entries(state.profitSharePaidStatus).forEach(([pkey,entry])=>{ const paid=_isPsPaid(pkey); if(!paid) return;
       if(!paid) return;
       // Extract memberId from last segment
       const lastUnderscore=pkey.lastIndexOf('_');
@@ -3952,7 +3985,7 @@ function openTeamModal(editId){
   document.getElementById('tm-ps').value=m?(m.profitSharePct||0):0;
   document.getElementById('tm-ps-group').style.display=can.manageTeam()?'block':'none';
   // Lock PS% field if this member has any paid profit share
-  const tmPsLocked = m && Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+  const tmPsLocked = m && _hasPsPaid(m.id);
   const tmPsInput = document.getElementById('tm-ps');
   if(tmPsInput){ tmPsInput.readOnly=tmPsLocked; tmPsInput.style.opacity=tmPsLocked?'0.5':'1'; tmPsInput.title=tmPsLocked?'Locked — profit share has been paid':''; }
   const tmPsLabel = document.querySelector('label[for="tm-ps"]') || document.querySelector('#tm-ps-group .form-label');
@@ -4051,7 +4084,7 @@ function renderProfitShareView(){
 
   const quarters=Object.values(quarterMap).sort((a,b)=>b.year-a.year||b.quarter-a.quarter);
   const totalPs=quarters.reduce((s,q)=>s+q.profitSharePool,0);
-  const totalPaid=Object.entries(state.profitSharePaidStatus).filter(([,v])=>v).length;
+  const totalPaid=Object.keys(state.profitSharePaidStatus).filter(k=>_isPsPaid(k)).length;
   const totalMembers=state.team.length;
   const totalSlots=quarters.length*totalMembers;
   const pctPaid=totalSlots?Math.round(totalPaid/totalSlots*100):0;
@@ -4117,9 +4150,17 @@ function renderProfitShareView(){
       <div class="ps-member-grid">
         ${state.team.map(m=>{
           const pkey=`${q.key}_${m.id}`;
-          const paid=!!state.profitSharePaidStatus[pkey];
-          const psPct=m.profitSharePct||0;
-          const allocation=q.profitSharePool*psPct/100;
+          const paid=_isPsPaid(pkey);
+          const snapshot=_getPsSnapshot(pkey);
+          const livePct=m.profitSharePct||0;
+          // For paid quarters: use snapshotted % so historical figures never change
+          // For unpaid quarters: use current live %
+          const psPct = (paid && snapshot?.psPct != null) ? snapshot.psPct : livePct;
+          const allocation = (paid && snapshot?.allocationAmount != null)
+            ? snapshot.allocationAmount
+            : q.profitSharePool*psPct/100;
+          // Show a note if current % differs from the snapshotted historical %
+          const pctDrifted = paid && snapshot?.psPct != null && snapshot.psPct !== livePct;
           return`<div class="ps-card ${paid?'paid-card':''}">
             <div class="ps-card-top">
               <div class="user-avatar" style="background:${m.color};width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#0e0e0f;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
@@ -4127,22 +4168,24 @@ function renderProfitShareView(){
                 <div class="ps-name">${m.name}</div>
                 <div class="ps-role">${m.role}</div>
               </div>
-              <div class="ps-pct-badge">${psPct}%</div>
+              <div class="ps-pct-badge" title="${paid?'Rate at time of payment':'Current rate'}">${psPct}%${pctDrifted?` <span style="font-size:8px;color:var(--text3)">(now ${livePct}%)</span>`:''}</div>
             </div>
-            ${state.isAdmin?`
+            ${paid?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);padding:4px 0 0;display:flex;align-items:center;gap:4px">🔒 Paid at ${psPct}%${pctDrifted?` · current ${livePct}%`:''}</div>`:''}
+            ${!paid&&state.isAdmin?`
               <div class="ps-edit-pct">
                 <span class="ps-edit-label"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Share %</span>
-                ${(()=>{ const psLocked=Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+                ${(()=>{ const psLocked=_hasPsPaid(m.id);
                   return psLocked
-                    ? `<span class="ps-edit-input" style="display:inline-flex;align-items:center;gap:4px;opacity:0.7" title="Locked — profit share has been paid">🔒 ${psPct}%</span>`
-                    : `<input class="ps-edit-input" type="number" value="${psPct}" min="0" max="100" step="0.5" oninput="updateMemberPsPct('${m.id}',this.value)">`;
+                    ? `<span class="ps-edit-input" style="display:inline-flex;align-items:center;gap:4px;opacity:0.7" title="Locked — profit share has been paid for another quarter. Changes only take effect in new quarters.">🔒 ${livePct}%</span>`
+                    : `<input class="ps-edit-input" type="number" value="${livePct}" min="0" max="100" step="0.5" oninput="updateMemberPsPct('${m.id}',this.value)">`;
                 })()}
               </div>`:''}
             <div class="ps-amount">${fmt(allocation)}</div>
-            <div class="ps-bar"><div class="ps-bar-fill" style="width:${psPct}%"></div></div>
+            <div class="ps-bar"><div class="ps-bar-fill" style="width:${Math.min(psPct,100)}%"></div></div>
             <div class="ps-breakdown">
               <div class="ps-row"><span class="ps-row-label">Share of pool</span><span class="ps-row-val">${psPct}% × ${fmt(q.profitSharePool)}</span></div>
               <div class="ps-row"><span class="ps-row-label">Quarter</span><span class="ps-row-val">${q.label}</span></div>
+              ${pctDrifted?`<div class="ps-row"><span class="ps-row-label" style="color:var(--text3)">Current %</span><span class="ps-row-val" style="color:var(--text3)">${livePct}% (effective next quarter)</span></div>`:''}
             </div>
             <div class="paid-status">
               <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="toggleProfitSharePaid('${pkey}',this.checked)"><span class="toggle-slider"></span></label>
