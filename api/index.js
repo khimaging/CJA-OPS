@@ -157,7 +157,14 @@ app.get('/api/pay-status', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('pay_status').select('*');
   if (error) return res.status(500).json({ error: error.message });
   const out = {};
-  data.forEach(r => { out[`${r.project_id}_${r.member_id}`] = r.paid; });
+  // Support both old schema (project_id + member_id) and new schema (pay_key)
+  data.forEach(r => {
+    if (r.pay_key) {
+      out[r.pay_key] = r.paid;
+    } else {
+      out[`${r.project_id}_${r.member_id}`] = r.paid;
+    }
+  });
   res.json(out);
 });
 
@@ -310,11 +317,11 @@ app.delete('/api/expenses/:id', requireAuth, requireCanDelete, async (req, res) 
 app.post('/api/pay-status', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { projectId, memberId, paid } = req.body;
-    const { data, error } = await supabase
+    // Composite key supports both production keys (uuid_uuid) and fee keys (uuid_fee_name_uuid)
+    const payKey = `${projectId}_${memberId}`;
+    const { error } = await supabase
       .from('pay_status')
-      .upsert({ project_id: projectId, member_id: memberId, paid },
-               { onConflict: 'project_id,member_id' })
-      .select().single();
+      .upsert({ pay_key: payKey, paid }, { onConflict: 'pay_key' });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
