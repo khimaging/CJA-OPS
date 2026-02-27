@@ -2516,12 +2516,26 @@ function renderProjects(){
   }).join('');
 }
 
-function cycleProjectStatus(pid){
+async function cycleProjectStatus(pid){
   const p=state.projects.find(x=>x.id===pid);
   if(!p)return;
-  p.status=p.status==='complete'?'active':'complete';
-  notify(p.status==='complete'?'Project marked complete ✓':'Project marked active');
+  const prev=p.status;
+  const next=p.status==='complete'?'active':'complete';
+  p.status=next;
+  _markRecentWrite('projects',pid);
+  console.log('[CJA] cycleProjectStatus',pid,next,'token:',!!_authToken);
+  notify(next==='complete'?'Project marked complete ✓':'Project marked active');
   renderProjects();
+  try {
+    await api('PATCH','/projects/'+pid,{status:next});
+    console.log('[CJA] cycleProjectStatus saved ok');
+  } catch(e) {
+    console.error('[CJA] cycleProjectStatus FAILED',e.message);
+    p.status=prev;
+    _recentWrites['projects']?.delete(pid);
+    notify('Save failed: '+e.message);
+    renderProjects();
+  }
 }
 
 async function toggleArchiveProject(pid){
