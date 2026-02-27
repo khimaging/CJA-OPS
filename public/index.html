@@ -1700,6 +1700,7 @@ async function setProjectStatusInline(pid, status) {
   }
   renderProjMonthly();
   if (state.projectTab === 'grid') renderProjects();
+  if (state.currentPage === 'pay') renderPayView();
 }
 
 // ── TASKS ──
@@ -2898,10 +2899,18 @@ function renderPayView(){
   document.getElementById('pay-content').innerHTML=html;
 }
 
-function togglePaid(projId,memberId,checked){
-  state.payStatus[projId+'_'+memberId]=checked;
-  notify(checked?'Marked as paid ✓':'Marked as unpaid');
+async function togglePaid(projId,memberId,checked){
+  const key=projId+'_'+memberId;
+  state.payStatus[key]=checked;
   renderPayView();
+  try {
+    await api('POST','/pay-status',{projectId:projId,memberId,paid:checked});
+    notify(checked?'Marked as paid ✓':'Marked as unpaid');
+  } catch(e) {
+    state.payStatus[key]=!checked;
+    notify('Save failed: '+e.message);
+    renderPayView();
+  }
 }
 
 // ============================================================
