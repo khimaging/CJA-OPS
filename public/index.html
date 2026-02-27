@@ -683,6 +683,17 @@
         Deal Buckets
       </div>
     </div>
+    <div class="nav-section" id="nav-audit-section" style="display:none">
+      <div class="nav-label">Admin</div>
+      <div class="nav-item" onclick="switchView('paylog')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        Pay Log
+      </div>
+      <div class="nav-item" onclick="switchView('auditlog')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="16" r="1" fill="currentColor"/></svg>
+        Audit Log
+      </div>
+    </div>
     <div class="nav-section">
       <div class="nav-label">Team</div>
       <div class="nav-item" id="nav-team" onclick="switchView('team')">
@@ -830,6 +841,23 @@
     <div class="content"><div id="profitshare-content"></div></div>
   </div>
 
+  <!-- PAY LOG -->
+  <div id="view-paylog" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Pay Log</div><div class="page-sub">Historical record of all payments made</div></div>
+      <div class="topbar-actions" id="paylog-topbar-actions"></div>
+    </div>
+    <div class="content"><div id="paylog-content"></div></div>
+  </div>
+
+  <!-- AUDIT LOG -->
+  <div id="view-auditlog" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Audit Log</div><div class="page-sub">Changes to paid deals, locked tasks, and profit share</div></div>
+    </div>
+    <div class="content"><div id="auditlog-content"></div></div>
+  </div>
+
   <!-- EXPENSES -->
   <div id="view-expenses" class="view">
     <div class="topbar">
@@ -884,6 +912,9 @@
       <div class="form-group"><label class="form-label">Client</label><input class="form-input" id="d-client" placeholder="Acme Corp"></div>
     </div>
     <!-- Revenue fields -->
+    <div id="d-financial-lock-banner" style="display:none;background:rgba(224,90,90,0.08);border:1px solid rgba(224,90,90,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--red);letter-spacing:.04em">
+      🔒 FINANCIAL FIELDS LOCKED — Invoice marked Paid. Change invoice status to edit value or buckets.
+    </div>
     <div class="form-row">
       <div class="form-group">
         <label class="form-label">Gross Revenue ($)</label>
@@ -1246,7 +1277,7 @@ function updateNetRevPreview(){
 }
 
 let state={
-  deals:[],projects:[],tasks:[],payStatus:{},profitSharePaidStatus:{},
+  deals:[],projects:[],tasks:[],payStatus:{},profitSharePaidStatus:{},payLog:[],
   expenses:[],
   isAdmin:false,
   team:[
@@ -1406,6 +1437,7 @@ async function bootstrapState() {
   state.expenses              = data.expenses;
   state.payStatus             = data.payStatus || {};
   state.profitSharePaidStatus = data.profitSharePaidStatus || {};
+  state.payLog = data.payLog || [];
   // archivedProjects derived from projects.archived flag
   state.archivedProjects = {};
   state.projects.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
@@ -1444,6 +1476,7 @@ function _subscribeRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'team_members' },    () => _rtRefresh('team'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pay_status' },      () => _rtRefresh('payStatus'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_share_status' }, () => _rtRefresh('psStatus'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pay_log' },             () => _rtRefresh('payLog'))
     .subscribe();
 }
 
@@ -1530,6 +1563,12 @@ async function _rtPullTable(table) {
       if (state.currentPage === 'pay') renderPayView();
       break;
     }
+    case 'payLog': {
+      const data = await api('GET', '/pay-log');
+      state.payLog = data;
+      if (state.currentPage === 'paylog') renderPayLog();
+      break;
+    }
     case 'psStatus': {
       const data = await api('GET', '/profit-share-status');
       const recentKeys = _recentWrites['psStatus'] || new Set();
@@ -1554,6 +1593,9 @@ function _showSyncPulse() {
 }
 
 function updateNavChip() {
+  // Show audit log nav for admins only
+  const auditSection = document.getElementById('nav-audit-section');
+  if (auditSection) auditSection.style.display = auth.role === 'admin' ? 'block' : 'none';
   const u = auth.user;
   if (!u) return;
   const m = state.team.find(t => t.id === u.id);
@@ -1599,7 +1641,25 @@ function openEditDealModal(id) {
 // ============================================================
 
 // ── DEALS ──
+// Check if the deal currently open in the modal is financially locked
+function isDealModalLocked() {
+  const editId = document.getElementById('deal-modal')?.dataset?.editId;
+  if (!editId) return false;
+  const deal = state.deals.find(d => d.id === editId);
+  return deal?.invoiceStatus === 'paid';
+}
+
 async function saveDeal() {
+  // Front-end guard — API enforces this server-side too
+  const _editId = document.getElementById('deal-modal').dataset.editId;
+  if (_editId && isDealModalLocked()) {
+    const _deal = state.deals.find(d => d.id === _editId);
+    const _newVal = parseFloat(document.getElementById('d-value').value) || 0;
+    if (_newVal !== (_deal?.value || 0)) {
+      notify('🔒 Deal value is locked — invoice is marked Paid');
+      return;
+    }
+  }
   const name         = document.getElementById('d-name').value.trim();
   const client       = document.getElementById('d-client').value.trim();
   const value        = parseFloat(document.getElementById('d-value').value);
@@ -1671,6 +1731,10 @@ async function pipelineDrop(e, stage) {
 async function updateInvStatus(id, status) {
   const d = state.deals.find(d => d.id === id);
   if (!d) return;
+  // Warn when unmarking paid — this unlocks financial fields and affects payout calculations
+  if (d.invoiceStatus === 'paid' && status !== 'paid') {
+    if (!confirm('⚠️ This deal is marked Paid.\n\nChanging the invoice status will unlock financial fields and may affect payout calculations.\n\nAre you sure you want to continue?')) return;
+  }
   const prev = d.invoiceStatus;
   d.invoiceStatus = status;  // optimistic
   try {
@@ -1909,13 +1973,60 @@ async function togglePayStatus(projId, memberId, checked) {
 
 // ── PROFIT SHARE STATUS ──
 async function toggleProfitSharePaid(pkey, checked) {
+  if (!checked) {
+    if (!confirm('⚠️ You are unmarking a profit share distribution as unpaid.\n\nThis will affect profit share % lock status for this member. Are you sure?')) return;
+  }
   state.profitSharePaidStatus[pkey] = checked;
   _markRecentWrite('psStatus', pkey);
   renderProfitShareView();
-  const [quarterKey, memberId] = pkey.split(/_(?=[^_]*$)/);   // split on last underscore
+  const lastUnderscore = pkey.lastIndexOf('_');
+  const quarterKey = pkey.substring(0, lastUnderscore);
+  const memberId = pkey.substring(lastUnderscore + 1);
   try {
     await api('POST', '/profit-share-status', { quarterKey, memberId, paid: checked });
     notify(checked ? 'Profit share marked as paid ✓' : 'Marked as unpaid');
+    if (checked) {
+      // Build snapshot of PS amount from current quarter data
+      const member = state.team.find(m=>m.id===memberId);
+      if (member) {
+        // Compute quarter pool from deals closed in this quarter
+        const [yr, qStr] = quarterKey.split('-Q');
+        const qNum = parseInt(qStr);
+        const qStart = new Date(parseInt(yr), (qNum-1)*3, 1);
+        const qEnd   = new Date(parseInt(yr), qNum*3, 1);
+        const pool = state.deals
+          .filter(d=>{
+            if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+            if(!d.closeDate) return false;
+            const cd = new Date(d.closeDate+'-01');
+            return cd>=qStart&&cd<qEnd;
+          })
+          .reduce((sum,d)=>{
+            const psB=d.buckets?.find(b=>b.name==='Profit Share');
+            return sum + (psB?netRev(d)*psB.pct/100:netRev(d)*0.175);
+          },0);
+        const psPct = member.profitSharePct||0;
+        const amount = Math.round(pool*psPct/100*100)/100;
+        try {
+          const saved = await api('POST','/pay-log',{
+            memberId, memberName: member.name,
+            payType: 'profit_share',
+            amount,
+            quarterKey,
+            sourceKey: pkey,
+            isManual: false,
+            notes: `Profit share ${quarterKey} — ${psPct}% of ${fmt(pool)} pool`,
+          });
+          state.payLog.unshift(saved);
+        } catch(le) { console.warn('PS pay log entry failed:', le.message); }
+      }
+    } else {
+      const match = state.payLog.find(l=>l.source_key===pkey&&!l.is_manual);
+      if (match) {
+        try { await api('DELETE','/pay-log/'+match.id); } catch(e) { /* non-critical */ }
+        state.payLog = state.payLog.filter(l=>l.id!==match.id);
+      }
+    }
   } catch(e) {
     state.profitSharePaidStatus[pkey] = !checked;
     _recentWrites['psStatus']?.delete(pkey);
@@ -2018,7 +2129,8 @@ async function updateMemberPsPct(mid, val) {
 // ============================================================
 //  NAV
 // ============================================================
-const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team'};
+const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team',paylog:'Pay Log',auditlog:'Audit Log',
+};
 
 function switchView(name){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -2053,6 +2165,8 @@ function renderPage(name){
   }
   if(name==='pay'){renderPayView();}
   if(name==='profitshare'){renderProfitShareView();}
+  if(name==='paylog'){renderPayLog();}
+  if(name==='auditlog'){renderAuditLog();}
   if(name==='expenses'){renderExpensesView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
@@ -2089,6 +2203,295 @@ function syncDealExpenses(){
     deal.expenses=Math.round(total*100)/100;
   });
   if(state.currentPage==='crm') renderCRM();
+}
+
+async function renderAuditLog(){
+  const el=document.getElementById('auditlog-content');
+  if(!el)return;
+  el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+    <div>
+      <div style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:4px">Changes to paid deals, locked tasks, and profit share</div>
+    </div>
+  </div>
+  <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-bottom:12px">Loading…</div>`;
+
+  try {
+    const logs = await api('GET', '/audit-log');
+    if(!logs.length){
+      el.querySelector('div:last-child').innerHTML='<div style="font-family:monospace;font-size:11px;color:var(--text3)">No audit events recorded yet.</div>';
+      return;
+    }
+    const ACTION_COLOR={
+      'BLOCKED_EDIT_PAID_DEAL':'var(--red)',
+      'BLOCKED_DELETE_PAID_DEAL':'var(--red)',
+      'BLOCKED_EDIT_TASK_HOURS':'var(--red)',
+      'BLOCKED_PS_PCT_CHANGE':'var(--red)',
+      'DELETE_DEAL':'var(--red)',
+      'EDIT_DEAL':'var(--gold)',
+      'EDIT_TEAM_PS_PCT':'var(--gold)',
+    };
+    const rows=logs.map(l=>{
+      const d=new Date(l.created_at);
+      const ds=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+' '+d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+      const color=ACTION_COLOR[l.action]||'var(--text3)';
+      const blocked=l.action.startsWith('BLOCKED');
+      const changes=l.changes?JSON.stringify(l.changes,null,2):'';
+      return`<div style="display:grid;grid-template-columns:150px 120px 160px 1fr;gap:12px;align-items:start;padding:12px 16px;border-bottom:1px solid var(--border);font-size:11px">
+        <div style="font-family:'DM Mono',monospace;color:var(--text3);font-size:10px">${ds}</div>
+        <div style="font-weight:500;color:var(--text)">${l.actor_name||'—'}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.04em;color:${color};background:${blocked?'rgba(224,90,90,0.08)':'var(--bg3)'};padding:2px 7px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${blocked?'⛔ ':''}${l.action}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);white-space:pre-wrap;word-break:break-all">${changes}</div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+      <div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:4px">Last 200 events — changes to paid deals, locked tasks, and profit share</div>
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:150px 120px 160px 1fr;gap:12px;padding:10px 16px;background:var(--bg);border-bottom:2px solid var(--border2)">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Time</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">By</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Action</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Details</span>
+      </div>
+      ${rows}
+    </div>`;
+  } catch(e) {
+    el.innerHTML=`<div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--red)">Failed to load audit log: ${e.message}</div>`;
+  }
+}
+
+
+// ============================================================
+//  PAY LOG
+// ============================================================
+let _paylogTab = 'person'; // 'person' | 'project' | 'chronological'
+
+function renderPayLog() {
+  const el = document.getElementById('paylog-content');
+  if (!el) return;
+
+  // Topbar action button
+  const tba = document.getElementById('paylog-topbar-actions');
+  if (tba && auth.role === 'admin') {
+    tba.innerHTML = `<button class="btn btn-primary" onclick="openPayLogModal()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>Manual Entry</button>`;
+  }
+
+  const logs = state.payLog || [];
+
+  // Summary totals
+  const totalPaid = logs.reduce((s,l)=>s+Number(l.amount||0),0);
+  const memberTotals = {};
+  logs.forEach(l => {
+    if (!l.member_id) return;
+    if (!memberTotals[l.member_id]) memberTotals[l.member_id] = { name: l.member_name, total: 0 };
+    memberTotals[l.member_id].total += Number(l.amount||0);
+  });
+
+  const tabBar = `<div class="pl-tab-bar">
+    <div class="pl-tab ${_paylogTab==='person'?'active':''}" onclick="_paylogTab='person';renderPayLog()">By Person</div>
+    <div class="pl-tab ${_paylogTab==='project'?'active':''}" onclick="_paylogTab='project';renderPayLog()">By Project</div>
+    <div class="pl-tab ${_paylogTab==='chronological'?'active':''}" onclick="_paylogTab='chronological';renderPayLog()">Chronological</div>
+  </div>`;
+
+  const summaryCard = `<div class="month-summary" style="margin-bottom:24px">
+    <div class="stat-card"><div class="stat-label">Total Paid Out</div><div class="stat-value" style="color:var(--green)">${fmt(totalPaid)}</div><div class="stat-delta">${logs.length} entries</div></div>
+    <div class="stat-card"><div class="stat-label">Production</div><div class="stat-value" style="color:var(--gold)">${fmt(logs.filter(l=>l.pay_type==='production').reduce((s,l)=>s+Number(l.amount),0))}</div><div class="stat-delta">${logs.filter(l=>l.pay_type==='production').length} payments</div></div>
+    <div class="stat-card"><div class="stat-label">Fees</div><div class="stat-value" style="color:var(--teal)">${fmt(logs.filter(l=>l.pay_type==='fee').reduce((s,l)=>s+Number(l.amount),0))}</div><div class="stat-delta">${logs.filter(l=>l.pay_type==='fee').length} payments</div></div>
+    <div class="stat-card"><div class="stat-label">Profit Share</div><div class="stat-value" style="color:#a5b4fc">${fmt(logs.filter(l=>l.pay_type==='profit_share').reduce((s,l)=>s+Number(l.amount),0))}</div><div class="stat-delta">${logs.filter(l=>l.pay_type==='profit_share').length} payments</div></div>
+  </div>`;
+
+  let body = '';
+
+  if (_paylogTab === 'chronological') {
+    body = _renderPayLogChronological(logs);
+  } else if (_paylogTab === 'person') {
+    body = _renderPayLogByPerson(logs);
+  } else {
+    body = _renderPayLogByProject(logs);
+  }
+
+  el.innerHTML = tabBar + summaryCard + (logs.length ? body : `<div class="empty-state"><div class="empty-title">No payments recorded yet</div><div class="empty-sub">Payments are automatically logged when you mark items paid in the Pay Calculator or Profit Share view.</div></div>`);
+}
+
+function _fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+
+function _typeBadge(type) {
+  const labels = { production:'Production', fee:'Fee', profit_share:'Profit Share', manual:'Manual' };
+  return `<span class="pl-type-badge pl-type-${type}">${labels[type]||type}</span>`;
+}
+
+function _renderPayLogChronological(logs) {
+  if (!logs.length) return '';
+  const cols = '140px 130px 100px 120px 1fr 90px';
+  let running = logs.reduce((s,l)=>s+Number(l.amount||0),0);
+  const rows = logs.map(l => {
+    const rt = running;
+    running -= Number(l.amount||0);
+    const proj = l.project_name ? `<span style="color:var(--text2)">${l.project_name}</span>` : '<span style="color:var(--text3)">—</span>';
+    const del = l.is_manual && auth.role==='admin' ? `<button onclick="deletePayLogEntry('${l.id}')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0" title="Delete manual entry">✕</button>` : '';
+    return `<div class="pl-row" style="grid-template-columns:${cols}">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${_fmtDate(l.paid_at)}</div>
+      <div style="font-weight:500;color:var(--text);font-size:12px">${l.member_name||'—'}</div>
+      <div>${_typeBadge(l.pay_type)}</div>
+      <div class="pl-amount">${fmt(Number(l.amount))}</div>
+      <div style="font-size:11px;color:var(--text3)">${l.notes||l.project_name||'—'}${l.deal_name?` <span style="color:var(--text3);font-size:10px">· ${l.deal_name}</span>`:''}</div>
+      <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end"><span class="pl-running">${fmt(rt)}</span>${del}</div>
+    </div>`;
+  }).join('');
+  return `<div class="pl-table">
+    <div class="pl-thead" style="grid-template-columns:${cols}">
+      <span class="pl-th">Date</span><span class="pl-th">Member</span><span class="pl-th">Type</span><span class="pl-th">Amount</span><span class="pl-th">Details</span><span class="pl-th" style="text-align:right">Running Total</span>
+    </div>${rows}</div>`;
+}
+
+function _renderPayLogByPerson(logs) {
+  const byMember = {};
+  logs.forEach(l => {
+    const key = l.member_id || 'unknown';
+    if (!byMember[key]) byMember[key] = { name: l.member_name||'Unknown', color: state.team.find(m=>m.id===l.member_id)?.color||'#555', entries: [], total: 0 };
+    byMember[key].entries.push(l);
+    byMember[key].total += Number(l.amount||0);
+  });
+
+  return Object.values(byMember).sort((a,b)=>b.total-a.total).map(person => {
+    const init = person.name.split(' ').map(n=>n[0]).join('');
+    const breakdown = { production:0, fee:0, profit_share:0, manual:0 };
+    person.entries.forEach(l => { breakdown[l.pay_type] = (breakdown[l.pay_type]||0) + Number(l.amount); });
+
+    let running = person.total;
+    const rows = person.entries.map(l => {
+      const rt = running;
+      running -= Number(l.amount||0);
+      const del = l.is_manual && auth.role==='admin' ? `<button onclick="deletePayLogEntry('${l.id}')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0" title="Delete">✕</button>` : '';
+      return `<div class="pl-row" style="grid-template-columns:120px 90px 1fr 90px 30px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${_fmtDate(l.paid_at)}</div>
+        <div>${_typeBadge(l.pay_type)}</div>
+        <div style="font-size:11px;color:var(--text2)">${l.notes||l.project_name||'—'}${l.deal_name?` <span style="color:var(--text3);font-size:10px">· ${l.deal_name}</span>`:''}</div>
+        <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end"><span class="pl-amount">${fmt(Number(l.amount))}</span><span class="pl-running">${fmt(rt)}</span></div>
+        <div>${del}</div>
+      </div>`;
+    }).join('');
+
+    const bkdStr = Object.entries(breakdown).filter(([,v])=>v>0).map(([k,v])=>`<span class="pl-type-badge pl-type-${k}" style="margin-right:4px">${fmt(v)}</span>`).join('');
+
+    return `<div class="pl-person-block">
+      <div class="pl-person-header">
+        <div class="user-avatar" style="background:${person.color};width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#0e0e0f;flex-shrink:0">${init}</div>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--text)">${person.name}</div>
+          <div class="pl-person-sub">${person.entries.length} payment${person.entries.length!==1?'s':''} · ${bkdStr}</div>
+        </div>
+        <div class="pl-person-total">${fmt(person.total)}</div>
+      </div>
+      <div class="pl-thead" style="grid-template-columns:120px 90px 1fr 90px 30px">
+        <span class="pl-th">Date</span><span class="pl-th">Type</span><span class="pl-th">Details</span><span class="pl-th" style="text-align:right">Amount · Running</span><span></span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function _renderPayLogByProject(logs) {
+  const byProject = {};
+  // Group by project, with a special group for PS/manual (no project)
+  logs.forEach(l => {
+    const key = l.project_id || '__noproj__';
+    const label = l.project_name || (l.quarter_key ? `Profit Share ${l.quarter_key}` : 'No Project');
+    if (!byProject[key]) byProject[key] = { label, deal: l.deal_name, entries: [], total: 0 };
+    byProject[key].entries.push(l);
+    byProject[key].total += Number(l.amount||0);
+  });
+
+  return Object.values(byProject).sort((a,b)=>b.total-a.total).map(grp => {
+    const rows = grp.entries.map(l => {
+      const del = l.is_manual && auth.role==='admin' ? `<button onclick="deletePayLogEntry('${l.id}')" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:11px;padding:0" title="Delete">✕</button>` : '';
+      return `<div class="pl-row" style="grid-template-columns:120px 130px 90px 1fr 90px 30px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${_fmtDate(l.paid_at)}</div>
+        <div style="font-weight:500;font-size:12px;color:var(--text)">${l.member_name||'—'}</div>
+        <div>${_typeBadge(l.pay_type)}</div>
+        <div style="font-size:11px;color:var(--text3)">${l.notes||'—'}</div>
+        <div class="pl-amount" style="text-align:right">${fmt(Number(l.amount))}</div>
+        <div>${del}</div>
+      </div>`;
+    }).join('');
+
+    return `<div class="pl-project-block">
+      <div class="pl-project-header">
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--text)">${grp.label}</div>
+          ${grp.deal?`<div style="font-size:11px;color:var(--text3);margin-top:2px;font-family:'DM Mono',monospace">${grp.deal}</div>`:''}
+        </div>
+        <div class="pl-amount" style="font-size:16px">${fmt(grp.total)}</div>
+      </div>
+      <div class="pl-thead" style="grid-template-columns:120px 130px 90px 1fr 90px 30px">
+        <span class="pl-th">Date</span><span class="pl-th">Member</span><span class="pl-th">Type</span><span class="pl-th">Notes</span><span class="pl-th" style="text-align:right">Amount</span><span></span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+function openPayLogModal() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('pl-member').innerHTML = state.team.filter(m=>m.active).map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  document.getElementById('pl-project').innerHTML = '<option value="">— None —</option>' + state.projects.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  document.getElementById('pl-amount').value = '';
+  document.getElementById('pl-date').value = today;
+  document.getElementById('pl-notes').value = '';
+  document.getElementById('pl-type').value = 'manual';
+  document.getElementById('paylog-modal').classList.add('open');
+}
+
+async function savePayLogEntry() {
+  const memberId = document.getElementById('pl-member').value;
+  const amount   = parseFloat(document.getElementById('pl-amount').value);
+  const paidAt   = document.getElementById('pl-date').value;
+  const notes    = document.getElementById('pl-notes').value.trim();
+  const payType  = document.getElementById('pl-type').value;
+  const projId   = document.getElementById('pl-project').value;
+
+  if (!memberId || isNaN(amount) || amount <= 0) { notify('Member and a valid amount are required'); return; }
+  if (!paidAt) { notify('Payment date is required'); return; }
+
+  const member  = state.team.find(m=>m.id===memberId);
+  const proj    = projId ? state.projects.find(p=>p.id===projId) : null;
+  const deal    = proj   ? state.deals.find(d=>d.id===proj.dealId) : null;
+
+  closeModal('paylog-modal');
+  try {
+    const saved = await api('POST','/pay-log',{
+      memberId, memberName: member?.name,
+      payType, amount,
+      projectId: projId||null, projectName: proj?.name||null,
+      dealId: deal?.id||null, dealName: deal?.name||null,
+      dealValue: deal?.value||null, dealNet: deal?netRev(deal):null,
+      notes, isManual: true,
+      paidAt: paidAt+'T12:00:00.000Z',
+    });
+    state.payLog.unshift(saved);
+    state.payLog.sort((a,b)=>new Date(b.paid_at)-new Date(a.paid_at));
+    notify('Payment entry saved ✓');
+    if (state.currentPage==='paylog') renderPayLog();
+  } catch(e) { notify('Save failed: '+e.message); }
+}
+
+async function deletePayLogEntry(id) {
+  if (!confirm('Delete this manual payment entry? This cannot be undone.')) return;
+  try {
+    await api('DELETE','/pay-log/'+id);
+    state.payLog = state.payLog.filter(l=>l.id!==id);
+    notify('Entry deleted');
+    renderPayLog();
+  } catch(e) { notify('Delete failed: '+e.message); }
 }
 
 function renderExpensesView(){
@@ -2986,6 +3389,9 @@ function renderPayView(){
 }
 
 async function togglePaid(projId,memberId,checked){
+  if (!checked) {
+    if (!confirm('⚠️ You are unmarking a payment as unpaid.\n\nThis will affect payout calculations. Are you sure?')) return;
+  }
   const key=projId+'_'+memberId;
   state.payStatus[key]=checked;
   _markRecentWrite('payStatus', key);
@@ -2993,12 +3399,76 @@ async function togglePaid(projId,memberId,checked){
   try {
     await api('POST','/pay-status',{projectId:projId,memberId,paid:checked});
     notify(checked?'Marked as paid ✓':'Marked as unpaid');
+    // Auto-log when marking paid (not when unmarking)
+    if (checked) {
+      const logEntry = _buildPayLogEntry(projId, memberId);
+      if (logEntry) {
+        try {
+          const saved = await api('POST','/pay-log',{...logEntry, sourceKey:key, isManual:false});
+          state.payLog.unshift(saved);
+        } catch(le) { console.warn('Pay log entry failed:', le.message); }
+      }
+    } else {
+      // Remove the matching auto log entry when unmarking
+      const match = state.payLog.find(l=>l.source_key===key&&!l.is_manual);
+      if (match) {
+        try { await api('DELETE','/pay-log/'+match.id); } catch(e) { /* non-critical */ }
+        state.payLog = state.payLog.filter(l=>l.id!==match.id);
+      }
+    }
   } catch(e) {
     state.payStatus[key]=!checked;
     _recentWrites['payStatus']?.delete(key);
     notify('Save failed: '+e.message);
     renderPayView();
   }
+}
+
+// Build a pay log entry payload from current state at time of payment
+function _buildPayLogEntry(projId, memberId) {
+  const member = state.team.find(m=>m.id===memberId);
+  if (!member) return null;
+
+  // Check if this is a fee key (projId contains '_fee_')
+  const feeMatch = projId.match(/^(.+)_fee_(.+)$/);
+  const realProjId = feeMatch ? feeMatch[1] : projId;
+  const feeName = feeMatch ? feeMatch[2].replace(/_/g,' ') : null;
+
+  const proj = state.projects.find(p=>p.id===realProjId);
+  const deal = proj ? state.deals.find(d=>d.id===proj.dealId) : null;
+
+  if (feeName && deal) {
+    // Fee payment
+    const bucket = deal.buckets.find(b=>b.isPersonal&&b.assignedTo===memberId&&b.name.replace(/\s/g,'_')===feeName.replace(/\s/g,'_'));
+    const amount = bucket ? netRev(deal)*bucket.pct/100 : 0;
+    return {
+      memberId, memberName: member.name,
+      payType: 'fee',
+      amount: Math.round(amount*100)/100,
+      projectId: realProjId, projectName: proj?.name,
+      dealId: deal.id, dealName: deal.name,
+      dealValue: deal.value, dealNet: netRev(deal),
+      notes: `Fee: ${feeName}`,
+    };
+  } else if (proj && deal) {
+    // Production payment
+    const pb = deal.buckets.find(b=>b.name==='Production Pool');
+    const pool = pb ? netRev(deal)*pb.pct/100 : 0;
+    const tasks = state.tasks.filter(t=>t.projectId===proj.id);
+    const totH = tasks.reduce((s,t)=>s+(t.estHours||0),0);
+    const myH = tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
+    const amount = totH>0 ? pool*(myH/totH) : 0;
+    return {
+      memberId, memberName: member.name,
+      payType: 'production',
+      amount: Math.round(amount*100)/100,
+      projectId: proj.id, projectName: proj.name,
+      dealId: deal.id, dealName: deal.name,
+      dealValue: deal.value, dealNet: netRev(deal),
+      notes: `Production: ${myH}h of ${totH}h`,
+    };
+  }
+  return null;
 }
 
 // ============================================================
@@ -3178,7 +3648,11 @@ function renderTeamOverview(){
           ?`<div style="background:var(--bg3);border:1px solid var(--gold-dim2);border-radius:6px;padding:8px 12px;margin-bottom:12px">
               <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Profit Share %</div>
               <div style="display:flex;align-items:center;gap:8px">
-                <input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">
+                ${(()=>{ const psLocked=Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+                  return psLocked
+                    ? `<span style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;display:inline-flex;align-items:center;gap:4px">🔒 ${m.profitSharePct||0}%</span>`
+                    : `<input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">`;
+                })()}
                 <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">% of pool</span>
               </div>
             </div>`
@@ -3477,6 +3951,12 @@ function openTeamModal(editId){
   document.getElementById('tm-role').value=m?m.role:'';
   document.getElementById('tm-ps').value=m?(m.profitSharePct||0):0;
   document.getElementById('tm-ps-group').style.display=can.manageTeam()?'block':'none';
+  // Lock PS% field if this member has any paid profit share
+  const tmPsLocked = m && Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+  const tmPsInput = document.getElementById('tm-ps');
+  if(tmPsInput){ tmPsInput.readOnly=tmPsLocked; tmPsInput.style.opacity=tmPsLocked?'0.5':'1'; tmPsInput.title=tmPsLocked?'Locked — profit share has been paid':''; }
+  const tmPsLabel = document.querySelector('label[for="tm-ps"]') || document.querySelector('#tm-ps-group .form-label');
+  if(tmPsLabel && tmPsLocked) tmPsLabel.innerHTML='Profit Share % 🔒';
   // PIN field
   const pinEl=document.getElementById('tm-pin');
   const pinHint=document.getElementById('tm-pin-hint');
@@ -3652,7 +4132,11 @@ function renderProfitShareView(){
             ${state.isAdmin?`
               <div class="ps-edit-pct">
                 <span class="ps-edit-label"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Share %</span>
-                <input class="ps-edit-input" type="number" value="${psPct}" min="0" max="100" step="0.5" oninput="updateMemberPsPct('${m.id}',this.value)">
+                ${(()=>{ const psLocked=Object.keys(state.profitSharePaidStatus).some(k=>k.endsWith('_'+m.id)&&state.profitSharePaidStatus[k]);
+                  return psLocked
+                    ? `<span class="ps-edit-input" style="display:inline-flex;align-items:center;gap:4px;opacity:0.7" title="Locked — profit share has been paid">🔒 ${psPct}%</span>`
+                    : `<input class="ps-edit-input" type="number" value="${psPct}" min="0" max="100" step="0.5" oninput="updateMemberPsPct('${m.id}',this.value)">`;
+                })()}
               </div>`:''}
             <div class="ps-amount">${fmt(allocation)}</div>
             <div class="ps-bar"><div class="ps-bar-fill" style="width:${psPct}%"></div></div>
@@ -3683,6 +4167,12 @@ function openDealModal(editId){
   document.getElementById('d-name').value=d?d.name:'';
   document.getElementById('d-client').value=d?d.client:'';
   document.getElementById('d-value').value=d?d.value:'';
+  // Show/hide financial lock banner
+  const lockBanner=document.getElementById('d-financial-lock-banner');
+  const isLocked=d&&d.invoiceStatus==='paid';
+  if(lockBanner) lockBanner.style.display=isLocked?'block':'none';
+  if(document.getElementById('d-value')) document.getElementById('d-value').readOnly=isLocked;
+  if(document.getElementById('d-expenses')) document.getElementById('d-expenses').readOnly=isLocked;
   document.getElementById('d-expenses').value=d?(d.expenses||0):'';
   document.getElementById('d-closedate').value=d?(d.closeDate||''):'';
   document.getElementById('d-stage').value=d?d.stage:'Lead';
@@ -3696,9 +4186,9 @@ function openDealModal(editId){
     <div class="bucket-input-row">
       <span style="background:${b.color};width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0"></span>
       <span style="font-size:12px;color:var(--text2)">${b.name}${b.isPersonal?` <span class="bucket-special">fee</span>`:''}</span>
-      <input class="form-input" style="padding:6px 10px;text-align:right;font-size:12px" type="number" id="bpct-${i}" value="${b.pct}" min="0" max="100" step="0.5" oninput="updatePctTotal()">
+      <input class="form-input" style="padding:6px 10px;text-align:right;font-size:12px${isLocked?';opacity:0.5':''};" type="number" id="bpct-${i}" value="${b.pct}" min="0" max="100" step="0.5" oninput="updatePctTotal()" ${isLocked?'readonly':''}">
       ${b.isPersonal
-        ?`<select class="form-select" style="padding:6px 10px;font-size:12px" id="bassign-${i}"><option value="">— Assign to —</option>${state.team.map(m=>`<option value="${m.id}" ${b.assignedTo===m.id?'selected':''}>${m.name}</option>`).join('')}</select>`
+        ?`<select class="form-select" style="padding:6px 10px;font-size:12px${isLocked?';opacity:0.5':''}" id="bassign-${i}" ${isLocked?'disabled':''}><option value="">— Assign to —</option>${state.team.map(m=>`<option value="${m.id}" ${b.assignedTo===m.id?'selected':''}>${m.name}</option>`).join('')}</select>`
         :`<span></span>`}
     </div>`).join('');
   updatePctTotal();
@@ -3814,5 +4304,53 @@ document.querySelectorAll('.modal-overlay').forEach(el=>{el.addEventListener('cl
 // Start login — data loads from Supabase after authentication
 initLogin();
 </script>
+
+  <!-- MANUAL PAY LOG ENTRY MODAL -->
+  <div id="paylog-modal" class="modal-overlay">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <div class="modal-title">Add Manual Payment <span style="font-size:12px;color:var(--text3);font-family:'DM Mono',monospace;">Entry</span></div>
+        <button class="modal-close" onclick="closeModal('paylog-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Team Member</label>
+          <select class="form-select" id="pl-member"></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Amount ($)</label>
+            <input class="form-input" id="pl-amount" type="number" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Date</label>
+            <input class="form-input" id="pl-date" type="date">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select class="form-select" id="pl-type">
+            <option value="manual">Manual / Other</option>
+            <option value="production">Production</option>
+            <option value="fee">Fee</option>
+            <option value="profit_share">Profit Share</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project (optional)</label>
+          <select class="form-select" id="pl-project"><option value="">— None —</option></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <input class="form-input" id="pl-notes" type="text" placeholder="e.g. Bonus, adjustment, etc.">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('paylog-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="savePayLogEntry()">Save Entry</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
