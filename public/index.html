@@ -1438,6 +1438,14 @@ function _subscribeRealtime() {
 
 // Debounce refreshes so rapid changes don't cause multiple re-renders
 const _rtTimers = {};
+const _recentWrites = {}; // table -> Set of IDs written in the last 2s
+
+function _markRecentWrite(table, id) {
+  if (!_recentWrites[table]) _recentWrites[table] = new Set();
+  _recentWrites[table].add(id);
+  setTimeout(() => { if(_recentWrites[table]) _recentWrites[table].delete(id); }, 2000);
+}
+
 function _rtRefresh(table) {
   clearTimeout(_rtTimers[table]);
   _rtTimers[table] = setTimeout(async () => {
@@ -1454,15 +1462,25 @@ async function _rtPullTable(table) {
     case 'deals': {
       const data = await api('GET', '/deals');
       state.deals = data;
+      syncDealExpenses(); // re-apply live expense totals over the fresh deal data
       if (state.currentPage === 'crm') renderCRM();
       break;
     }
     case 'projects': {
       const data = await api('GET', '/projects');
-      state.projects = data;
+      // Merge: preserve optimistic status for records we just wrote
+      const recent = _recentWrites['projects'] || new Set();
+      state.projects = data.map(incoming => {
+        if (recent.has(incoming.id)) {
+          const local = state.projects.find(p => p.id === incoming.id);
+          return local || incoming; // keep our optimistic version
+        }
+        return incoming;
+      });
       state.archivedProjects = {};
-      data.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
+      state.projects.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
       if (state.currentPage === 'projects') renderProjects();
+      if (state.currentPage === 'pay') renderPayView();
       break;
     }
     case 'tasks': {
@@ -1474,12 +1492,7 @@ async function _rtPullTable(table) {
     case 'expenses': {
       const data = await api('GET', '/expenses');
       state.expenses = data;
-      // Re-sync deal expenses in local state
-      state.projects.forEach(proj => {
-        const deal = state.deals.find(d => d.id === proj.dealId);
-        if (!deal) return;
-        deal.expenses = state.expenses.filter(e => e.projectId === proj.id).reduce((s,e) => s + (e.amount || 0), 0);
-      });
+      syncDealExpenses(); // updates deal.expenses in-memory AND re-renders CRM if open
       if (state.currentPage === 'expenses') renderExpensesView();
       break;
     }
@@ -1498,13 +1511,20 @@ async function _rtPullTable(table) {
     }
     case 'payStatus': {
       const data = await api('GET', '/pay-status');
-      state.payStatus = data;
+      // Preserve any keys we just wrote
+      const recentKeys = _recentWrites['payStatus'] || new Set();
+      const merged = { ...data };
+      recentKeys.forEach(k => { if (state.payStatus[k] !== undefined) merged[k] = state.payStatus[k]; });
+      state.payStatus = merged;
       if (state.currentPage === 'pay') renderPayView();
       break;
     }
     case 'psStatus': {
       const data = await api('GET', '/profit-share-status');
-      state.profitSharePaidStatus = data;
+      const recentKeys = _recentWrites['psStatus'] || new Set();
+      const merged = { ...data };
+      recentKeys.forEach(k => { if (state.profitSharePaidStatus[k] !== undefined) merged[k] = state.profitSharePaidStatus[k]; });
+      state.profitSharePaidStatus = merged;
       if (state.currentPage === 'profitshare') renderProfitShareView();
       break;
     }
@@ -1691,11 +1711,13 @@ async function setProjectStatusInline(pid, status) {
   const p = state.projects.find(x => x.id === pid);
   if (!p) return;
   const prev = p.status; p.status = status;
+  _markRecentWrite('projects', pid);
   try {
     await api('PATCH', '/projects/' + pid, { status });
     notify(status === 'complete' ? 'Project marked complete ✓' : 'Project marked active');
   } catch(e) {
     p.status = prev;
+    _recentWrites['projects']?.delete(pid);
     notify('Update failed: ' + e.message);
   }
   renderProjMonthly();
@@ -1860,6 +1882,7 @@ async function togglePayStatus(projId, memberId, checked) {
 // ── PROFIT SHARE STATUS ──
 async function toggleProfitSharePaid(pkey, checked) {
   state.profitSharePaidStatus[pkey] = checked;
+  _markRecentWrite('psStatus', pkey);
   renderProfitShareView();
   const [quarterKey, memberId] = pkey.split(/_(?=[^_]*$)/);   // split on last underscore
   try {
@@ -1867,6 +1890,7 @@ async function toggleProfitSharePaid(pkey, checked) {
     notify(checked ? 'Profit share marked as paid ✓' : 'Marked as unpaid');
   } catch(e) {
     state.profitSharePaidStatus[pkey] = !checked;
+    _recentWrites['psStatus']?.delete(pkey);
     notify('Update failed: ' + e.message);
     renderProfitShareView();
   }
@@ -2902,12 +2926,14 @@ function renderPayView(){
 async function togglePaid(projId,memberId,checked){
   const key=projId+'_'+memberId;
   state.payStatus[key]=checked;
+  _markRecentWrite('payStatus', key);
   renderPayView();
   try {
     await api('POST','/pay-status',{projectId:projId,memberId,paid:checked});
     notify(checked?'Marked as paid ✓':'Marked as unpaid');
   } catch(e) {
     state.payStatus[key]=!checked;
+    _recentWrites['payStatus']?.delete(key);
     notify('Save failed: '+e.message);
     renderPayView();
   }
