@@ -25,6 +25,37 @@ app.use(express.json());
 // ─── HEALTH ──────────────────────────────────────────────────────────────────
 app.get('/api/health', (_, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
+// ─── AUDIT LOG ───────────────────────────────────────────────────────────────
+
+async function auditLog(actor, action, tableName, recordId, changes) {
+  try {
+    await supabase.from('audit_log').insert({
+      actor_id:   actor?.sub  || null,
+      actor_name: actor?.name || 'unknown',
+      action,
+      table_name: tableName,
+      record_id:  String(recordId),
+      changes:    changes || {},
+    });
+  } catch(e) {
+    console.warn('Audit log failed:', e.message);
+  }
+}
+
+// ─── LOCK HELPERS ─────────────────────────────────────────────────────────────
+
+// Returns the deal if it is locked (invoice_status = paid), else null
+async function getLockedDeal(dealId) {
+  const { data } = await supabase.from('deals').select('id,name,invoice_status').eq('id', dealId).single();
+  return data?.invoice_status === 'paid' ? data : null;
+}
+
+// Returns true if any profit share has been paid for this member
+async function isProfitSharePaid(memberId) {
+  const { data } = await supabase.from('profit_share_status').select('id').eq('member_id', memberId).eq('paid', true).limit(1);
+  return (data?.length || 0) > 0;
+}
+
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 // Public — load team list for login screen (no PINs or hashes exposed)
@@ -86,7 +117,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
   try {
     const [
       teamRes, dealsRes, projectsRes, tasksRes,
-      expensesRes, payStatusRes, psStatusRes,
+      expensesRes, payStatusRes, psStatusRes, payLogRes,
     ] = await Promise.all([
       supabase.from('team_members').select('id,name,role,color,profit_share_pct,active,auth_role').order('name'),
       supabase.from('deals').select('*').order('created_at', { ascending: false }),
@@ -95,9 +126,10 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       supabase.from('expenses').select('*').order('date', { ascending: false }),
       supabase.from('pay_status').select('*'),
       supabase.from('profit_share_status').select('*'),
+      supabase.from('pay_log').select('*').order('paid_at', { ascending: false }).limit(500),
     ]);
 
-    for (const r of [teamRes, dealsRes, projectsRes, tasksRes, expensesRes, payStatusRes, psStatusRes]) {
+    for (const r of [teamRes, dealsRes, projectsRes, tasksRes, expensesRes, payStatusRes, psStatusRes, payLogRes]) {
       if (r.error) throw r.error;
     }
 
@@ -123,6 +155,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       expenses:             expensesRes.data.map(mapExpense),
       payStatus,
       profitSharePaidStatus,
+      payLog:               payLogRes.data || [],
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -191,15 +224,43 @@ app.post('/api/deals', requireAuth, requireAdmin, async (req, res) => {
 
 app.patch('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const row = dealToRow(req.body, true);  // partial=true
+    // Fetch current deal to check lock status and build audit diff
+    const { data: current, error: fetchErr } = await supabase.from('deals').select('*').eq('id', req.params.id).single();
+    if (fetchErr) throw fetchErr;
+
+    const isPaid = current.invoice_status === 'paid';
+    const FINANCIAL_FIELDS = ['value','buckets','prob'];
+    const attemptedFinancial = FINANCIAL_FIELDS.filter(f => req.body[f] !== undefined);
+
+    // Block financial edits on paid deals (allow invoice_status change so admin can unlock)
+    if (isPaid && attemptedFinancial.length > 0) {
+      await auditLog(req.user, 'BLOCKED_EDIT_PAID_DEAL', 'deals', req.params.id, {
+        attempted: attemptedFinancial, reason: 'deal is paid'
+      });
+      return res.status(403).json({ error: 'Deal is marked Paid — financial fields (value, buckets) are locked. Change invoice status first.' });
+    }
+
+    const row = dealToRow(req.body, true);
     const { data, error } = await supabase.from('deals').update(row).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Audit: record what changed
+    const changes = {};
+    Object.keys(row).forEach(k => { if (JSON.stringify(current[k]) !== JSON.stringify(data[k])) changes[k] = { from: current[k], to: data[k] }; });
+    if (Object.keys(changes).length) await auditLog(req.user, 'EDIT_DEAL', 'deals', req.params.id, changes);
+
     res.json(mapDeal(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/deals/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
+    const { data: deal } = await supabase.from('deals').select('*').eq('id', req.params.id).single();
+    if (deal?.invoice_status === 'paid') {
+      await auditLog(req.user, 'BLOCKED_DELETE_PAID_DEAL', 'deals', req.params.id, { name: deal.name });
+      return res.status(403).json({ error: 'Cannot delete a deal marked as Paid.' });
+    }
+    await auditLog(req.user, 'DELETE_DEAL', 'deals', req.params.id, { name: deal?.name });
     const { error } = await supabase.from('deals').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -253,6 +314,22 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
 
 app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
   try {
+    // Check if task's project is locked (complete + paid)
+    if (req.body.estHours !== undefined) {
+      const { data: task } = await supabase.from('tasks').select('project_id').eq('id', req.params.id).single();
+      if (task?.project_id) {
+        const { data: proj } = await supabase.from('projects').select('status,deal_id').eq('id', task.project_id).single();
+        if (proj?.status === 'complete' && proj?.deal_id) {
+          const locked = await getLockedDeal(proj.deal_id);
+          if (locked) {
+            await auditLog(req.user, 'BLOCKED_EDIT_TASK_HOURS', 'tasks', req.params.id, {
+              attempted_hours: req.body.estHours, reason: 'project complete + deal paid'
+            });
+            return res.status(403).json({ error: 'Task hours are locked — project is complete and deal is paid.' });
+          }
+        }
+      }
+    }
     const updates = {};
     if (req.body.title      !== undefined) updates.title       = req.body.title;
     if (req.body.projectId  !== undefined) updates.project_id  = req.body.projectId;
@@ -344,6 +421,90 @@ app.post('/api/profit-share-status', requireAuth, requireAdmin, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ─── PAY LOG ──────────────────────────────────────────────────────────────────
+
+app.get('/api/pay-log', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pay_log')
+      .select('*')
+      .order('paid_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/pay-log', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const {
+      memberId, memberName, payType, amount,
+      projectId, projectName, dealId, dealName, dealValue, dealNet,
+      quarterKey, sourceKey, notes, isManual, paidAt,
+    } = req.body;
+
+    if (!memberId || !payType || amount === undefined) {
+      return res.status(400).json({ error: 'memberId, payType, and amount are required' });
+    }
+
+    const { data, error } = await supabase.from('pay_log').insert({
+      member_id:       memberId,
+      member_name:     memberName || null,
+      pay_type:        payType,
+      amount:          amount,
+      project_id:      projectId || null,
+      project_name:    projectName || null,
+      deal_id:         dealId || null,
+      deal_name:       dealName || null,
+      deal_value:      dealValue || null,
+      deal_net:        dealNet || null,
+      quarter_key:     quarterKey || null,
+      source_key:      sourceKey || null,
+      notes:           notes || null,
+      created_by_id:   req.user.sub,
+      created_by_name: req.user.name,
+      is_manual:       isManual || false,
+      paid_at:         paidAt || new Date().toISOString(),
+    }).select().single();
+
+    if (error) throw error;
+    await auditLog(req.user, 'PAY_LOG_ENTRY', 'pay_log', data.id, {
+      member: memberName, type: payType, amount, isManual: isManual || false
+    });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/pay-log/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: entry } = await supabase.from('pay_log').select('*').eq('id', req.params.id).single();
+    if (entry && !entry.is_manual) {
+      return res.status(403).json({ error: 'Auto-generated pay log entries cannot be deleted. Unmark the payment as paid instead.' });
+    }
+    await auditLog(req.user, 'DELETE_PAY_LOG', 'pay_log', req.params.id, {
+      member: entry?.member_name, amount: entry?.amount
+    });
+    const { error } = await supabase.from('pay_log').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── AUDIT LOG ENDPOINT ──────────────────────────────────────────────────────
+
+app.get('/api/audit-log', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('audit_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── TEAM MEMBERS ─────────────────────────────────────────────────────────────
 
 app.post('/api/team', requireAuth, requireAdmin, async (req, res) => {
@@ -367,6 +528,20 @@ app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
     if (req.params.id === req.user.sub && req.body.authRole && req.body.authRole !== 'admin') {
       return res.status(400).json({ error: "You cannot remove your own admin access" });
     }
+    // Block profit share % changes if this member has any paid profit share
+    if (req.body.profitSharePct !== undefined) {
+      const { data: current } = await supabase.from('team_members').select('profit_share_pct,name').eq('id', req.params.id).single();
+      if (current && current.profit_share_pct !== req.body.profitSharePct) {
+        const locked = await isProfitSharePaid(req.params.id);
+        if (locked) {
+          await auditLog(req.user, 'BLOCKED_PS_PCT_CHANGE', 'team_members', req.params.id, {
+            from: current.profit_share_pct, to: req.body.profitSharePct,
+            reason: 'profit share already paid out'
+          });
+          return res.status(403).json({ error: `${current.name}'s profit share % is locked — they have a paid profit share distribution. Unmark it as paid first.` });
+        }
+      }
+    }
     const updates = {};
     if (req.body.name           !== undefined) updates.name             = req.body.name;
     if (req.body.role           !== undefined) updates.role             = req.body.role;
@@ -378,8 +553,15 @@ app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
       updates.auth_role = req.body.authRole;
     }
     if (req.body.pin) updates.pin_hash = await bcrypt.hash(String(req.body.pin), 10);
+    const { data: current } = await supabase.from('team_members').select('*').eq('id', req.params.id).single();
     const { data, error } = await supabase.from('team_members').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
+    // Audit profit share % changes even when allowed
+    if (updates.profit_share_pct !== undefined && current?.profit_share_pct !== updates.profit_share_pct) {
+      await auditLog(req.user, 'EDIT_TEAM_PS_PCT', 'team_members', req.params.id, {
+        name: data.name, from: current.profit_share_pct, to: updates.profit_share_pct
+      });
+    }
     res.json(mapTeamMember(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
