@@ -3109,6 +3109,75 @@ function renderTeamOverview(){
     ${can.adminFinance()?`<div class="ps-total-badge" style="margin-top:16px;padding:10px 16px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">Active member profit share total: <strong>${Math.round(totalPsPct*10)/10}%</strong>${pctValid?' ✓':' — must total 100%'}</div>`:''}`;
 }
 
+function calcPaidEarnings(filterFn){
+  // Sum up amounts that have been toggled as paid in the pay calculator
+  // for deals scoped to the optional filterFn(deal)
+  const prodPaid={}, feePaid={}, psPaid={};
+  state.team.forEach(m=>{prodPaid[m.id]=0; feePaid[m.id]=0; psPaid[m.id]=0;});
+
+  // Production + fees — iterate projects linked to qualifying deals
+  state.projects.forEach(proj=>{
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal||proj.archived) return;
+    if(filterFn&&!filterFn(deal)) return;
+
+    const pb=deal.buckets.find(b=>b.name==='Production Pool');
+    if(pb){
+      const pool=netRev(deal)*pb.pct/100;
+      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+      const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      if(tH){
+        const uh={};
+        tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});
+        Object.entries(uh).forEach(([mid,h])=>{
+          if(prodPaid[mid]===undefined) return;
+          const pkey=proj.id+'_'+mid;
+          if(state.payStatus[pkey]) prodPaid[mid]+=pool*(h/tH);
+        });
+      }
+    }
+
+    // Personal fee buckets
+    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{
+      if(feePaid[b.assignedTo]===undefined) return;
+      const pkey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+b.assignedTo;
+      if(state.payStatus[pkey]) feePaid[b.assignedTo]+=netRev(deal)*b.pct/100;
+    });
+  });
+
+  // Profit share paid — sum across all quarters for each member
+  // Key format: YYYY-QN_memberId
+  state.team.forEach(m=>{
+    Object.entries(state.profitSharePaidStatus).forEach(([pkey,paid])=>{
+      if(!paid) return;
+      // Extract memberId from last segment
+      const lastUnderscore=pkey.lastIndexOf('_');
+      const mid=pkey.substring(lastUnderscore+1);
+      if(mid!==m.id) return;
+      // Find the quarter key and calculate the member's share
+      const quarterKey=pkey.substring(0,lastUnderscore);
+      // Sum deals in this quarter that qualify for profit share
+      const qDeals=state.deals.filter(d=>{
+        if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+        const proj=state.projects.find(p=>p.dealId===d.id);
+        if(!proj||proj.status!=='complete') return false;
+        if(filterFn&&!filterFn(d)) return false;
+        const dy=new Date((d.closeDate||'')+'-01');
+        const q=Math.ceil((dy.getMonth()+1)/3);
+        const y=dy.getFullYear();
+        return `${y}-Q${q}`===quarterKey;
+      });
+      const pool=qDeals.reduce((s,d)=>{
+        const psB=d.buckets.find(b=>b.name==='Profit Share');
+        return s+netRev(d)*(psB?psB.pct:17.5)/100;
+      },0);
+      psPaid[m.id]+=(pool*(m.profitSharePct||0)/100);
+    });
+  });
+
+  return{prodPaid,feePaid,psPaid};
+}
+
 function renderTeamMonthly(){
   const now=new Date();
   const vd=new Date(now.getFullYear(),now.getMonth()+state.teamMonthOffset,1);
@@ -3119,6 +3188,7 @@ function renderTeamMonthly(){
   const monthFilter=d=>d.closeDate===vYM;
   const{prodPay:actProd,feePay:actFee,psPay:actPs,eligibleDeals}=calcActualEarnings(monthFilter);
   const{prodPay:prjProd,feePay:prjFee,psPay:prjPs}=calcProjectedEarnings(monthFilter);
+  const{prodPaid,feePaid,psPaid}=calcPaidEarnings(monthFilter);
 
   const activeMembers=state.team.filter(m=>m.active!==false);
 
@@ -3141,7 +3211,7 @@ function renderTeamMonthly(){
   const sparkMax=Math.max(...sparkMonths.map(x=>x.total),1);
 
   // Column layout: Member | Act.Prod | Act.Fees | Act.PS | separator | Prj.Prod | Prj.Fees | Prj.PS | Total
-  const colW=`1fr 90px 80px 90px 4px 90px 80px 90px 4px 100px 100px 110px`;
+  const colW=`1fr 90px 80px 90px 4px 90px 80px 90px 4px 100px 90px 100px 110px`;
 
   document.getElementById('team-content').innerHTML=`
     <div class="team-month-nav">
@@ -3179,6 +3249,7 @@ function renderTeamMonthly(){
         <span style="grid-column:span 3;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);padding-bottom:4px;border-bottom:2px solid var(--blue);text-align:center">— PROJECTED —</span>
         <span></span>
         <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);text-align:center">Act.</span>
+        <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--green);text-align:center">Paid</span>
         <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);text-align:center">Proj.</span>
         <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);text-align:center">Total</span>
       </div>
@@ -3194,6 +3265,7 @@ function renderTeamMonthly(){
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">PS</span>
         <span></span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">Total</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green)">Paid</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--blue)">Total</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Combined</span>
       </div>
@@ -3218,6 +3290,7 @@ function renderTeamMonthly(){
           ${cell(pPs,'var(--blue)')}
           <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
           <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${(aP+aF+aPs)>0?'var(--gold)':'var(--text3)'}">${(aP+aF+aPs)>0?fmt(aP+aF+aPs):'—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${((prodPaid[m.id]||0)+(feePaid[m.id]||0)+(psPaid[m.id]||0))>0?'var(--green)':'var(--text3)'}">${((prodPaid[m.id]||0)+(feePaid[m.id]||0)+(psPaid[m.id]||0))>0?fmt((prodPaid[m.id]||0)+(feePaid[m.id]||0)+(psPaid[m.id]||0)):'—'}</div>
           <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600;color:${(pP+pF+pPs)>0?'var(--blue)':'var(--text3)'}">${(pP+pF+pPs)>0?fmt(pP+pF+pPs):'—'}</div>
           <div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${total>0?'var(--text)':'var(--text3)'}">${total>0?fmt(total):'$0'}</div>
@@ -3237,6 +3310,7 @@ function renderTeamMonthly(){
         <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--blue);font-weight:600">${fmt(activeMembers.reduce((s,m)=>s+(prjPs[m.id]||0),0))}</div>
         <div style="border-left:1px solid var(--border2);margin:4px 0"></div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--gold)">${fmt(grandActual)}</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--green)">${fmt(activeMembers.reduce((s,m)=>s+(prodPaid[m.id]||0)+(feePaid[m.id]||0)+(psPaid[m.id]||0),0))}</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--blue)">${fmt(grandProj)}</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${fmt(grandTotal)}</div>
       </div>
