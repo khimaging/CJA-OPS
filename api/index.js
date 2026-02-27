@@ -102,9 +102,11 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
     }
 
     // Reshape payStatus into the key-value map the frontend expects
+    // Uses pay_key column (new) or falls back to project_id_member_id (legacy rows)
     const payStatus = {};
     (payStatusRes.data || []).forEach(r => {
-      payStatus[`${r.project_id}_${r.member_id}`] = r.paid;
+      const k = r.pay_key || `${r.project_id}_${r.member_id}`;
+      payStatus[k] = r.paid;
     });
 
     // Reshape profitSharePaidStatus
