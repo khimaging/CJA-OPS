@@ -414,7 +414,7 @@ function mapDeal(d) {
     name:          d.name,
     client:        d.client,
     value:         d.value,
-    expenses:      d.expenses || 0,
+    expenses:      0,  // always computed client-side from expenses table via syncDealExpenses()
     stage:         d.stage,
     owner:         d.owner,
     closeDate:     d.close_date,
