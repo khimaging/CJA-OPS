@@ -212,7 +212,7 @@ app.post('/api/projects', requireAuth, requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.patch('/api/projects/:id', requireAuth, requireAdmin, async (req, res) => {
+app.patch('/api/projects/:id', requireAuth, async (req, res) => {
   try {
     const allowed = ['name','status','archived','start_date','end_date','deal_id','client'];
     const updates = {};
