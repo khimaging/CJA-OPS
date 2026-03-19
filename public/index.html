@@ -748,10 +748,10 @@
     <div class="topbar">
       <div><div class="page-title">Projects</div><div class="page-sub" id="proj-sub">Active engagements</div></div>
       <div class="topbar-actions">
-        <button class="btn btn-primary" onclick="openProjectModal()">
+        ${can.createProject() ? `<button class="btn btn-primary" onclick="openProjectModal()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
           New Project
-        </button>
+        </button>` : ''}
       </div>
     </div>
     <div class="content">
@@ -1271,14 +1271,28 @@ function _hasPsPaid(memberId) {
   );
 }
 
-// A project is locked once it is complete AND its deal has been paid in full.
-// Admins are never locked out — they can always unlock by changing invoice status or project status.
+// "Team Payouts Finalized" = permanent hard lock — no one can change anything, ever
+function isPayoutsFinalized(projectId){
+  const proj = state.projects.find(p => p.id === projectId);
+  return !!(proj?.payoutsFinalized);
+}
+
+// Task/hour lock: payouts finalized (permanent) OR complete+paid (admin can unlock via invoice status)
 function isProjectLocked(projectId){
+  if (isPayoutsFinalized(projectId)) return true;
   if (auth.role === 'admin') return false;
   const proj = state.projects.find(p => p.id === projectId);
   if (!proj || proj.status !== 'complete') return false;
   const deal = state.deals.find(d => d.id === proj.dealId);
   return deal && deal.invoiceStatus === 'paid';
+}
+
+// Expense lock: payouts finalized (permanent) OR project complete (admin can revert to active)
+function isProjectExpenseLocked(projectId){
+  if (isPayoutsFinalized(projectId)) return true;
+  if (auth.role === 'admin') return false;
+  const proj = state.projects.find(p => p.id === projectId);
+  return proj && proj.status === 'complete';
 }
 
 function updateNetRevPreview(){
@@ -1358,6 +1372,8 @@ const can = {
   delete:           () => auth.role === 'admin' || auth.role === 'class_a',
   // Admin, Class A, Class B, VA can all create and edit
   edit:             () => !!auth.role,
+  // Admin, Class A, VA can create projects
+  createProject:    () => auth.role === 'admin' || auth.role === 'class_a' || auth.role === 'va',
   // Admin, Class A, VA can see Pay Calculator and Profit Share
   viewFinance:      () => auth.role === 'admin' || auth.role === 'class_a' || auth.role === 'va',
   // Only admin can see profit share paid toggles and edit % inline
@@ -1802,6 +1818,7 @@ async function autoCreateProject(dealId, dealName, client, closeDate) {
 async function setProjectStatusInline(pid, status) {
   const p = state.projects.find(x => x.id === pid);
   if (!p) return;
+  if (p.payoutsFinalized) { notify('🔒 Project payouts are finalized — permanently locked'); renderProjMonthly(); return; }
   const prev = p.status; p.status = status;
   _markRecentWrite('projects', pid);
   console.log('[CJA] setProjectStatus', pid, status, 'token:', !!_authToken);
@@ -1927,8 +1944,14 @@ async function saveExpense() {
   const receipt   = document.getElementById('exp-receipt').value.trim();
   if (!desc || isNaN(amount) || !projectId) { notify('Please fill in all required fields'); return; }
   if (!receipt) { notify('Receipt URL is required'); return; }
-  const paymentType = document.querySelector('input[name="exp-ptype"]:checked')?.value || 'company';
   const editId = document.getElementById('expense-modal').dataset.editId;
+  const _checkProjId = projectId || (editId ? state.expenses.find(e=>e.id===editId)?.projectId : null);
+  if (isProjectExpenseLocked(_checkProjId)) {
+    closeModal('expense-modal');
+    notify('\u{1F512} Project is complete \u2014 expenses are locked');
+    return;
+  }
+  const paymentType = document.querySelector('input[name="exp-ptype"]:checked')?.value || 'company';
   const payload = {
     description: desc, amount, projectId, receiptUrl: receipt,
     category:    document.getElementById('exp-category').value,
@@ -1953,6 +1976,11 @@ async function saveExpense() {
 }
 
 async function deleteExpense(id) {
+  const _expDel = state.expenses.find(e => e.id === id);
+  if (_expDel && isProjectExpenseLocked(_expDel.projectId)) {
+    notify('\u{1F512} Project is complete \u2014 expenses are locked');
+    return;
+  }
   if (!confirm('Delete this expense?')) return;
   try {
     await api('DELETE', '/expenses/' + id);
@@ -1963,6 +1991,11 @@ async function deleteExpense(id) {
 
 async function toggleReimbursed(id, val) {
   const exp = state.expenses.find(x => x.id === id);
+  if (exp && isProjectExpenseLocked(exp.projectId)) {
+    notify('\u{1F512} Project is complete \u2014 expenses are locked');
+    renderExpensesView();
+    return;
+  }
   if (exp) exp.reimbursed = val;
   renderExpensesView();
   try {
@@ -2684,7 +2717,10 @@ function renderExpensesView(){
               </div>
               <div style="display:flex;gap:4px;align-items:center">
                 ${can.manageTeam()?`<button class="exp-delete-btn" onclick="openExpenseModal('${e.id}')" title="Edit expense" style="color:var(--text3)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`:''}
-                ${can.delete()?`<button class="exp-delete-btn" onclick="deleteExpense('${e.id}')" title="Delete expense"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/></svg></button>`:''}
+                ${isProjectExpenseLocked(e.projectId)
+                  ? `<span title="Project complete — locked" style="font-size:11px;opacity:0.6;padding:0 4px">&#x1F512;</span>`
+                  : (can.delete()?`<button class="exp-delete-btn" onclick="deleteExpense('${e.id}')" title="Delete expense"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2"/></svg></button>`:'')
+                }
               </div>
             </div>`;
           }).join('')}
@@ -2947,14 +2983,18 @@ function renderProjects(){
     const isArchived=!!state.archivedProjects[p.id];
     const pStatus=p.status||'active';
     const isComplete=pStatus==='complete';
+    const isFinalized=!!p.payoutsFinalized;
     const statusColors={active:'var(--blue)',complete:'var(--green)',archived:'var(--text3)'};
     const sColor=isArchived?'var(--text3)':statusColors[pStatus];
-    const progressColor=isComplete?'var(--green)':'linear-gradient(90deg,var(--gold),var(--gold2))';
-    return`<div class="project-card" style="${isArchived?'opacity:0.55;':''}" onclick="goToProjectTasks('${p.id}')">
+    const progressColor=isComplete||isFinalized?'var(--green)':'linear-gradient(90deg,var(--gold),var(--gold2))';
+    return`<div class="project-card" style="${isArchived?'opacity:0.55;':''}${isFinalized?'border-color:rgba(76,175,122,0.4);':''}" onclick="goToProjectTasks('${p.id}')">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
-        <div class="project-name" style="margin-bottom:0">${p.name}</div>
+        <div class="project-name" style="margin-bottom:0">${isFinalized?'🔒 ':''}${p.name}</div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:8px">
-          <span class="proj-status ${isArchived?'archived':pStatus}"><span class="proj-status-dot"></span>${isArchived?'Archived':isComplete?'Complete':'Active'}</span>
+          ${isFinalized
+            ? `<span class="proj-status complete" style="background:rgba(76,175,122,0.15);color:var(--green)"><span class="proj-status-dot"></span>Finalized</span>`
+            : `<span class="proj-status ${isArchived?'archived':pStatus}"><span class="proj-status-dot"></span>${isArchived?'Archived':isComplete?'Complete':'Active'}</span>`
+          }
         </div>
       </div>
       <div class="project-client" style="margin-bottom:14px">${p.client||(deal?deal.client:'—')}${p.end?` · Due ${new Date(p.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`:''}</div>
@@ -2965,21 +3005,51 @@ function renderProjects(){
         <div class="project-stat"><strong style="color:${sColor}">${pct}%</strong>Complete</div>
       </div>
       ${deal?`<div class="project-labor"><span class="labor-label">Production Pool (${pb?.pct||0}% of ${fmt(netRev(deal))} net)</span><span class="labor-value">${fmt(pool)}</span></div>`:''}
-      <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <button class="btn btn-sm" onclick="event.stopPropagation();cycleProjectStatus('${p.id}')" style="flex:1;justify-content:center">
-          ${isComplete?'↺ Mark Active':'✓ Mark Complete'}
-        </button>
-        <button class="btn btn-sm" onclick="event.stopPropagation();toggleArchiveProject('${p.id}')" style="color:${isArchived?'var(--green)':'var(--text3)'};border-color:${isArchived?'var(--border2)':'var(--border)'};justify-content:center">
-          ${isArchived?'Unarchive':'Archive'}
-        </button>
-      </div>
+      ${isFinalized
+        ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);text-align:center">✓ TEAM PAYOUTS FINALIZED — PERMANENTLY LOCKED</div>`
+        : `<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <button class="btn btn-sm" onclick="event.stopPropagation();cycleProjectStatus('${p.id}')" style="flex:1;justify-content:center">
+              ${isComplete?'↺ Mark Active':'✓ Mark Complete'}
+            </button>
+            <button class="btn btn-sm" onclick="event.stopPropagation();toggleArchiveProject('${p.id}')" style="color:${isArchived?'var(--green)':'var(--text3)'};border-color:${isArchived?'var(--border2)':'var(--border)'};justify-content:center">
+              ${isArchived?'Unarchive':'Archive'}
+            </button>
+            ${auth.role==='admin'&&isComplete?`<button class="btn btn-sm" onclick="event.stopPropagation();finalizePayouts('${p.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.3);justify-content:center" title="Lock everything permanently">⚑ Finalize</button>`:''}
+          </div>`
+      }
     </div>`;
   }).join('');
+}
+
+async function finalizePayouts(pid){
+  const p = state.projects.find(x=>x.id===pid);
+  if (!p) return;
+  if (!confirm(
+    `⚠️ FINALIZE PAYOUTS FOR "${p.name}"?\n\n` +
+    `This is PERMANENT and cannot be undone.\n\n` +
+    `Once finalized:\n` +
+    `• Tasks cannot be added, edited, or moved\n` +
+    `• Expenses cannot be added, edited, or deleted\n` +
+    `• Project status cannot be changed\n` +
+    `• No one — including admins — can alter this project\n\n` +
+    `Only do this after all payouts have been verified and distributed.\n\n` +
+    `Type OK to confirm.`
+  )) return;
+  try {
+    const updated = await api('PATCH','/projects/'+pid,{payoutsFinalized:true});
+    const idx = state.projects.findIndex(x=>x.id===pid);
+    if (idx>=0) state.projects[idx] = {...state.projects[idx], ...updated};
+    notify('Payouts finalized — project permanently locked ✓');
+    renderProjects();
+    renderProjMonthly();
+    if (state.currentPage==='pay') renderPayView();
+  } catch(e) { notify('Failed: '+e.message); }
 }
 
 async function cycleProjectStatus(pid){
   const p=state.projects.find(x=>x.id===pid);
   if(!p)return;
+  if(p.payoutsFinalized){ notify('🔒 Project payouts are finalized — permanently locked'); return; }
   const prev=p.status;
   const next=p.status==='complete'?'active':'complete';
   p.status=next;
@@ -3000,9 +3070,10 @@ async function cycleProjectStatus(pid){
 }
 
 async function toggleArchiveProject(pid){
+  const proj=state.projects.find(p=>p.id===pid);
+  if(proj?.payoutsFinalized){ notify('🔒 Project payouts are finalized — permanently locked'); return; }
   const newVal=!state.archivedProjects[pid];
   state.archivedProjects[pid]=newVal;
-  const proj=state.projects.find(p=>p.id===pid);
   if(proj) proj.archived=newVal;
   _markRecentWrite('projects',pid);
   notify(newVal?'Project archived':'Project unarchived');
@@ -3062,27 +3133,32 @@ function renderProjMonthly(){
             const totH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
             const deal=state.deals.find(d=>d.id===p.dealId);
             const pStatus=p.status||'active';
-            return`<div class="pm-row">
+            const isFinalized=!!p.payoutsFinalized;
+            return`<div class="pm-row" style="${isFinalized?'background:rgba(76,175,122,0.04);':''}">
               <div>
-                <div style="font-size:12px;font-weight:500;color:var(--text)">${p.name}</div>
+                <div style="font-size:12px;font-weight:500;color:var(--text)">${isFinalized?'🔒 ':''}${p.name}</div>
                 <div style="font-size:10px;color:var(--text3);margin-top:2px">${deal?`Deal: ${deal.name} · ${fmt(deal.value)}`:''}</div>
               </div>
               <div style="font-size:11px;color:var(--text3)">${p.client||'—'}</div>
               <div>
-                <select style="background:var(--bg3);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--text2);cursor:pointer" onchange="setProjectStatusInline('${p.id}',this.value)">
-                  <option value="active" ${pStatus==='active'?'selected':''}>Active</option>
-                  <option value="complete" ${pStatus==='complete'?'selected':''}>Complete</option>
-                </select>
+                ${isFinalized
+                  ? `<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);letter-spacing:.05em">⚑ FINALIZED</span>`
+                  : `<select style="background:var(--bg3);border:1px solid var(--border2);border-radius:5px;padding:4px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--text2);cursor:pointer" onchange="setProjectStatusInline('${p.id}',this.value)">
+                      <option value="active" ${pStatus==='active'?'selected':''}>Active</option>
+                      <option value="complete" ${pStatus==='complete'?'selected':''}>Complete</option>
+                    </select>`
+                }
               </div>
               <div>
                 <div style="display:flex;align-items:center;gap:8px">
-                  <div style="flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;min-width:60px"><div style="height:100%;width:${pct}%;background:${pStatus==='complete'?'var(--green)':'var(--gold)'};border-radius:2px"></div></div>
+                  <div style="flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;min-width:60px"><div style="height:100%;width:${pct}%;background:${pStatus==='complete'||isFinalized?'var(--green)':'var(--gold)'};border-radius:2px"></div></div>
                   <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${pct}%</span>
                 </div>
               </div>
               <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${totH}h</div>
               <div style="display:flex;gap:6px">
                 <button class="btn btn-sm" onclick="goToProjectTasks('${p.id}')">Tasks</button>
+                ${auth.role==='admin'&&pStatus==='complete'&&!isFinalized?`<button class="btn btn-sm" onclick="finalizePayouts('${p.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.3)" title="Lock everything permanently">⚑</button>`:''}
               </div>
             </div>`;
           }).join('')}
