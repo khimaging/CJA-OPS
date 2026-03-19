@@ -50,6 +50,14 @@ async function getLockedDeal(dealId) {
   return data?.invoice_status === 'paid' ? data : null;
 }
 
+// Returns true if the expense's project is complete OR payouts finalized
+async function isExpenseLocked(expenseId) {
+  const { data: exp } = await supabase.from('expenses').select('project_id').eq('id', expenseId).single();
+  if (!exp?.project_id) return false;
+  const { data: proj } = await supabase.from('projects').select('status,payouts_finalized').eq('id', exp.project_id).single();
+  return proj?.payouts_finalized || proj?.status === 'complete';
+}
+
 // Returns true if any profit share has been paid for this member
 async function isProfitSharePaid(memberId) {
   const { data } = await supabase.from('profit_share_status').select('id').eq('member_id', memberId).eq('paid', true).limit(1);
@@ -280,7 +288,11 @@ app.delete('/api/deals/:id', requireAuth, requireCanDelete, async (req, res) => 
 
 // ─── PROJECTS ────────────────────────────────────────────────────────────────
 
-app.post('/api/projects', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/projects', requireAuth, async (req, res) => {
+  // Admin, Class A, and VA can create projects
+  if (!['admin','class_a','va'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Creating projects requires Admin, Class A, or VA access.' });
+  }
   try {
     const { name, dealId, client, startDate, endDate, status } = req.body;
     const { data, error } = await supabase.from('projects').insert({
@@ -295,13 +307,18 @@ app.post('/api/projects', requireAuth, requireAdmin, async (req, res) => {
 
 app.patch('/api/projects/:id', requireAuth, async (req, res) => {
   try {
-    const allowed = ['name','status','archived','start_date','end_date','deal_id','client'];
+    // If payouts are finalized, nothing can be changed — ever
+    const { data: current } = await supabase.from('projects').select('payouts_finalized,name').eq('id', req.params.id).single();
+    if (current?.payouts_finalized && req.body.payoutsFinalized !== false) {
+      return res.status(403).json({ error: `"${current.name}" has finalized payouts — this project is permanently locked.` });
+    }
     const updates = {};
-    if (req.body.status    !== undefined) updates.status    = req.body.status;
-    if (req.body.archived  !== undefined) updates.archived  = req.body.archived;
-    if (req.body.name      !== undefined) updates.name      = req.body.name;
-    if (req.body.startDate !== undefined) updates.start_date= req.body.startDate;
-    if (req.body.endDate   !== undefined) updates.end_date  = req.body.endDate;
+    if (req.body.status           !== undefined) updates.status            = req.body.status;
+    if (req.body.archived         !== undefined) updates.archived          = req.body.archived;
+    if (req.body.name             !== undefined) updates.name              = req.body.name;
+    if (req.body.startDate        !== undefined) updates.start_date        = req.body.startDate;
+    if (req.body.endDate          !== undefined) updates.end_date          = req.body.endDate;
+    if (req.body.payoutsFinalized !== undefined) updates.payouts_finalized = req.body.payoutsFinalized;
     const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapProject(data));
@@ -325,12 +342,15 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
 
 app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
   try {
-    // Check if task's project is locked (complete + paid)
-    if (req.body.estHours !== undefined) {
+    // Check if task's project is locked (payouts finalized = permanent) or estHours on complete+paid
+    if (req.body.estHours !== undefined || req.body.status !== undefined || req.body.title !== undefined) {
       const { data: task } = await supabase.from('tasks').select('project_id').eq('id', req.params.id).single();
       if (task?.project_id) {
-        const { data: proj } = await supabase.from('projects').select('status,deal_id').eq('id', task.project_id).single();
-        if (proj?.status === 'complete' && proj?.deal_id) {
+        const { data: proj } = await supabase.from('projects').select('status,deal_id,payouts_finalized').eq('id', task.project_id).single();
+        if (proj?.payouts_finalized) {
+          return res.status(403).json({ error: 'Task is permanently locked — project payouts have been finalized.' });
+        }
+        if (req.body.estHours !== undefined && proj?.status === 'complete' && proj?.deal_id) {
           const locked = await getLockedDeal(proj.deal_id);
           if (locked) {
             await auditLog(req.user, 'BLOCKED_EDIT_TASK_HOURS', 'tasks', req.params.id, {
@@ -368,6 +388,15 @@ app.delete('/api/tasks/:id', requireAuth, requireCanDelete, async (req, res) => 
 app.post('/api/expenses', requireAuth, async (req, res) => {
   try {
     const { description, amount, projectId, category, date, submittedBy, paymentType, receiptUrl } = req.body;
+    if (projectId) {
+      const { data: proj } = await supabase.from('projects').select('status,name,payouts_finalized').eq('id', projectId).single();
+      if (proj?.payouts_finalized) {
+        return res.status(403).json({ error: `Project "${proj.name}" payouts are finalized — it is permanently locked.` });
+      }
+      if (proj?.status === 'complete') {
+        return res.status(403).json({ error: `Project "${proj.name}" is complete — expenses are locked.` });
+      }
+    }
     const { data, error } = await supabase.from('expenses').insert({
       description, amount, project_id: projectId,
       category: category || 'other', date: date || new Date().toISOString().split('T')[0],
@@ -381,6 +410,9 @@ app.post('/api/expenses', requireAuth, async (req, res) => {
 
 app.patch('/api/expenses/:id', requireAuth, async (req, res) => {
   try {
+    if (await isExpenseLocked(req.params.id)) {
+      return res.status(403).json({ error: 'Expense is locked — project is complete.' });
+    }
     const updates = {};
     const map = {
       description:'description', amount:'amount', projectId:'project_id',
@@ -396,6 +428,9 @@ app.patch('/api/expenses/:id', requireAuth, async (req, res) => {
 
 app.delete('/api/expenses/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
+    if (await isExpenseLocked(req.params.id)) {
+      return res.status(403).json({ error: 'Expense is locked — project is complete.' });
+    }
     const { error } = await supabase.from('expenses').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -625,14 +660,15 @@ function mapDeal(d) {
 
 function mapProject(p) {
   return {
-    id:        p.id,
-    name:      p.name,
-    dealId:    p.deal_id,
-    client:    p.client,
-    startDate: p.start_date,
-    endDate:   p.end_date,
-    status:    p.status,
-    archived:  p.archived || false,
+    id:               p.id,
+    name:             p.name,
+    dealId:           p.deal_id,
+    client:           p.client,
+    startDate:        p.start_date,
+    endDate:          p.end_date,
+    status:           p.status,
+    archived:         p.archived || false,
+    payoutsFinalized: p.payouts_finalized || false,
   };
 }
 
