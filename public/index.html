@@ -1714,7 +1714,14 @@ async function saveDeal() {
 
   const editId    = document.getElementById('deal-modal').dataset.editId;
   const prevStage = editId ? (state.deals.find(d => d.id === editId)?.stage || '') : '';
-  const payload   = { name, client, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
+
+  // If deal is paid, strip financial fields from payload so admin can still edit non-financial fields
+  let payload;
+  if (editId && isDealModalLocked()) {
+    payload = { name, client, stage, owner, closeDate, invoiceStatus, amountCollected };
+  } else {
+    payload = { name, client, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
+  }
 
   closeModal('deal-modal');
 
@@ -3423,13 +3430,20 @@ function renderPayView(){
 
     const pStatus=proj.status||'active';
     const isArchived=!!state.archivedProjects[proj.id];
+    const isFinalized=!!proj.payoutsFinalized;
     const nr=netRev(deal);
-    html+=`<div class="pay-section">
+    html+=`<div class="pay-section" style="${isFinalized?'border-left:3px solid var(--green);padding-left:14px;':''}">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px;gap:12px">
-        <div class="section-title" style="margin-bottom:0">${proj.name}<span class="section-sub">Production pool ${fmt(pool)} · ${totH}h · ${fmt(nr)} net revenue${deal.expenses?` (${fmt(deal.value)} gross − ${fmt(deal.expenses)} exp)`:''}</span></div>
+        <div class="section-title" style="margin-bottom:0">${isFinalized?'🔒 ':''}${proj.name}<span class="section-sub">Production pool ${fmt(pool)} · ${totH}h · ${fmt(nr)} net revenue${deal.expenses?` (${fmt(deal.value)} gross − ${fmt(deal.expenses)} exp)`:''}</span></div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;padding-top:4px">
-          <span class="proj-status ${isArchived?'archived':pStatus}"><span class="proj-status-dot"></span>${isArchived?'Archived':pStatus==='complete'?'Complete':'Active'}</span>
-          <button class="btn btn-sm" onclick="toggleArchiveProject('${proj.id}')" style="color:${isArchived?'var(--green)':'var(--text3)'}">${isArchived?'Unarchive':'Archive'}</button>
+          ${isFinalized
+            ? `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);background:rgba(76,175,122,0.1);padding:3px 10px;border-radius:5px;border:1px solid rgba(76,175,122,0.3)">⚑ PAYOUTS FINALIZED</span>`
+            : `<span class="proj-status ${isArchived?'archived':pStatus}"><span class="proj-status-dot"></span>${isArchived?'Archived':pStatus==='complete'?'Complete':'Active'}</span>
+               <button class="btn btn-sm" onclick="toggleArchiveProject('${proj.id}')" style="color:${isArchived?'var(--green)':'var(--text3)'}">${isArchived?'Unarchive':'Archive'}</button>
+               ${auth.role==='admin'&&pStatus==='complete'
+                 ? `<button class="btn btn-sm" onclick="finalizePayouts('${proj.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.35)" title="Permanently lock all payouts for this project">⚑ Finalize Payouts</button>`
+                 : ''}`
+          }
         </div>
       </div>`;
 
