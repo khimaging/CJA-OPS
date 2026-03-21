@@ -1998,8 +1998,10 @@ async function deleteExpense(id) {
 
 async function toggleReimbursed(id, val) {
   const exp = state.expenses.find(x => x.id === id);
-  if (exp && isProjectExpenseLocked(exp.projectId)) {
-    notify('\u{1F512} Project is complete \u2014 expenses are locked');
+  // Reimbursed status is always editable by admins — payments may happen after finalization
+  // Non-admins are blocked if the project is complete
+  if (exp && auth.role !== 'admin' && isProjectExpenseLocked(exp.projectId)) {
+    notify('🔒 Project is complete — expenses are locked');
     renderExpensesView();
     return;
   }
