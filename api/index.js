@@ -410,8 +410,12 @@ app.post('/api/expenses', requireAuth, async (req, res) => {
 
 app.patch('/api/expenses/:id', requireAuth, async (req, res) => {
   try {
-    if (await isExpenseLocked(req.params.id)) {
-      return res.status(403).json({ error: 'Expense is locked — project is complete.' });
+    // Admins can always update reimbursed status — payments happen after project finalization
+    const isReimbursedOnlyUpdate = Object.keys(req.body).length === 1 && req.body.reimbursed !== undefined;
+    if (!isReimbursedOnlyUpdate || req.user.role !== 'admin') {
+      if (await isExpenseLocked(req.params.id)) {
+        return res.status(403).json({ error: 'Expense is locked — project is complete.' });
+      }
     }
     const updates = {};
     const map = {
