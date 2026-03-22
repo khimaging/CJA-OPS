@@ -247,16 +247,17 @@ app.patch('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
     const { data: current, error: fetchErr } = await supabase.from('deals').select('*').eq('id', req.params.id).single();
     if (fetchErr) throw fetchErr;
 
-    const isPaid = current.invoice_status === 'paid';
+    // Financial fields only lock when the linked project's payouts are finalized
     const FINANCIAL_FIELDS = ['value','buckets','prob'];
     const attemptedFinancial = FINANCIAL_FIELDS.filter(f => req.body[f] !== undefined);
-
-    // Block financial edits on paid deals (allow invoice_status change so admin can unlock)
-    if (isPaid && attemptedFinancial.length > 0) {
-      await auditLog(req.user, 'BLOCKED_EDIT_PAID_DEAL', 'deals', req.params.id, {
-        attempted: attemptedFinancial, reason: 'deal is paid'
-      });
-      return res.status(403).json({ error: 'Deal is marked Paid — financial fields (value, buckets) are locked. Change invoice status first.' });
+    if (attemptedFinancial.length > 0) {
+      const { data: proj } = await supabase.from('projects').select('payouts_finalized,name').eq('deal_id', req.params.id).maybeSingle();
+      if (proj?.payouts_finalized) {
+        await auditLog(req.user, 'BLOCKED_EDIT_FINALIZED_DEAL', 'deals', req.params.id, {
+          attempted: attemptedFinancial, reason: 'project payouts finalized'
+        });
+        return res.status(403).json({ error: `Project "${proj.name}" payouts are finalized — financial fields are permanently locked.` });
+      }
     }
 
     const row = dealToRow(req.body, true);
@@ -275,9 +276,11 @@ app.patch('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
 app.delete('/api/deals/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
     const { data: deal } = await supabase.from('deals').select('*').eq('id', req.params.id).single();
-    if (deal?.invoice_status === 'paid') {
-      await auditLog(req.user, 'BLOCKED_DELETE_PAID_DEAL', 'deals', req.params.id, { name: deal.name });
-      return res.status(403).json({ error: 'Cannot delete a deal marked as Paid.' });
+    // Block deletion if the linked project has finalized payouts
+    const { data: proj } = await supabase.from('projects').select('payouts_finalized,name').eq('deal_id', req.params.id).maybeSingle();
+    if (proj?.payouts_finalized) {
+      await auditLog(req.user, 'BLOCKED_DELETE_FINALIZED_DEAL', 'deals', req.params.id, { name: deal?.name });
+      return res.status(403).json({ error: `Cannot delete — project "${proj.name}" payouts are finalized.` });
     }
     await auditLog(req.user, 'DELETE_DEAL', 'deals', req.params.id, { name: deal?.name });
     const { error } = await supabase.from('deals').delete().eq('id', req.params.id);
@@ -342,22 +345,13 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
 
 app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
   try {
-    // Check if task's project is locked (payouts finalized = permanent) or estHours on complete+paid
+    // Check if task's project is locked (payouts finalized = permanent lock)
     if (req.body.estHours !== undefined || req.body.status !== undefined || req.body.title !== undefined) {
       const { data: task } = await supabase.from('tasks').select('project_id').eq('id', req.params.id).single();
       if (task?.project_id) {
-        const { data: proj } = await supabase.from('projects').select('status,deal_id,payouts_finalized').eq('id', task.project_id).single();
+        const { data: proj } = await supabase.from('projects').select('payouts_finalized').eq('id', task.project_id).single();
         if (proj?.payouts_finalized) {
           return res.status(403).json({ error: 'Task is permanently locked — project payouts have been finalized.' });
-        }
-        if (req.body.estHours !== undefined && proj?.status === 'complete' && proj?.deal_id) {
-          const locked = await getLockedDeal(proj.deal_id);
-          if (locked) {
-            await auditLog(req.user, 'BLOCKED_EDIT_TASK_HOURS', 'tasks', req.params.id, {
-              attempted_hours: req.body.estHours, reason: 'project complete + deal paid'
-            });
-            return res.status(403).json({ error: 'Task hours are locked — project is complete and deal is paid.' });
-          }
         }
       }
     }
@@ -655,10 +649,9 @@ function mapDeal(d) {
     stage:         d.stage,
     owner:         d.owner,
     closeDate:     d.close_date,
-    invoiceStatus:   d.invoice_status || 'none',
-    amountCollected: d.amount_collected || 0,
-    buckets:         d.buckets || [],
-    prob:            d.prob || 0,
+    invoiceStatus: d.invoice_status || 'none',
+    buckets:       d.buckets || [],
+    prob:          d.prob || 0,
   };
 }
 
@@ -715,9 +708,8 @@ function dealToRow(body, partial = false) {
   if (!partial || body.stage         !== undefined) row.stage          = body.stage;
   if (!partial || body.owner         !== undefined) row.owner          = body.owner;
   if (!partial || body.closeDate     !== undefined) row.close_date     = body.closeDate || null;
-  if (!partial || body.invoiceStatus    !== undefined) row.invoice_status    = body.invoiceStatus || 'none';
-  if (!partial || body.amountCollected !== undefined) row.amount_collected = body.amountCollected || 0;
-  if (!partial || body.buckets         !== undefined) row.buckets          = body.buckets || [];
+  if (!partial || body.invoiceStatus !== undefined) row.invoice_status = body.invoiceStatus || 'none';
+  if (!partial || body.buckets       !== undefined) row.buckets        = body.buckets || [];
   if (!partial || body.prob          !== undefined) row.prob           = body.prob || 0;
   return row;
 }
