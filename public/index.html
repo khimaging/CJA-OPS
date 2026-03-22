@@ -3706,26 +3706,35 @@ function calcProjectedEarnings(filterFn){
   const prodPay={},feePay={},psPay={};
   state.team.forEach(m=>{prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
 
-  // Only Closed Won deals NOT yet paid in full
+  // Projected = Closed Won deals where payout hasn't been fully earned yet:
+  // either not yet paid, OR paid but project not complete / tasks not all done
   state.projects.forEach(proj=>{
     const deal=state.deals.find(d=>d.id===proj.dealId);
     if(!deal) return;
-    if(deal.stage!=='Closed Won'||deal.invoiceStatus==='paid') return;
+    if(deal.stage!=='Closed Won') return;
     if(proj.archived) return;
     if(filterFn&&!filterFn(deal)) return;
+    // Exclude only if fully earned (paid + complete + all tasks done)
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+    if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
     const pb=deal.buckets.find(b=>b.name==='Production Pool');
     if(pb){
       const pool=netRev(deal)*pb.pct/100;
-      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
       const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
       if(tH){const uh={};tasks.forEach(t=>{uh[t.assigneeId]=(uh[t.assigneeId]||0)+(t.estHours||0);});Object.entries(uh).forEach(([mid,h])=>{if(prodPay[mid]!==undefined)prodPay[mid]+=pool*(h/tH);});}
     }
     deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
   });
 
-  // Projected profit share — Closed Won not yet paid
+  // Projected profit share — Closed Won where not yet fully earned
   const projectedDeals=state.deals.filter(d=>{
-    if(d.stage!=='Closed Won'||d.invoiceStatus==='paid') return false;
+    if(d.stage!=='Closed Won') return false;
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    const tasks=proj?state.tasks.filter(t=>t.projectId===proj.id):[];
+    const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+    // Exclude if fully earned
+    if(d.invoiceStatus==='paid'&&proj?.status==='complete'&&allDone) return false;
     return filterFn?filterFn(d):true;
   });
   const totalPsPool=projectedDeals.reduce((s,d)=>{const psB=d.buckets.find(b=>b.name==='Profit Share');return s+netRev(d)*(psB?psB.pct:17.5)/100;},0);
@@ -3927,17 +3936,20 @@ function renderTeamMonthly(){
       deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{amt+=netRev(deal)*b.pct/100;});
       if(amt>0) lines.push({label:proj.name,type:'actual',amt,detail:deal.client});
     });
-    // Projected projects
+    // Projected projects — Closed Won, not yet fully earned
     state.projects.forEach(proj=>{
       const deal=state.deals.find(d=>d.id===proj.dealId);
-      if(!deal||deal.stage!=='Closed Won'||deal.invoiceStatus==='paid') return;
+      if(!deal||deal.stage!=='Closed Won') return;
       if(proj.archived) return;
       if(!monthFilter(deal)) return;
+      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+      const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+      // Skip if fully earned (would appear in actual)
+      if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
       let amt=0;
       const pb=deal.buckets.find(b=>b.name==='Production Pool');
       if(pb){
         const pool=netRev(deal)*pb.pct/100;
-        const tasks=state.tasks.filter(t=>t.projectId===proj.id);
         const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
         const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
         if(tH>0&&myH>0) amt+=pool*(myH/tH);
