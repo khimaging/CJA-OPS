@@ -1723,13 +1723,18 @@ async function saveDeal() {
     if (editId) {
       savedDeal = await api('PATCH', '/deals/' + editId, payload);
       const idx = state.deals.findIndex(d => d.id === editId);
-      if (idx >= 0) state.deals[idx] = savedDeal;
+      if (idx >= 0) {
+        // Preserve computed expenses — API always returns 0, real value lives in state
+        savedDeal.expenses = state.deals[idx].expenses || 0;
+        state.deals[idx] = savedDeal;
+      }
       notify('Deal updated ✓');
     } else {
       savedDeal = await api('POST', '/deals', payload);
       state.deals.push(savedDeal);
       notify('Deal saved ✓');
     }
+    syncDealExpenses();
     renderCRM(); updateBadges();
     // Auto-create project if newly Closed Won
     const isNewlyWon = stage === 'Closed Won' && prevStage !== 'Closed Won';
