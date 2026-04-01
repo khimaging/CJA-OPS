@@ -2033,21 +2033,21 @@ async function toggleProfitSharePaid(pkey, checked) {
   _markRecentWrite('psStatus', pkey);
   renderProfitShareView();
   const lastUnderscore = pkey.lastIndexOf('_');
-  const quarterKey = pkey.substring(0, lastUnderscore);
+  const quarterKey = pkey.substring(0, lastUnderscore); // now YYYY-MM format
   const memberId = pkey.substring(lastUnderscore + 1);
   try {
     // Compute snapshot values at time of payment
     const _psMember = state.team.find(m=>m.id===memberId);
-    const [_yr, _qStr] = quarterKey.split('-Q');
-    const _qNum = parseInt(_qStr);
-    const _qStart = new Date(parseInt(_yr), (_qNum-1)*3, 1);
-    const _qEnd   = new Date(parseInt(_yr), _qNum*3, 1);
+    // Parse YYYY-MM month key
+    const [_yr, _mm] = quarterKey.split('-');
+    const _mStart = new Date(parseInt(_yr), parseInt(_mm)-1, 1);
+    const _mEnd   = new Date(parseInt(_yr), parseInt(_mm), 1);
     const _pool = state.deals
       .filter(d=>{
         if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
         if(!d.closeDate) return false;
         const cd = new Date(d.closeDate+'-01');
-        return cd>=_qStart&&cd<_qEnd;
+        return cd>=_mStart&&cd<_mEnd;
       })
       .reduce((sum,d)=>{
         const psB=d.buckets?.find(b=>b.name==='Profit Share');
@@ -3009,7 +3009,10 @@ function renderProjects(){
       </div>
       ${deal?`<div class="project-labor"><span class="labor-label">Production Pool (${pb?.pct||0}% of ${fmt(netRev(deal))} net)</span><span class="labor-value">${fmt(pool)}</span></div>`:''}
       ${isFinalized
-        ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);text-align:center">✓ TEAM PAYOUTS FINALIZED — PERMANENTLY LOCKED</div>`
+        ? `<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green)">✓ PAYOUTS FINALIZED</span>
+            ${auth.role==='admin'?`<button class="btn btn-sm" onclick="event.stopPropagation();unfinalizePayouts('${p.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3);font-size:9px">⚠ Override Unlock</button>`:''}
+          </div>`
         : `<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
             <button class="btn btn-sm" onclick="event.stopPropagation();cycleProjectStatus('${p.id}')" style="flex:1;justify-content:center">
               ${isComplete?'↺ Mark Active':'✓ Mark Complete'}
@@ -3024,19 +3027,37 @@ function renderProjects(){
   }).join('');
 }
 
+async function unfinalizePayouts(pid){
+  const p = state.projects.find(x=>x.id===pid);
+  if (!p) return;
+  if (!confirm(
+    `⚠️ OVERRIDE: UNFINALIZE PAYOUTS FOR "${p.name}"?\n\n` +
+    `This is an admin override to correct a mistake.\n` +
+    `All locks will be lifted — tasks, expenses, and deal fields become editable.\n\n` +
+    `Re-finalize once corrections are made.`
+  )) return;
+  try {
+    const updated = await api('PATCH','/projects/'+pid,{payoutsFinalized:false});
+    const idx = state.projects.findIndex(x=>x.id===pid);
+    if (idx>=0) state.projects[idx] = {...state.projects[idx], ...updated, payoutsFinalized:false};
+    notify('Payouts unfinalized — project unlocked for editing');
+    renderProjects();
+    renderProjMonthly();
+    if (state.currentPage==='pay') renderPayView();
+  } catch(e) { notify('Failed: '+e.message); }
+}
+
 async function finalizePayouts(pid){
   const p = state.projects.find(x=>x.id===pid);
   if (!p) return;
   if (!confirm(
     `⚠️ FINALIZE PAYOUTS FOR "${p.name}"?\n\n` +
-    `This is PERMANENT and cannot be undone.\n\n` +
+    `This is PERMANENT and cannot be undone by regular users.\n\n` +
     `Once finalized:\n` +
     `• Tasks cannot be added, edited, or moved\n` +
     `• Expenses cannot be added, edited, or deleted\n` +
-    `• Project status cannot be changed\n` +
-    `• No one — including admins — can alter this project\n\n` +
-    `Only do this after all payouts have been verified and distributed.\n\n` +
-    `Type OK to confirm.`
+    `• Project status cannot be changed\n\n` +
+    `Only do this after all payouts have been verified and distributed.`
   )) return;
   try {
     const updated = await api('PATCH','/projects/'+pid,{payoutsFinalized:true});
@@ -3433,7 +3454,7 @@ function renderPayView(){
         <div class="section-title" style="margin-bottom:0">${isFinalized?'🔒 ':''}${proj.name}<span class="section-sub">Production pool ${fmt(pool)} · ${totH}h · ${fmt(nr)} net revenue${deal.expenses?` (${fmt(deal.value)} gross − ${fmt(deal.expenses)} exp)`:''}</span></div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;padding-top:4px">
           ${isFinalized
-            ? `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);background:rgba(76,175,122,0.1);padding:3px 10px;border-radius:5px;border:1px solid rgba(76,175,122,0.3)">⚑ PAYOUTS FINALIZED</span>`
+            ? `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);background:rgba(76,175,122,0.1);padding:3px 10px;border-radius:5px;border:1px solid rgba(76,175,122,0.3)">⚑ PAYOUTS FINALIZED</span>${auth.role==='admin'?` <button class="btn btn-sm" onclick="unfinalizePayouts('${proj.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3);font-size:9px">⚠ Override Unlock</button>`:''}`
             : `<span class="proj-status ${isArchived?'archived':pStatus}"><span class="proj-status-dot"></span>${isArchived?'Archived':pStatus==='complete'?'Complete':'Active'}</span>
                <button class="btn btn-sm" onclick="toggleArchiveProject('${proj.id}')" style="color:${isArchived?'var(--green)':'var(--text3)'}">${isArchived?'Unarchive':'Archive'}</button>
                ${auth.role==='admin'&&pStatus==='complete'
@@ -3444,58 +3465,90 @@ function renderPayView(){
       </div>`;
 
     if(totH>0){
-      html+=`<div class="pay-sub-header" style="margin-top:0;border-top:none;padding-top:0">Production Pool — distributed by hours share</div>
-      <div class="pay-grid" style="margin-bottom:8px">
-        ${state.team.map(m=>{
-          const data=uh[m.id];
-          const hours=data?data.hours:0;
-          const pkey=proj.id+'_'+m.id;
-          const paid=!!state.payStatus[pkey];
-          if(!hours)return`<div class="pay-card" style="opacity:0.35"><div class="pay-user"><div class="user-avatar" style="background:${m.color}">${m.name.split(' ').map(n=>n[0]).join('')}</div><div><div class="user-name">${m.name}</div><div class="user-role">${m.role}</div></div></div><div class="pay-total" style="color:var(--text3)">$0</div><div style="font-size:11px;color:var(--text3)">No tasks assigned</div></div>`;
-          const share=hours/totH;
-          const payout=pool*share;
-          const pct=Math.round(share*100);
-          return`<div class="pay-card" style="${paid?'border-color:rgba(76,175,122,0.35)':''}">
-            <div class="pay-user"><div class="user-avatar" style="background:${m.color}">${m.name.split(' ').map(n=>n[0]).join('')}</div><div><div class="user-name">${m.name}</div><div class="user-role">${m.role}</div></div></div>
-            <div class="pay-total">${fmt(payout)}</div>
-            <div class="pay-bar"><div class="pay-bar-fill" style="width:${pct}%;background:${m.color}"></div></div>
-            <div class="pay-breakdown">
-              <div class="pay-row"><span class="pay-row-label">Hours allocated</span><span class="pay-row-value">${hours}h</span></div>
-              <div class="pay-row"><span class="pay-row-label">Share of project hours</span><span class="pay-row-value">${pct}% (${hours}h / ${totH}h)</span></div>
-              <div class="pay-row"><span class="pay-row-label">Payout from pool</span><span class="pay-row-value">${fmt(payout)} of ${fmt(pool)}</span></div>
-              <div class="pay-row"><span class="pay-row-label">Tasks</span><span class="pay-row-value">${data.tasks.length}</span></div>
+      const tableRows = state.team.map(m=>{
+        const data=uh[m.id];
+        const hours=data?data.hours:0;
+        const pkey=proj.id+'_'+m.id;
+        const paid=!!state.payStatus[pkey];
+        const locked=isPayoutsFinalized(proj.id);
+        if(!hours) return '';
+        const share=hours/totH;
+        const payout=pool*share;
+        const pct=Math.round(share*100);
+        return`<tr style="border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.04)':''}">
+          <td style="padding:10px 16px;display:flex;align-items:center;gap:10px">
+            <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:9px;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+            <div>
+              <div style="font-size:12px;font-weight:500;color:var(--text)">${m.name}</div>
+              <div style="font-size:10px;color:var(--text3)">${m.role}</div>
             </div>
-            <div class="paid-status">
-              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="togglePaid('${proj.id}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
-              <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
-            </div>
-          </div>`;
-        }).join('')}
+          </td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${hours}h / ${totH}h</td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${pct}%</td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--gold)">${fmt(payout)}</td>
+          <td style="padding:10px 16px">
+            ${can.markPaid()&&!locked
+              ? `<label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>`
+              : `<span class="paid-label ${paid?'yes':'no'}" style="font-size:10px">${paid?'PAID':'UNPAID'}</span>`
+            }
+          </td>
+        </tr>`;
+      }).filter(Boolean).join('');
+
+      html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 100px 60px 110px 80px">
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Production Pool — ${fmt(pool)}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Hours</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Share</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)">Payout</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Status</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <colgroup><col style="width:1fr"><col style="width:100px"><col style="width:60px"><col style="width:110px"><col style="width:80px"></colgroup>
+          <tbody>${tableRows}</tbody>
+        </table>
       </div>`;
     }
 
     if(specials.length){
-      html+=`<div class="pay-sub-header">Special Fees — fixed assignments</div>
-      <div class="pay-grid">
-        ${specials.map(b=>{
-          const m=state.team.find(x=>x.id===b.assignedTo);
-          if(!m)return'';
-          const amt=netRev(deal)*b.pct/100;
-          const pkey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+m.id;
-          const paid=!!state.payStatus[pkey];
-          return`<div class="pay-card" style="${paid?'border-color:rgba(76,175,122,0.35)':''}">
-            <div class="pay-user"><div class="user-avatar" style="background:${m.color}">${m.name.split(' ').map(n=>n[0]).join('')}</div><div><div class="user-name">${m.name}</div><div class="user-role">${m.role}</div></div></div>
-            <div class="pay-total" style="color:var(--teal)">${fmt(amt)}</div>
-            <div class="pay-breakdown" style="margin-top:8px">
-              <div class="pay-row"><span class="pay-row-label">Fee type</span><span class="pay-row-value" style="color:var(--teal)">${b.name}</span></div>
-              <div class="pay-row"><span class="pay-row-label">Rate</span><span class="pay-row-value">${b.pct}% of ${fmt(netRev(deal))} net</span></div>
+      const feeRows=specials.map(b=>{
+        const m=state.team.find(x=>x.id===b.assignedTo);
+        if(!m) return '';
+        const amt=netRev(deal)*b.pct/100;
+        const pkey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+m.id;
+        const paid=!!state.payStatus[pkey];
+        const locked=isPayoutsFinalized(proj.id);
+        return`<tr style="border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.04)':''}">
+          <td style="padding:10px 16px;display:flex;align-items:center;gap:10px">
+            <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:9px;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+            <div>
+              <div style="font-size:12px;font-weight:500;color:var(--text)">${m.name}</div>
+              <div style="font-size:10px;color:var(--text3)">${m.role}</div>
             </div>
-            <div class="paid-status">
-              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>
-              <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
-            </div>
-          </div>`;
-        }).join('')}
+          </td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--teal)">${b.name}</td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${b.pct}%</td>
+          <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--teal)">${fmt(amt)}</td>
+          <td style="padding:10px 16px">
+            ${can.markPaid()&&!locked
+              ? `<label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>`
+              : `<span class="paid-label ${paid?'yes':'no'}" style="font-size:10px">${paid?'PAID':'UNPAID'}</span>`
+            }
+          </td>
+        </tr>`;
+      }).filter(Boolean).join('');
+
+      html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 100px 60px 110px 80px">
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Special Fees</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Fee Type</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Rate</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal)">Amount</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Status</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>${feeRows}</tbody>
+        </table>
       </div>`;
     }
 
@@ -3883,9 +3936,9 @@ function calcPaidEarnings(filterFn){
         if(!proj||proj.status!=='complete') return false;
         if(filterFn&&!filterFn(d)) return false;
         const dy=new Date((d.closeDate||'')+'-01');
-        const q=Math.ceil((dy.getMonth()+1)/3);
         const y=dy.getFullYear();
-        return `${y}-Q${q}`===quarterKey;
+        const mo=String(dy.getMonth()+1).padStart(2,'0');
+        return `${y}-${mo}`===quarterKey;
       });
       const pool=qDeals.reduce((s,d)=>{
         const psB=d.buckets.find(b=>b.name==='Profit Share');
@@ -3957,10 +4010,24 @@ function renderTeamMonthly(){
       deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{amt+=netRev(deal)*b.pct/100;});
       if(amt>0) lines.push({label:proj.name,type:'projected',amt,detail:deal.client});
     });
-    // Profit share (actual)
-    if(actPs[memberId]>0) lines.push({label:'Profit Share',type:'actual',amt:actPs[memberId],detail:eligibleDeals.length+' qualifying deal'+(eligibleDeals.length!==1?'s':'')});
-    // Profit share (projected)
-    if(prjPs[memberId]>0) lines.push({label:'Profit Share',type:'projected',amt:prjPs[memberId],detail:projectedDeals.length+' deal'+(projectedDeals.length!==1?'s':'')+' pending payment'});
+    // Profit share — one line per qualifying deal (actual)
+    eligibleDeals.forEach(d=>{
+      const psB=d.buckets.find(b=>b.name==='Profit Share');
+      const psPct=psB?psB.pct:17.5;
+      const pool=netRev(d)*psPct/100;
+      const m=state.team.find(x=>x.id===memberId);
+      const amt=Math.round(pool*(m?.profitSharePct||0)/100*100)/100;
+      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${m?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`});
+    });
+    // Profit share — one line per deal (projected)
+    projectedDeals.forEach(d=>{
+      const psB=d.buckets.find(b=>b.name==='Profit Share');
+      const psPct=psB?psB.pct:17.5;
+      const pool=netRev(d)*psPct/100;
+      const m=state.team.find(x=>x.id===memberId);
+      const amt=Math.round(pool*(m?.profitSharePct||0)/100*100)/100;
+      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${m?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`});
+    });
     return lines;
   }
 
@@ -4196,15 +4263,18 @@ function toggleAdmin(on){
 }
 
 
-function getQuarterLabel(dateStr){
+function getMonthLabel(dateStr){
   // dateStr = YYYY-MM-DD or YYYY-MM
   if(!dateStr) return null;
   const parts=dateStr.split('-');
   const y=parseInt(parts[0]);
   const m=parseInt(parts[1]);
-  const q=Math.ceil(m/3);
-  return {key:`${y}-Q${q}`,label:`Q${q} ${y}`,year:y,quarter:q};
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const key=`${y}-${String(m).padStart(2,'0')}`;
+  return {key, label:`${months[m-1]} ${y}`, year:y, month:m};
 }
+// Legacy alias
+function getQuarterLabel(dateStr){ return getMonthLabel(dateStr); }
 
 function renderProfitShareView(){
   // Render topbar based on role
@@ -4228,7 +4298,7 @@ function renderProfitShareView(){
   // Build quarter buckets using deal closeDate
   const quarterMap={};
   eligibleDeals.forEach(d=>{
-    const q=getQuarterLabel(d.closeDate||'');
+    const q=getMonthLabel(d.closeDate||'');
     if(!q) return;
     if(!quarterMap[q.key]) quarterMap[q.key]={...q,deals:[],totalDealValue:0,profitSharePool:0};
     const psB=d.buckets.find(b=>b.name==='Profit Share');
@@ -4239,7 +4309,7 @@ function renderProfitShareView(){
     quarterMap[q.key].profitSharePool+=psAmt;
   });
 
-  const quarters=Object.values(quarterMap).sort((a,b)=>b.year-a.year||b.quarter-a.quarter);
+  const quarters=Object.values(quarterMap).sort((a,b)=>b.year-a.year||b.month-a.month);
   const totalPs=quarters.reduce((s,q)=>s+q.profitSharePool,0);
   const totalPaid=Object.keys(state.profitSharePaidStatus).filter(k=>_isPsPaid(k)).length;
   const totalMembers=state.team.length;
@@ -4266,7 +4336,7 @@ function renderProfitShareView(){
   // Summary stats
   html+=`<div class="ps-summary-grid">
     <div class="stat-card"><div class="stat-label">Total Profit Share Pool</div><div class="stat-value" style="color:var(--green)">${fmt(totalPs)}</div><div class="stat-delta">${eligibleDeals.length} qualifying deals</div></div>
-    <div class="stat-card"><div class="stat-label">Active Quarters</div><div class="stat-value">${quarters.length}</div><div class="stat-delta" style="color:var(--blue)">${quarters.map(q=>q.label).join(', ')||'—'}</div></div>
+    <div class="stat-card"><div class="stat-label">Active Months</div><div class="stat-value">${quarters.length}</div><div class="stat-delta" style="color:var(--blue)">${quarters.map(q=>q.label).join(', ')||'—'}</div></div>
     <div class="stat-card"><div class="stat-label">Team Members</div><div class="stat-value">${totalMembers}</div><div class="stat-delta" style="color:var(--text3)">sharing ${pctBalanced?'100':'?'}% of pool</div></div>
     <div class="stat-card"><div class="stat-label">Payouts Completed</div><div class="stat-value" style="color:${pctPaid===100?'var(--green)':'var(--text)'}">${pctPaid}%</div><div class="stat-delta" style="color:var(--text3)">${totalPaid} of ${totalSlots} marked paid</div></div>
   </div>`;
