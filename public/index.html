@@ -3470,11 +3470,11 @@ function renderPayView(){
         const hours=data?data.hours:0;
         const pkey=proj.id+'_'+m.id;
         const paid=!!state.payStatus[pkey];
-        const locked=isPayoutsFinalized(proj.id);
         if(!hours) return '';
         const share=hours/totH;
         const payout=pool*share;
         const pct=Math.round(share*100);
+        const canCheck=can.markPaid();
         return`<tr style="border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.04)':''}">
           <td style="padding:10px 16px;display:flex;align-items:center;gap:10px">
             <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:9px;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
@@ -3486,25 +3486,25 @@ function renderPayView(){
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${hours}h / ${totH}h</td>
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${pct}%</td>
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--gold)">${fmt(payout)}</td>
-          <td style="padding:10px 16px">
-            ${can.markPaid()&&!locked
-              ? `<label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>`
-              : `<span class="paid-label ${paid?'yes':'no'}" style="font-size:10px">${paid?'PAID':'UNPAID'}</span>`
-            }
+          <td style="padding:10px 16px;text-align:center">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:${canCheck?'pointer':'default'}">
+              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${proj.id}','${m.id}',this.checked)`:''}" style="width:15px;height:15px;cursor:${canCheck?'pointer':'default'};accent-color:var(--green)">
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:${paid?'var(--green)':'var(--text3)'}">${paid?'Paid':'Unpaid'}</span>
+            </label>
           </td>
         </tr>`;
       }).filter(Boolean).join('');
 
       html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
-        <div style="padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 100px 60px 110px 80px">
+        <div style="padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:grid;grid-template-columns:1fr 100px 60px 110px 100px">
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Production Pool — ${fmt(pool)}</span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Hours</span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Share</span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)">Payout</span>
-          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Status</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);text-align:center">Paid</span>
         </div>
         <table style="width:100%;border-collapse:collapse">
-          <colgroup><col style="width:1fr"><col style="width:100px"><col style="width:60px"><col style="width:110px"><col style="width:80px"></colgroup>
+          <colgroup><col style="width:1fr"><col style="width:100px"><col style="width:60px"><col style="width:110px"><col style="width:100px"></colgroup>
           <tbody>${tableRows}</tbody>
         </table>
       </div>`;
@@ -3517,7 +3517,7 @@ function renderPayView(){
         const amt=netRev(deal)*b.pct/100;
         const pkey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+m.id;
         const paid=!!state.payStatus[pkey];
-        const locked=isPayoutsFinalized(proj.id);
+        const canCheck=can.markPaid();
         return`<tr style="border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.04)':''}">
           <td style="padding:10px 16px;display:flex;align-items:center;gap:10px">
             <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:9px;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
@@ -3529,11 +3529,11 @@ function renderPayView(){
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--teal)">${b.name}</td>
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${b.pct}%</td>
           <td style="padding:10px 16px;font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--teal)">${fmt(amt)}</td>
-          <td style="padding:10px 16px">
-            ${can.markPaid()&&!locked
-              ? `<label class="paid-toggle"><input type="checkbox" ${paid?'checked':''} onchange="togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)"><span class="toggle-slider"></span></label>`
-              : `<span class="paid-label ${paid?'yes':'no'}" style="font-size:10px">${paid?'PAID':'UNPAID'}</span>`
-            }
+          <td style="padding:10px 16px;text-align:center">
+            <label style="display:inline-flex;align-items:center;gap:6px;cursor:${canCheck?'pointer':'default'}">
+              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${proj.id}_fee_${b.name.replace(/\s/g,'_')}','${m.id}',this.checked)`:''}" style="width:15px;height:15px;cursor:${canCheck?'pointer':'default'};accent-color:var(--green)">
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:${paid?'var(--green)':'var(--text3)'}">${paid?'Paid':'Unpaid'}</span>
+            </label>
           </td>
         </tr>`;
       }).filter(Boolean).join('');
@@ -3978,16 +3978,27 @@ function renderTeamMonthly(){
       if(!monthFilter(deal)) return;
       const tasks=state.tasks.filter(t=>t.projectId===proj.id);
       if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return;
-      let amt=0;
+      // Production line
       const pb=deal.buckets.find(b=>b.name==='Production Pool');
       if(pb){
         const pool=netRev(deal)*pb.pct/100;
         const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
         const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
-        if(tH>0&&myH>0) amt+=pool*(myH/tH);
+        if(tH>0&&myH>0){
+          const amt=pool*(myH/tH);
+          const payKey=proj.id+'_'+memberId;
+          lines.push({label:proj.name,type:'actual',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
+        }
       }
-      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{amt+=netRev(deal)*b.pct/100;});
-      if(amt>0) lines.push({label:proj.name,type:'actual',amt,detail:deal.client});
+      // Individual fee lines
+      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
+        const amt=netRev(deal)*b.pct/100;
+        if(amt>0){
+          const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
+          const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
+          lines.push({label:`${proj.name} — ${b.name}`,type:'actual',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
+        }
+      });
     });
     // Projected projects — Closed Won, not yet fully earned
     state.projects.forEach(proj=>{
@@ -3997,36 +4008,46 @@ function renderTeamMonthly(){
       if(!monthFilter(deal)) return;
       const tasks=state.tasks.filter(t=>t.projectId===proj.id);
       const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
-      // Skip if fully earned (would appear in actual)
       if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
-      let amt=0;
+      // Production line
       const pb=deal.buckets.find(b=>b.name==='Production Pool');
       if(pb){
         const pool=netRev(deal)*pb.pct/100;
         const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
         const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
-        if(tH>0&&myH>0) amt+=pool*(myH/tH);
+        if(tH>0&&myH>0){
+          const amt=pool*(myH/tH);
+          const payKey=proj.id+'_'+memberId;
+          lines.push({label:proj.name,type:'projected',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
+        }
       }
-      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{amt+=netRev(deal)*b.pct/100;});
-      if(amt>0) lines.push({label:proj.name,type:'projected',amt,detail:deal.client});
+      // Individual fee lines
+      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
+        const amt=netRev(deal)*b.pct/100;
+        if(amt>0){
+          const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
+          const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
+          lines.push({label:`${proj.name} — ${b.name}`,type:'projected',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
+        }
+      });
     });
     // Profit share — one line per qualifying deal (actual)
     eligibleDeals.forEach(d=>{
       const psB=d.buckets.find(b=>b.name==='Profit Share');
       const psPct=psB?psB.pct:17.5;
       const pool=netRev(d)*psPct/100;
-      const m=state.team.find(x=>x.id===memberId);
-      const amt=Math.round(pool*(m?.profitSharePct||0)/100*100)/100;
-      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${m?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`});
+      const mem=state.team.find(x=>x.id===memberId);
+      const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
+      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null});
     });
     // Profit share — one line per deal (projected)
     projectedDeals.forEach(d=>{
       const psB=d.buckets.find(b=>b.name==='Profit Share');
       const psPct=psB?psB.pct:17.5;
       const pool=netRev(d)*psPct/100;
-      const m=state.team.find(x=>x.id===memberId);
-      const amt=Math.round(pool*(m?.profitSharePct||0)/100*100)/100;
-      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${m?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`});
+      const mem=state.team.find(x=>x.id===memberId);
+      const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
+      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null});
     });
     return lines;
   }
@@ -4116,7 +4137,10 @@ function renderTeamMonthly(){
             ? `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);padding:8px 0">No project breakdown available</div>`
             : ''
           }
-          ${actLines.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          ${actLines.map(l=>{
+            const paid=l.payKey?!!state.payStatus[l.payKey]:false;
+            const canCheck=l.payKey&&can.markPaid();
+            return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.03);margin:0 -20px;padding-left:20px;padding-right:20px;':''}">
             <div style="width:3px;height:28px;background:var(--gold);border-radius:2px;flex-shrink:0"></div>
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.label}</div>
@@ -4124,8 +4148,16 @@ function renderTeamMonthly(){
             </div>
             <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:rgba(201,168,76,0.1);padding:2px 7px;border-radius:4px;white-space:nowrap">Actual</div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--gold);min-width:72px;text-align:right">${fmt(l.amt)}</div>
-          </div>`).join('')}
-          ${projLines.map(l=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+            ${l.payKey?`<label style="display:inline-flex;align-items:center;gap:4px;cursor:${canCheck?'pointer':'default'};min-width:60px;justify-content:flex-end">
+              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${l.projId}','${l.memberId}',this.checked)`:''}" style="width:14px;height:14px;accent-color:var(--green);cursor:${canCheck?'pointer':'default'}">
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:${paid?'var(--green)':'var(--text3)'}">${paid?'Paid':'Unpaid'}</span>
+            </label>`:'<div style="min-width:60px"></div>'}
+          </div>`;
+          }).join('')}
+          ${projLines.map(l=>{
+            const paid=l.payKey?!!state.payStatus[l.payKey]:false;
+            const canCheck=l.payKey&&can.markPaid();
+            return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.03);margin:0 -20px;padding-left:20px;padding-right:20px;':''}">
             <div style="width:3px;height:28px;background:var(--blue);border-radius:2px;opacity:0.5;flex-shrink:0"></div>
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:500;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.label}</div>
@@ -4133,7 +4165,12 @@ function renderTeamMonthly(){
             </div>
             <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--blue);background:rgba(102,126,234,0.1);padding:2px 7px;border-radius:4px;white-space:nowrap">Projected</div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--blue);opacity:0.8;min-width:72px;text-align:right">${fmt(l.amt)}</div>
-          </div>`).join('')}
+            ${l.payKey?`<label style="display:inline-flex;align-items:center;gap:4px;cursor:${canCheck?'pointer':'default'};min-width:60px;justify-content:flex-end">
+              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${l.projId}','${l.memberId}',this.checked)`:''}" style="width:14px;height:14px;accent-color:var(--green);cursor:${canCheck?'pointer':'default'}">
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:${paid?'var(--green)':'var(--text3)'}">${paid?'Paid':'Unpaid'}</span>
+            </label>`:'<div style="min-width:60px"></div>'}
+          </div>`;
+          }).join('')}
           <!-- Combined footer -->
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0 2px">
             <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Total for ${lbl}</span>
