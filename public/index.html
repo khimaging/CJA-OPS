@@ -1430,9 +1430,8 @@ async function initLogin() {
       <div class="user-avatar" style="background:${u.color};width:30px;height:30px;font-size:11px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#0e0e0f;flex-shrink:0">${u.name.split(' ').map(n=>n[0]).join('')}</div>
       <div>
         <div class="user-select-name">${u.name}</div>
-        <div class="user-select-role">${u.authRole === 'admin' ? 'Administrator' : 'Team Member'}</div>
+        <div class="user-select-role">Team Member</div>
       </div>
-      <span class="user-select-badge ${u.authRole === 'admin' ? 'badge-admin' : 'badge-member'}">${u.authRole.toUpperCase()}</span>
     </button>`).join('');
 
   if (loginTeamMembers.length > 0) selectLoginUser(loginTeamMembers[0].id);
