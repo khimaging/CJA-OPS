@@ -20,7 +20,42 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
+
+// ─── SECURITY HEADERS ────────────────────────────────────────────────────────
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  next();
+});
+
+// ─── RATE LIMITING ────────────────────────────────────────────────────────────
+const _loginAttempts = new Map(); // ip → { count, resetAt }
+function loginRateLimit(req, res, next) {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const WINDOW = 15 * 60 * 1000; // 15 minutes
+  const MAX = 10;
+  let rec = _loginAttempts.get(ip);
+  if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + WINDOW };
+  rec.count++;
+  _loginAttempts.set(ip, rec);
+  if (rec.count > MAX) {
+    const retryAfter = Math.ceil((rec.resetAt - now) / 1000);
+    res.setHeader('Retry-After', retryAfter);
+    return res.status(429).json({ error: `Too many login attempts — retry in ${Math.ceil(retryAfter/60)} minutes` });
+  }
+  next();
+}
+// Clean up stale entries every 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  _loginAttempts.forEach((v, k) => { if (now > v.resetAt) _loginAttempts.delete(k); });
+}, 15 * 60 * 1000);
 
 // ─── HEALTH ──────────────────────────────────────────────────────────────────
 app.get('/api/health', (_, res) => res.json({ ok: true, ts: new Date().toISOString() }));
@@ -67,28 +102,24 @@ async function isProfitSharePaid(memberId) {
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 // Public — load team list for login screen (no PINs or hashes exposed)
+// Public — only exposes the minimum needed for the login member picker.
+// auth_role is intentionally excluded from this unauthenticated endpoint.
 app.get('/api/team', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('team_members')
-      .select('id, name, auth_role, color, active')
+      .select('id, name, color, active')
+      .eq('active', true)
       .order('name');
     if (error) throw error;
-    // Map snake_case → camelCase for frontend
-    res.json(data.map(m => ({
-      id:       m.id,
-      name:     m.name,
-      authRole: m.auth_role,
-      color:    m.color,
-      active:   m.active,
-    })));
+    res.json(data.map(m => ({ id: m.id, name: m.name, color: m.color })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 // Public — PIN login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginRateLimit, async (req, res) => {
   const { memberId, pin } = req.body || {};
   if (!memberId || !pin) return res.status(400).json({ error: 'memberId and pin required' });
 
