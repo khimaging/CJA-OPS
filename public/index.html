@@ -1350,7 +1350,7 @@ let state={
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',calOffset:0,workloadPeriod:'week',
   payStatusFilter:'all',archivedProjects:{},
-  teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,
+  teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',
 };
 
 // ============================================================
@@ -3536,48 +3536,54 @@ function _calcMemberHours(memberId, period){
   });
 }
 
-function _buildDonutSvg(members, period, size=140){
-  const cap=WL_CAPS[period];
-  const loads=members.map(m=>({
-    m,
-    hours:_calcMemberHours(m.id,period).reduce((s,t)=>s+(t.estHours||0),0)
-  })).filter(x=>x.hours>0);
-  const totalH=loads.reduce((s,x)=>s+x.hours,0);
-  const capTotal=members.length*cap;
+function _buildMemberDonut(m, memberStats, size=130){
+  // Single-member donut: three concentric-like arcs shown as a single ring
+  // The ring shows how full the member is vs their day cap (primary metric)
+  // We use day as the ring fill, with color based on worst period status
+  const periods=[
+    {id:'day',cap:WL_CAPS.day},
+    {id:'week',cap:WL_CAPS.week},
+    {id:'month',cap:WL_CAPS.month},
+  ];
+  const cx=size/2,cy=size/2,strokeW=16;
 
-  if(loads.length===0){
-    return`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${size/2}" cy="${size/2}" r="${size/2-8}" fill="none" stroke="var(--bg4)" stroke-width="18"/>
-      <text x="${size/2}" y="${size/2+4}" text-anchor="middle" fill="var(--text3)" font-family="DM Mono,monospace" font-size="11">0h</text>
-    </svg>`;
-  }
+  // Three rings, radii spaced inward
+  const rings=[
+    {id:'month',r:size/2-10,cap:WL_CAPS.month,label:'30d'},
+    {id:'week', r:size/2-10-strokeW-4,cap:WL_CAPS.week,label:'7d'},
+    {id:'day',  r:size/2-10-(strokeW+4)*2,cap:WL_CAPS.day,label:'1d'},
+  ];
 
-  const cx=size/2,cy=size/2,r=size/2-12,strokeW=20;
-  const circ=2*Math.PI*r;
-  // Build arc segments
-  let offset=0;
-  const segs=loads.map(x=>{
-    const frac=x.hours/Math.max(totalH,1);
-    const dash=frac*circ;
-    const seg={color:x.m.color,dash,offset,hours:x.hours,name:x.m.name};
-    offset+=dash;
-    return seg;
-  });
+  const svgRings=rings.map(ring=>{
+    const data=memberStats.byPeriod[ring.id];
+    const hours=data?data.hours:0;
+    const pct=Math.min(hours/ring.cap,1);
+    const circ=2*Math.PI*ring.r;
+    const filled=pct*circ;
+    const color=hours>ring.cap?'var(--red)':hours>ring.cap*0.8?'var(--gold)':hours>0?m.color:'var(--bg4)';
+    return`
+      <circle cx="${cx}" cy="${cy}" r="${ring.r}" fill="none" stroke="var(--bg4)" stroke-width="${strokeW}" opacity="0.4"/>
+      <circle cx="${cx}" cy="${cy}" r="${ring.r}" fill="none" stroke="${color}" stroke-width="${strokeW}"
+        stroke-dasharray="${filled} ${circ-filled}" stroke-dashoffset="${circ/4}"
+        stroke-linecap="round"/>
+      <text x="${cx+(ring.r+strokeW/2+4)}" y="${cy+4}" text-anchor="start" fill="${color}"
+        font-family="DM Mono,monospace" font-size="7" style="transform:none">${ring.label}</text>
+    `;
+  }).join('');
 
-  const pct=Math.min(Math.round(totalH/cap*100),999);
-  const overCap=totalH>cap;
-  const centerColor=overCap?'var(--red)':totalH>cap*0.8?'var(--gold)':'var(--green)';
-  const capLabel={day:'/ '+cap+'h',week:'/ '+cap+'h',month:'/ '+cap+'h'}[period];
+  // Center: show day hours / day cap
+  const dayH=memberStats.byPeriod.day?.hours||0;
+  const dayCap=WL_CAPS.day;
+  const centerColor=dayH>dayCap?'var(--red)':dayH>dayCap*0.8?'var(--gold)':'var(--text)';
 
-  return`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg)">
-    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--bg4)" stroke-width="${strokeW}"/>
-    ${segs.map(s=>`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none"
-      stroke="${s.color}" stroke-width="${strokeW}"
-      stroke-dasharray="${s.dash} ${circ-s.dash}"
-      stroke-dashoffset="${-s.offset}"
-      stroke-linecap="butt"/>`).join('')}
-    <text x="${cx}" y="${cy-6}" text-anchor="middle" fill="${centerColor}" font-family="DM Mono,monospace" font-size="${totalH>=100?13:15}" font-weight="700" style="transform:rotate(90deg);transform-origin:${cx}px ${cy}px">${totalH}h</text>
-    <text x="${cx}" y="${cy+10}" text-anchor="middle" fill="var(--text3)" font-family="DM Mono,monospace" font-size="9" style="transform:rotate(90deg);transform-origin:${cx}px ${cy}px">${capLabel}</text>
+  return`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="transform:rotate(-90deg);display:block">
+    ${svgRings}
+    <text x="${cx}" y="${cy-5}" text-anchor="middle" fill="${centerColor}"
+      font-family="DM Mono,monospace" font-size="14" font-weight="700"
+      style="transform:rotate(90deg);transform-origin:${cx}px ${cy}px">${dayH}h</text>
+    <text x="${cx}" y="${cy+10}" text-anchor="middle" fill="var(--text3)"
+      font-family="DM Mono,monospace" font-size="8"
+      style="transform:rotate(90deg);transform-origin:${cx}px ${cy}px">today</text>
   </svg>`;
 }
 
@@ -3585,12 +3591,11 @@ function _renderWorkloadInto(el){
   const now=new Date();
   const active=state.team.filter(m=>m.active!==false);
   const periods=[
-    {id:'day',label:'Today',sublabel:'Rolling 24h',cap:WL_CAPS.day},
-    {id:'week',label:'7 Days',sublabel:'Rolling week',cap:WL_CAPS.week},
-    {id:'month',label:'30 Days',sublabel:'Rolling month',cap:WL_CAPS.month},
+    {id:'day',  label:'Today',   sublabel:'10h cap',  cap:WL_CAPS.day},
+    {id:'week', label:'7 Days',  sublabel:'50h cap',  cap:WL_CAPS.week},
+    {id:'month',label:'30 Days', sublabel:'200h cap', cap:WL_CAPS.month},
   ];
 
-  // Per-member stats for each period
   const memberStats=active.map(m=>{
     const byPeriod={};
     periods.forEach(p=>{
@@ -3614,85 +3619,73 @@ function _renderWorkloadInto(el){
       <div class="stat-card"><div class="stat-label">Active Members</div><div class="stat-value">${active.length}</div><div class="stat-delta">${memberStats.filter(m=>m.openTasks.length>0).length} with tasks</div></div>
     </div>
 
-    <!-- Donut charts — one per period -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px">
-      ${periods.map(p=>{
-        const cap=p.cap;
-        const totalH=memberStats.reduce((s,m)=>s+m.byPeriod[p.id].hours,0);
-        const overallPct=Math.min(Math.round(totalH/cap*100),100);
-        const overallColor=totalH>cap?'var(--red)':totalH>cap*0.8?'var(--gold)':'var(--green)';
-        const legend=memberStats.filter(m=>m.byPeriod[p.id].hours>0).map(m=>`
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-            <div style="width:8px;height:8px;border-radius:50%;background:${m.color};flex-shrink:0"></div>
-            <span style="font-size:11px;color:var(--text2);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.name.split(' ')[0]}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:${m.byPeriod[p.id].over?'var(--red)':m.byPeriod[p.id].hours>cap*0.8?'var(--gold)':'var(--text3)'};">${m.byPeriod[p.id].hours}h</span>
-          </div>`).join('');
-        return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px">
-          <div>
-            <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);text-align:center">${p.label}</div>
-            <div style="font-size:10px;color:var(--text3);text-align:center;margin-top:2px">${p.sublabel} · ${cap}h cap</div>
-          </div>
-          ${_buildDonutSvg(active,p.id,150)}
-          <div style="width:100%;border-top:1px solid var(--border);padding-top:10px">
-            ${legend||'<div style="font-family:DM Mono,monospace;font-size:10px;color:var(--text3);text-align:center">No tasks this period</div>'}
-          </div>
-          <div style="font-family:'DM Mono',monospace;font-size:10px;color:${overallColor};text-align:center">${overallPct}% of team cap used</div>
-        </div>`;
-      }).join('')}
-    </div>
-
-    <!-- Per-member task lists -->
-    <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Individual Breakdown</div>
-    <div style="display:flex;flex-direction:column;gap:14px">
-    ${memberStats.sort((a,b)=>b.openTasks.length-a.openTasks.length).map(m=>{
-      const bars=periods.map(p=>{
+    <!-- Per-member cards with individual donuts -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+    ${memberStats.map(m=>{
+      const periodBars=periods.map(p=>{
         const {hours,pct,over}=m.byPeriod[p.id];
         const c=over?'var(--red)':hours>p.cap*0.8?'var(--gold)':'var(--green)';
-        return`<div style="flex:1">
-          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-            <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${p.label}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:9px;color:${c}">${hours}/${p.cap}h</span>
+        return`<div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+            <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3)">${p.label}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:${c};flex-shrink:0;margin-left:6px">${hours}<span style="color:var(--text3);font-size:8px">/${p.cap}h</span></span>
           </div>
-          <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
-            <div style="height:100%;width:${pct}%;background:${c};border-radius:2px;transition:width .3s"></div>
+          <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${c};border-radius:3px"></div>
           </div>
+          ${over?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--red);margin-top:2px">+${hours-p.cap}h over</div>`:''}
         </div>`;
       }).join('');
 
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
-          <div class="user-avatar" style="background:${m.color};width:36px;height:36px;font-size:13px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:600;color:var(--text)">${m.name}</div>
-            <div style="font-size:10px;color:var(--text3)">${m.role} · ${m.openTasks.length} open${m.overdue.length?` · <span style="color:var(--red)">${m.overdue.length} overdue</span>`:''}</div>
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:0;background:var(--bg);border-bottom:1px solid var(--border)">
+          <!-- Donut + name -->
+          <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;min-width:0;flex:1">
+            <div style="flex-shrink:0">${_buildMemberDonut(m,m,160)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <div class="user-avatar" style="background:${m.color};width:28px;height:28px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+                <div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text)">${m.name}</div>
+                  <div style="font-size:10px;color:var(--text3)">${m.role}</div>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--text3);margin-bottom:12px">${m.openTasks.length} open tasks${m.overdue.length?` · <span style="color:var(--red)">${m.overdue.length} overdue</span>`:''}</div>
+              <!-- Period bars -->
+              <div style="display:flex;gap:16px">${periodBars}</div>
+              <!-- Ring legend -->
+              <div style="display:flex;gap:12px;margin-top:10px">
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Rings (outer→inner):</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">30d · 7d · 1d</div>
+              </div>
+            </div>
           </div>
-          <!-- Mini bar trio -->
-          <div style="display:flex;gap:12px;align-items:flex-end;min-width:240px">${bars}</div>
         </div>
+        <!-- Task list -->
         ${m.openTasks.length===0
           ?`<div style="padding:12px 20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">No open tasks</div>`
-          :`<div style="display:grid;grid-template-columns:1fr 110px 80px 80px;padding:7px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+          :`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:7px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
               <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
               <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
               <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
-              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Hours</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Hrs</span>
             </div>
             ${m.openTasks.slice(0,8).map(t=>{
               const proj=state.projects.find(p=>p.id===t.projectId);
               const isOverdue=t.due&&new Date(t.due+'T23:59:59')<now;
               const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-              const statusColor={'progress':'var(--gold)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
-              return`<div style="display:grid;grid-template-columns:1fr 110px 80px 80px;padding:8px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
+              return`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:8px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
                 <div style="display:flex;align-items:center;gap:7px">
                   <span class="task-tag priority-${t.priority}">${t.priority}</span>
-                  <span style="font-size:12px;color:var(--text)">${t.title}</span>
+                  <span style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</span>
                 </div>
                 <div style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
                 <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</div>
                 <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${t.estHours||0}h</div>
               </div>`;
             }).join('')}
-            ${m.openTasks.length>8?`<div style="padding:8px 20px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">+ ${m.openTasks.length-8} more</div>`:''}`
+            ${m.openTasks.length>8?`<div style="padding:8px 20px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">+ ${m.openTasks.length-8} more tasks</div>`:''}`
         }
       </div>`;
     }).join('')}
@@ -3707,36 +3700,183 @@ function renderProdCal(){
   const el=document.getElementById('prodcal-board');
   if(!el) return;
   const tab=state.prodCalTab||'calendar';
+  const view=state.prodCalView||'month';
+
+  const viewPicker=(tab)=>`
+    <div style="display:flex;gap:4px;margin-left:auto">
+      ${['day','week','month'].map(v=>`<button onclick="state.prodCalView='${v}';state.prodCalOffset=0;renderProdCal()"
+        style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:5px;border:1px solid ${view===v?'var(--gold)':'var(--border)'};background:${view===v?'rgba(201,168,76,0.1)':'var(--bg3)'};color:${view===v?'var(--gold)':'var(--text3)'};cursor:pointer">
+        ${v.charAt(0).toUpperCase()+v.slice(1)}
+      </button>`).join('')}
+    </div>`;
+
   el.innerHTML=`
-    <div class="crm-tabs" style="margin-bottom:20px">
-      <button class="crm-tab ${tab==='calendar'?'active':''}" onclick="state.prodCalTab='calendar';renderProdCal()">Calendar</button>
-      <button class="crm-tab ${tab==='gantt'?'active':''}" onclick="state.prodCalTab='gantt';renderProdCal()">Gantt Chart</button>
+    <div style="display:flex;align-items:center;gap:0;margin-bottom:20px;flex-wrap:wrap;gap:12px">
+      <div class="crm-tabs" style="margin-bottom:0">
+        <button class="crm-tab ${tab==='calendar'?'active':''}" onclick="state.prodCalTab='calendar';state.prodCalOffset=0;renderProdCal()">Calendar</button>
+        <button class="crm-tab ${tab==='gantt'?'active':''}" onclick="state.prodCalTab='gantt';state.prodCalOffset=0;renderProdCal()">Gantt Chart</button>
+      </div>
+      ${viewPicker(tab)}
     </div>
     <div id="prodcal-inner"></div>
   `;
-  if(tab==='calendar') _renderProdCalCalendar();
-  else _renderProdCalGantt();
+  if(tab==='calendar') _renderProdCalCalendar(view);
+  else _renderProdCalGantt(view);
 }
 
-function _renderProdCalCalendar(){
+function _prodCalNavLabel(view){
+  const now=new Date();
+  const offset=state.prodCalOffset||0;
+  if(view==='day'){
+    const d=new Date(now);d.setDate(now.getDate()+offset);
+    return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  }
+  if(view==='week'){
+    const ws=new Date(now);ws.setDate(now.getDate()-now.getDay()+1+offset*7);ws.setHours(0,0,0,0);
+    const we=new Date(ws);we.setDate(ws.getDate()+6);
+    return ws.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' — '+we.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  }
+  const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  return MONTHS[base.getMonth()]+' '+base.getFullYear();
+}
+
+function _renderProdCalCalendar(view){
   const el=document.getElementById('prodcal-inner');
   if(!el) return;
   const now=new Date();
   const offset=state.prodCalOffset||0;
-  const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
-  const yr=base.getFullYear(),mo=base.getMonth();
-  const dim=new Date(yr,mo+1,0).getDate();
-  const fd=new Date(yr,mo,1).getDay();
   const ts=now.toISOString().split('T')[0];
   const active=state.team.filter(m=>m.active!==false);
   const DAY_CAP=WL_CAPS.day;
 
-  // Build day→member→hours map
+  const navLabel=_prodCalNavLabel(view);
+  const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">Today</button>`:'';
+
+  const nav=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
+    <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${navLabel}</span>
+    <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
+    ${todayBtn}
+  </div>`;
+
+  const legend=active.map(m=>`<div style="display:flex;align-items:center;gap:5px">
+    <div style="width:9px;height:9px;border-radius:2px;background:${m.color}"></div>
+    <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${m.name.split(' ')[0]}</span>
+  </div>`).join('');
+
+  const capLegend=`<div style="display:flex;gap:14px;margin-top:12px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)"><div style="width:10px;height:4px;background:var(--green);border-radius:2px"></div>&lt;80% cap</div>
+    <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)"><div style="width:10px;height:4px;background:var(--gold);border-radius:2px"></div>&gt;80% cap</div>
+    <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--red)"><div style="width:10px;height:4px;background:var(--red);border-radius:2px"></div>Over cap</div>
+  </div>`;
+
+  // ── DAY VIEW ──────────────────────────────────────────────────
+  if(view==='day'){
+    const d=new Date(now);d.setDate(now.getDate()+offset);d.setHours(0,0,0,0);
+    const ds=d.toISOString().split('T')[0];
+    const dayTasks=state.tasks.filter(t=>t.due===ds&&t.status!=='done');
+
+    const rows=active.map(m=>{
+      const mTasks=dayTasks.filter(t=>t.assigneeId===m.id);
+      const hours=mTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const over=hours>DAY_CAP;
+      const hColor=over?'var(--red)':hours>DAY_CAP*0.8?'var(--gold)':'var(--green)';
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+          <div class="user-avatar" style="background:${m.color};width:30px;height:30px;font-size:11px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+          <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)">${m.name}</div><div style="font-size:10px;color:var(--text3)">${m.role}</div></div>
+          <div style="text-align:right">
+            <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:${hColor}">${hours}h</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">/ ${DAY_CAP}h cap</div>
+          </div>
+        </div>
+        ${mTasks.length===0
+          ?`<div style="padding:12px 20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">No tasks due today</div>`
+          :`<div style="display:grid;grid-template-columns:1fr 160px 70px;padding:7px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Hours</span>
+            </div>
+            ${mTasks.map(t=>{
+              const proj=state.projects.find(p=>p.id===t.projectId);
+              return`<div style="display:grid;grid-template-columns:1fr 160px 70px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openEditTaskModal('${t.id}')">
+                <div style="display:flex;align-items:center;gap:7px"><span class="task-tag priority-${t.priority}">${t.priority}</span><span style="font-size:12px;color:var(--text)">${t.title}</span></div>
+                <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${t.estHours||0}h</div>
+              </div>`;
+            }).join('')}`
+        }
+      </div>`;
+    }).join('');
+
+    el.innerHTML=nav+rows;
+    return;
+  }
+
+  // ── WEEK VIEW ─────────────────────────────────────────────────
+  if(view==='week'){
+    const ws=new Date(now);ws.setDate(now.getDate()-now.getDay()+1+offset*7);ws.setHours(0,0,0,0);
+    const weekDays=Array.from({length:7},(_,i)=>{
+      const d=new Date(ws);d.setDate(ws.getDate()+i);
+      return{date:d,ds:d.toISOString().split('T')[0],label:d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:d.toDateString()===now.toDateString()};
+    });
+    const weekTasks=state.tasks.filter(t=>t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds&&t.status!=='done');
+
+    const rows=active.map(m=>{
+      const mTasks=weekTasks.filter(t=>t.assigneeId===m.id);
+      const weekH=mTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const over=weekH>WL_CAPS.week;
+      const hColor=over?'var(--red)':weekH>WL_CAPS.week*0.8?'var(--gold)':'var(--green)';
+      const dayCols=weekDays.map(wd=>{
+        const dTasks=mTasks.filter(t=>t.due===wd.ds);
+        const dH=dTasks.reduce((s,t)=>s+(t.estHours||0),0);
+        const overD=dH>DAY_CAP;
+        const dc=overD?'var(--red)':dH>DAY_CAP*0.8?'var(--gold)':dH>0?'var(--green)':'var(--text3)';
+        return`<div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:8px 10px;${wd.isToday?'background:rgba(201,168,76,0.04)':''}">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;color:${wd.isToday?'var(--gold)':'var(--text3)'};margin-bottom:6px;white-space:nowrap">${wd.label}</div>
+          ${dH>0?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc};margin-bottom:5px">${dH}h</div>`:''}
+          ${dTasks.map(t=>{
+            const proj=state.projects.find(p=>p.id===t.projectId);
+            return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h"
+              style="background:${m.color};border-radius:3px;padding:3px 5px;margin-bottom:3px;cursor:pointer;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+              onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+              <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
+              <div style="font-size:8px;color:rgba(0,0,0,0.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:7px;color:rgba(0,0,0,0.5)">${t.estHours||0}h</div>
+            </div>`;
+          }).join('')}
+          ${dTasks.length===0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--bg4)">—</div>`:''}
+        </div>`;
+      }).join('');
+
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--border)">
+          <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+          <div style="flex:1"><span style="font-size:12px;font-weight:600;color:var(--text)">${m.name}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:${hColor}">${weekH}<span style="font-size:10px;color:var(--text3)">/${WL_CAPS.week}h</span></div>
+        </div>
+        <div style="display:flex;overflow-x:auto">${dayCols}</div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML=nav+rows+capLegend;
+    return;
+  }
+
+  // ── MONTH VIEW (existing behaviour, enhanced) ─────────────────
+  const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  const yr=base.getFullYear(),mo=base.getMonth();
+  const dim=new Date(yr,mo+1,0).getDate();
+  const fd=new Date(yr,mo,1).getDay();
+
   const dayMap={};
-  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)).forEach(t=>{
+  const dayTaskMap={};
+  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)&&t.status!=='done').forEach(t=>{
     if(!dayMap[t.due]) dayMap[t.due]={};
     if(!dayMap[t.due][t.assigneeId]) dayMap[t.due][t.assigneeId]=0;
     dayMap[t.due][t.assigneeId]+=(t.estHours||0);
+    if(!dayTaskMap[t.due]) dayTaskMap[t.due]=[];
+    dayTaskMap[t.due].push(t);
   });
 
   const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -3748,139 +3888,211 @@ function _renderProdCalCalendar(){
     const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday=ds===ts;
     const members=dayMap[ds]||{};
+    const dtasks=dayTaskMap[ds]||[];
     const totalH=Object.values(members).reduce((s,h)=>s+h,0);
     const overCap=totalH>DAY_CAP;
     const borderColor=overCap?'rgba(224,90,90,0.5)':totalH>DAY_CAP*0.8?'rgba(201,168,76,0.4)':'var(--border)';
 
-    // Stacked bars per member
     const bars=active.filter(m=>members[m.id]>0).map(m=>{
       const w=Math.min(Math.round(members[m.id]/DAY_CAP*100),100);
-      return`<div title="${m.name}: ${members[m.id]}h" style="height:6px;width:${w}%;background:${m.color};border-radius:2px;margin-bottom:2px;max-width:100%"></div>`;
+      return`<div title="${m.name}: ${members[m.id]}h" style="height:5px;width:${w}%;background:${m.color};border-radius:2px;margin-bottom:2px;max-width:100%"></div>`;
     }).join('');
 
-    const avatars=active.filter(m=>members[m.id]>0).slice(0,3).map(m=>
-      `<div class="user-avatar" style="background:${m.color};width:14px;height:14px;font-size:6px;margin-right:-3px;border:1px solid var(--bg2)" title="${m.name}: ${members[m.id]}h">${m.name.split(' ').map(n=>n[0]).join('')}</div>`
-    ).join('');
+    const chips=dtasks.slice(0,3).map(t=>{
+      const a=active.find(m=>m.id===t.assigneeId);
+      const proj=state.projects.find(p=>p.id===t.projectId);
+      return`<div onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
+        title="${t.title} · ${proj?.name||''} · ${a?.name||''} · ${t.estHours||0}h"
+        style="background:${a?.color||'var(--bg4)'};border-radius:3px;padding:2px 5px;margin-bottom:2px;cursor:pointer;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+        onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+        <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
+        <div style="font-size:7px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''} · ${t.estHours||0}h</div>
+      </div>`;
+    }).join('');
 
-    cells+=`<div class="cal-day${isToday?' today':''}" style="border-color:${borderColor};min-height:100px">
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px">
+    cells+=`<div class="cal-day${isToday?' today':''}" style="border-color:${borderColor};min-height:110px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
         <div class="cal-day-num">${d}</div>
-        ${totalH>0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:${overCap?'var(--red)':totalH>DAY_CAP*0.8?'var(--gold)':'var(--text3)'}">${totalH}/${DAY_CAP}h</div>`:''}
+        ${totalH>0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:${overCap?'var(--red)':totalH>DAY_CAP*0.8?'var(--gold)':'var(--text3)'}">${totalH}h</div>`:''}
       </div>
       ${bars}
-      ${avatars?`<div style="display:flex;margin-top:4px;padding-left:2px">${avatars}</div>`:''}
+      <div style="margin-top:4px">${chips}</div>
+      ${dtasks.length>3?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:2px">+${dtasks.length-3} more</div>`:''}
     </div>`;
   }
 
   const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
   for(let i=1;i<=rem;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${i}</div></div>`;
 
-  // Legend
-  const legend=active.map(m=>`<div style="display:flex;align-items:center;gap:5px">
-    <div style="width:10px;height:10px;border-radius:2px;background:${m.color}"></div>
-    <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${m.name.split(' ')[0]}</span>
-  </div>`).join('');
-
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
-      <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
-      <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
-      ${offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">Today</button>`:''}
-      <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        ${legend}
-        <div style="display:flex;align-items:center;gap:4px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Cap: ${DAY_CAP}h/day</div>
-      </div>
-    </div>
+  el.innerHTML=nav+`
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">${legend}</div>
     <div class="calendar-grid">
       ${dn.map(d=>`<div class="cal-header">${d}</div>`).join('')}
       ${cells}
     </div>
-    <div style="display:flex;gap:16px;margin-top:12px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)"><div style="width:10px;height:4px;background:var(--green);border-radius:2px"></div>Normal (&lt;80% cap)</div>
-      <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)"><div style="width:10px;height:4px;background:var(--gold);border-radius:2px"></div>At risk (&gt;80%)</div>
-      <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--red)"><div style="width:10px;height:4px;background:var(--red);border-radius:2px"></div>Over cap</div>
-    </div>
+    ${capLegend}
   `;
 }
 
-function _renderProdCalGantt(){
+function _renderProdCalGantt(view){
   const el=document.getElementById('prodcal-inner');
   if(!el) return;
   const now=new Date();
   const offset=state.prodCalOffset||0;
-  // Show 4-week window starting from Monday of current week + offset weeks
-  const weekStart=new Date(now);
-  weekStart.setDate(now.getDate()-now.getDay()+1+(offset*7)); // Monday
-  weekStart.setHours(0,0,0,0);
-  const DAYS=28;
-  const days=Array.from({length:DAYS},(_,i)=>{
-    const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);
-    return{date:d,ds:d.toISOString().split('T')[0],label:d.getDate(),isToday:d.toDateString()===now.toDateString(),isWeekStart:d.getDay()===1};
-  });
   const active=state.team.filter(m=>m.active!==false);
-  const startDs=days[0].ds,endDs=days[DAYS-1].ds;
 
-  // All tasks with due dates in this window
+  // Build day range based on view
+  let days=[];
+  const LABEL_W=150;
+
+  if(view==='day'){
+    const d=new Date(now);d.setDate(now.getDate()+offset);d.setHours(0,0,0,0);
+    // Show today only — Gantt day view shows hours 0-23 as columns
+    const HOURS=Array.from({length:14},(_,i)=>i+7); // 7am–8pm
+    const ds=d.toISOString().split('T')[0];
+    const dayTasks=state.tasks.filter(t=>t.due===ds&&t.status!=='done');
+    const CELL_W=48;
+    const navLabel=_prodCalNavLabel('day');
+    const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">Today</button>`:'';
+
+    const memberRows=active.map(m=>{
+      const mTasks=dayTasks.filter(t=>t.assigneeId===m.id);
+      const totalH=mTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      // Lay tasks out left-to-right filling hours
+      let cursor=7;
+      const bars=mTasks.map(t=>{
+        const h=t.estHours||1;
+        const left=(cursor-7)*CELL_W;
+        const w=Math.min(h*CELL_W,HOURS.length*CELL_W-left);
+        cursor+=h;
+        const proj=state.projects.find(p=>p.id===t.projectId);
+        return`<div onclick="openEditTaskModal('${t.id}')"
+          title="${t.title} · ${proj?.name||''} · ${h}h"
+          style="position:absolute;left:${left}px;width:${w-4}px;top:4px;bottom:4px;background:${m.color};border-radius:4px;padding:3px 6px;cursor:pointer;overflow:hidden;box-sizing:border-box;${t.priority==='high'?'border:1.5px solid rgba(224,90,90,0.7)':''}"
+          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
+          <div style="font-size:8px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;color:rgba(0,0,0,0.5)">${h}h</div>
+        </div>`;
+      }).join('');
+
+      return`<div style="display:flex;align-items:center;border-bottom:1px solid var(--border)">
+        <div style="width:${LABEL_W}px;flex-shrink:0;padding:10px 16px;background:var(--bg);display:flex;align-items:center;gap:8px">
+          <div class="user-avatar" style="background:${m.color};width:24px;height:24px;font-size:9px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+          <div><div style="font-size:11px;font-weight:500;color:var(--text)">${m.name.split(' ')[0]}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${totalH}h today</div></div>
+        </div>
+        <div style="flex:1;position:relative;height:52px;overflow:hidden">${bars}</div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
+        <span style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
+        <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
+        ${todayBtn}
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;border-bottom:2px solid var(--border2)">
+          <div style="width:${LABEL_W}px;flex-shrink:0;padding:8px 16px;background:var(--bg);font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Member</div>
+          <div style="flex:1;display:flex;background:var(--bg)">
+            ${HOURS.map(h=>`<div style="width:${CELL_W}px;flex-shrink:0;text-align:center;font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);padding:6px 0;border-left:1px solid var(--border)">${h}:00</div>`).join('')}
+          </div>
+        </div>
+        ${memberRows}
+      </div>`;
+    return;
+  }
+
+  // Week and Month Gantt — same sliding window logic, different day count
+  const isWeek=view==='week';
+  const DAYS=isWeek?7:28;
+  const CELL_W=isWeek?56:28;
+
+  let windowStart;
+  if(isWeek){
+    windowStart=new Date(now);
+    windowStart.setDate(now.getDate()-now.getDay()+1+offset*7);
+    windowStart.setHours(0,0,0,0);
+  } else {
+    const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+    windowStart=base;
+  }
+
+  const windowDays=Array.from({length:DAYS},(_,i)=>{
+    const d=new Date(windowStart);d.setDate(windowStart.getDate()+i);
+    return{
+      date:d,
+      ds:d.toISOString().split('T')[0],
+      label:isWeek?d.toLocaleDateString('en-US',{weekday:'short'})+' '+d.getDate():String(d.getDate()),
+      isToday:d.toDateString()===now.toDateString(),
+      isWeekStart:d.getDay()===1||d.getDay()===0,
+    };
+  });
+
+  const startDs=windowDays[0].ds,endDs=windowDays[DAYS-1].ds;
   const windowTasks=state.tasks.filter(t=>t.due&&t.due>=startDs&&t.due<=endDs&&t.status!=='done');
+  const todayIdx=windowDays.findIndex(d=>d.isToday);
+  const navLabel=_prodCalNavLabel(view);
+  const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">${isWeek?'This Week':'This Month'}</button>`:'';
 
-  const CELL_W=32; // px per day
-  const totalW=DAYS*CELL_W;
-
-  const dayHeaders=days.map(d=>`<div style="width:${CELL_W}px;flex-shrink:0;text-align:center;font-family:'DM Mono',monospace;font-size:8px;color:${d.isToday?'var(--gold)':d.isWeekStart?'var(--text2)':'var(--text3)'};font-weight:${d.isWeekStart?'600':'400'};border-left:${d.isWeekStart?'1px solid var(--border2)':'none'};padding-bottom:4px">${d.label}</div>`).join('');
-  const monthHeaders=days.reduce((acc,d,i)=>{
-    const mo=d.date.toLocaleDateString('en-US',{month:'short'});
-    if(i===0||days[i-1].date.getMonth()!==d.date.getMonth()){
-      const span=days.slice(i).filter(x=>x.date.getMonth()===d.date.getMonth()).length;
-      acc.push(`<div style="width:${span*CELL_W}px;flex-shrink:0;font-family:'DM Mono',monospace;font-size:9px;color:var(--text2);letter-spacing:.06em;padding-bottom:2px">${mo}</div>`);
+  const monthHdr=isWeek?'':windowDays.reduce((acc,d,i)=>{
+    if(i===0||windowDays[i-1].date.getMonth()!==d.date.getMonth()){
+      const span=windowDays.slice(i).filter(x=>x.date.getMonth()===d.date.getMonth()).length;
+      acc.push(`<div style="width:${span*CELL_W}px;flex-shrink:0;font-family:'DM Mono',monospace;font-size:8px;color:var(--text2);padding:3px 0">${d.date.toLocaleDateString('en-US',{month:'short'})}</div>`);
     }
     return acc;
   },[]).join('');
 
-  // Today line offset
-  const todayIdx=days.findIndex(d=>d.isToday);
-
   const memberRows=active.map(m=>{
     const mTasks=windowTasks.filter(t=>t.assigneeId===m.id);
-    // Group tasks by due date, show as blocks
-    const taskBars=mTasks.map(t=>{
-      const di=days.findIndex(d=>d.ds===t.due);
-      if(di<0) return'';
-      const proj=state.projects.find(p=>p.id===t.projectId);
-      const w=Math.max(CELL_W-4,20);
-      const left=di*CELL_W+2;
-      const h=Math.min(Math.max((t.estHours||0)*4,14),24);
-      const priorityBorder={'high':'2px solid rgba(224,90,90,0.6)','med':'','low':''}[t.priority]||'';
-      return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h" style="position:absolute;left:${left}px;width:${w}px;height:${h}px;background:${m.color};border-radius:3px;cursor:pointer;border:${priorityBorder};display:flex;align-items:center;padding:0 4px;overflow:hidden;box-sizing:border-box;top:4px" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
-        <span style="font-family:'DM Mono',monospace;font-size:8px;color:#0e0e0f;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</span>
-      </div>`;
-    }).join('');
+    // Stack multiple tasks on same day vertically
+    const dayGroups={};
+    mTasks.forEach(t=>{if(!dayGroups[t.due])dayGroups[t.due]=[];dayGroups[t.due].push(t);});
+    const ROW_H=isWeek?52:36;
+    const maxStack=Math.max(...Object.values(dayGroups).map(g=>g.length),1);
+    const rowH=Math.min(ROW_H+(maxStack-1)*18,120);
 
-    // Daily hours load bars (background)
-    const loadBars=days.map((d,i)=>{
-      const dayH=mTasks.filter(t=>t.due===d.ds).reduce((s,t)=>s+(t.estHours||0),0);
-      if(!dayH) return'';
-      const pct=Math.min(dayH/WL_CAPS.day*100,100);
+    const loadBars=windowDays.map((d,i)=>{
+      const dayH=(dayGroups[d.ds]||[]).reduce((s,t)=>s+(t.estHours||0),0);
+      if(!dayH)return'';
       const c=dayH>WL_CAPS.day?'rgba(224,90,90,0.15)':dayH>WL_CAPS.day*0.8?'rgba(201,168,76,0.12)':'rgba(76,175,122,0.08)';
       return`<div style="position:absolute;left:${i*CELL_W}px;width:${CELL_W}px;height:100%;background:${c}"></div>`;
     }).join('');
 
-    return`<div style="display:flex;align-items:center;border-bottom:1px solid var(--border)">
-      <!-- Member label -->
-      <div style="width:140px;flex-shrink:0;padding:10px 16px;display:flex;align-items:center;gap:8px;background:var(--bg)">
+    const taskBars=windowDays.flatMap((d,i)=>{
+      return(dayGroups[d.ds]||[]).map((t,si)=>{
+        const proj=state.projects.find(p=>p.id===t.projectId);
+        const barH=isWeek?44:28;
+        const top=4+si*20;
+        return`<div onclick="openEditTaskModal('${t.id}')"
+          title="${t.title} · ${proj?.name||''} · ${t.estHours||0}h"
+          style="position:absolute;left:${i*CELL_W+2}px;width:${CELL_W-6}px;top:${top}px;height:${barH}px;background:${m.color};border-radius:3px;padding:2px 4px;cursor:pointer;overflow:hidden;box-sizing:border-box;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
+          <div style="font-family:'DM Mono',monospace;font-size:${isWeek?9:7}px;font-weight:700;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
+          ${isWeek||barH>20?`<div style="font-size:${isWeek?8:7}px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>`:''}
+          <div style="font-family:'DM Mono',monospace;font-size:7px;color:rgba(0,0,0,0.5)">${t.estHours||0}h</div>
+        </div>`;
+      });
+    }).join('');
+
+    const periodH=mTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    const pCap=isWeek?WL_CAPS.week:WL_CAPS.month;
+    const hColor=periodH>pCap?'var(--red)':periodH>pCap*0.8?'var(--gold)':'var(--text3)';
+
+    return`<div style="display:flex;align-items:stretch;border-bottom:1px solid var(--border)">
+      <div style="width:${LABEL_W}px;flex-shrink:0;padding:10px 16px;background:var(--bg);display:flex;align-items:center;gap:8px">
         <div class="user-avatar" style="background:${m.color};width:24px;height:24px;font-size:9px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
         <div style="min-width:0">
           <div style="font-size:11px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.name.split(' ')[0]}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${mTasks.length} tasks</div>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;color:${hColor}">${periodH}/${pCap}h</div>
         </div>
       </div>
-      <!-- Task bars -->
-      <div style="flex:1;position:relative;height:36px;overflow:hidden">
+      <div style="flex:1;position:relative;height:${rowH}px;overflow:hidden">
         ${loadBars}
-        <!-- Week dividers -->
-        ${days.filter(d=>d.isWeekStart).map(d=>{const i=days.indexOf(d);return`<div style="position:absolute;left:${i*CELL_W}px;top:0;bottom:0;width:1px;background:var(--border2)"></div>`;}).join('')}
-        <!-- Today line -->
-        ${todayIdx>=0?`<div style="position:absolute;left:${todayIdx*CELL_W+CELL_W/2}px;top:0;bottom:0;width:2px;background:rgba(201,168,76,0.7);z-index:1"></div>`:''}
+        ${windowDays.filter(d=>d.isWeekStart||d.date.getDay()===1).map(d=>{const i=windowDays.indexOf(d);return i>0?`<div style="position:absolute;left:${i*CELL_W}px;top:0;bottom:0;width:1px;background:var(--border2)"></div>`:'';}).join('')}
+        ${todayIdx>=0?`<div style="position:absolute;left:${todayIdx*CELL_W+CELL_W/2}px;top:0;bottom:0;width:2px;background:rgba(201,168,76,0.6);z-index:2"></div>`:''}
         ${taskBars}
       </div>
     </div>`;
@@ -3889,29 +4101,26 @@ function _renderProdCalGantt(){
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
-      <span style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${days[0].date.toLocaleDateString('en-US',{month:'short',day:'numeric'})} — ${days[DAYS-1].date.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>
+      <span style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
       <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
-      ${offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">This Week</button>`:''}
+      ${todayBtn}
     </div>
-
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <!-- Header -->
-      <div style="display:flex;border-bottom:2px solid var(--border2)">
-        <div style="width:140px;flex-shrink:0;padding:8px 16px;background:var(--bg);font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Member</div>
-        <div style="flex:1;overflow:hidden">
-          <div style="display:flex;padding-top:4px;background:var(--bg)">${monthHeaders}</div>
-          <div style="display:flex;background:var(--bg);border-top:1px solid var(--border)">
-            ${days.map(d=>`<div style="width:${CELL_W}px;flex-shrink:0;text-align:center;font-family:'DM Mono',monospace;font-size:8px;color:${d.isToday?'var(--gold)':d.isWeekStart?'var(--text2)':'var(--text3)'};font-weight:${d.isToday||d.isWeekStart?'600':'400'};border-left:${d.isWeekStart?'1px solid var(--border2)':'none'};padding:3px 0">${d.label}</div>`).join('')}
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;overflow-x:auto">
+      <div style="display:flex;border-bottom:2px solid var(--border2);min-width:${LABEL_W+DAYS*CELL_W}px">
+        <div style="width:${LABEL_W}px;flex-shrink:0;padding:8px 16px;background:var(--bg);font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Member</div>
+        <div style="flex:1;min-width:${DAYS*CELL_W}px">
+          ${monthHdr?`<div style="display:flex;background:var(--bg);border-bottom:1px solid var(--border);padding-top:3px">${monthHdr}</div>`:''}
+          <div style="display:flex;background:var(--bg)">
+            ${windowDays.map(d=>`<div style="width:${CELL_W}px;flex-shrink:0;text-align:center;font-family:'DM Mono',monospace;font-size:${isWeek?9:7}px;color:${d.isToday?'var(--gold)':'var(--text3)'};font-weight:${d.isToday?'700':'400'};padding:4px 0;border-left:${d.date.getDay()===1?'1px solid var(--border2)':'none'}">${d.label}</div>`).join('')}
           </div>
         </div>
       </div>
-      <!-- Rows -->
-      ${memberRows}
+      <div style="min-width:${LABEL_W+DAYS*CELL_W}px">${memberRows}</div>
     </div>
-
-    <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Bar width = task title · Height = hours · <span style="color:var(--red)">Red border = high priority</span></div>
-      <div style="display:flex;align-items:center;gap:4px;font-family:'DM Mono',monospace;font-size:9px;color:rgba(201,168,76,0.7)"><div style="width:2px;height:12px;background:rgba(201,168,76,0.7)"></div>Today</div>
+    <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
+      <div>Task bars show: title · project · hours</div>
+      <div style="display:flex;align-items:center;gap:4px"><div style="width:2px;height:12px;background:rgba(201,168,76,0.6)"></div>Today</div>
+      <div style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:8px;border-left:2px solid rgba(224,90,90,0.7);background:rgba(255,255,255,0.1)"></div>High priority</div>
     </div>
   `;
 }
