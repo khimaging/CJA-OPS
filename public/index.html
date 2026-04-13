@@ -3161,6 +3161,9 @@ function calcProjectRag(proj){
   return{rag:'green',label:'On Track',pct};
 }
 
+// ============================================================
+//  PROJECT DETAIL VIEW
+// ============================================================
 function renderProjectDetail(pid){
   if(!pid){setProjTab('grid');return;}
   const proj=state.projects.find(p=>p.id===pid);
@@ -3171,128 +3174,163 @@ function renderProjectDetail(pid){
   const pct=tasks.length?Math.round(done/tasks.length*100):0;
   const totH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
   const rag=calcProjectRag(proj);
-  const ragClass={'green':'rag-green','amber':'rag-amber','red':'rag-red','grey':'rag-grey'}[rag.rag];
-  const ragDot={'green':'🟢','amber':'🟡','red':'🔴','grey':'⚪'}[rag.rag];
   const isFinalized=!!proj.payoutsFinalized;
+  const pStatus=proj.status||'active';
   const pb=deal?.buckets?.find(b=>b.name==='Production Pool');
   const pool=deal&&pb?netRev(deal)*pb.pct/100:0;
+  const now=new Date();
 
-  // Team members with hours on this project
+  // Member hours breakdown
   const memberHours={};
-  tasks.forEach(t=>{if(!memberHours[t.assigneeId])memberHours[t.assigneeId]=0;memberHours[t.assigneeId]+=(t.estHours||0);});
+  tasks.forEach(t=>{if(!memberHours[t.assigneeId])memberHours[t.assigneeId]={hours:0,done:0,total:0};memberHours[t.assigneeId].hours+=(t.estHours||0);memberHours[t.assigneeId].total++;if(t.status==='done')memberHours[t.assigneeId].done++;});
 
-  // Kanban columns
+  // RAG colors
+  const ragColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
+  const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(201,168,76,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+  const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(201,168,76,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
+
+  // Kanban
   const COLS=[{id:'todo',label:'To Do'},{id:'progress',label:'In Progress'},{id:'review',label:'In Review'},{id:'done',label:'Done'}];
-
   const kanbanHtml=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
     ${COLS.map(col=>{
-      const colTasks=tasks.filter(t=>t.status===col.id);
+      const ct=tasks.filter(t=>t.status===col.id);
+      const colColor=col.id==='done'?'var(--green)':col.id==='progress'?'var(--gold)':col.id==='review'?'var(--blue)':'var(--text3)';
       return`<div class="kanban-col" ondragover="pdetailDragOver(event,this)" ondragleave="pdetailDragLeave(this)" ondrop="pdetailDrop(event,'${col.id}')">
-        <div class="kanban-col-header"><span class="kanban-col-title">${col.label}</span><span class="kanban-count">${colTasks.length}</span></div>
+        <div class="kanban-col-header"><span class="kanban-col-title" style="color:${colColor}">${col.label}</span><span class="kanban-count">${ct.length}</span></div>
         <div class="kanban-cards">
-          ${colTasks.map(t=>renderTaskCard(t)).join('')||`<div style="padding:12px;text-align:center;color:var(--text3);font-size:11px;pointer-events:none">Empty</div>`}
+          ${ct.map(t=>renderTaskCard(t)).join('')||`<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px;font-family:'DM Mono',monospace;opacity:0.5">Empty</div>`}
         </div>
       </div>`;
     }).join('')}
   </div>`;
 
+  // List view — matches pay calculator table aesthetic
+  const listCols='2fr 130px 80px 90px 70px 70px';
+  const overdueTasks=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now);
   const listHtml=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-    <table class="list-table"><thead><tr><th>Task</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th>Hours</th></tr></thead>
-    <tbody>${tasks.map(t=>{
+    <div style="display:grid;grid-template-columns:${listCols};padding:9px 16px;background:var(--bg);border-bottom:2px solid var(--border2)">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Assigned</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Priority</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Hours</span>
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Status</span>
+    </div>
+    ${tasks.length===0?`<div style="padding:24px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No tasks yet — add tasks or apply a template</div>`:''}
+    ${tasks.map(t=>{
       const a=state.team.find(m=>m.id===t.assigneeId);
+      const isOverdue=t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now;
+      const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+      const statusColor={'done':'var(--green)','progress':'var(--gold)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
       const locked=isProjectLocked(pid);
-      return`<tr style="cursor:pointer" onclick="openEditTaskModal('${t.id}')">
-        <td style="color:var(--text);font-weight:500">${locked?'🔒 ':''}${t.title}</td>
-        <td>${a?`<div style="display:flex;align-items:center;gap:6px"><div class="deal-avatar" style="background:${a.color};width:18px;height:18px;font-size:7px">${a.name.split(' ').map(n=>n[0]).join('')}</div>${a.name}</div>`:'—'}</td>
-        <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'}</td>
-        <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
-        <td><span style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:${t.status==='done'?'var(--green)':t.status==='progress'?'var(--gold)':'var(--text3)'}">${t.status}</span></td>
-        <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${t.estHours||0}h</td>
-      </tr>`;
-    }).join('')||'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">No tasks yet</td></tr>'}
-    </tbody></table></div>`;
+      return`<div style="display:grid;grid-template-columns:${listCols};padding:10px 16px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
+        <div style="font-size:12px;font-weight:500;color:var(--text)">${locked?'🔒 ':''}${t.title}</div>
+        <div>${a?`<div style="display:flex;align-items:center;gap:7px"><div class="user-avatar" style="background:${a.color};width:20px;height:20px;font-size:8px">${a.name.split(' ').map(n=>n[0]).join('')}</div><span style="font-size:11px;color:var(--text2)">${a.name.split(' ')[0]}</span></div>`:`<span style="color:var(--text3);font-size:11px">—</span>`}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</div>
+        <div><span class="task-tag priority-${t.priority}">${t.priority}</span></div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${t.estHours||0}h</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:${statusColor}">${t.status}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
 
   const el=document.getElementById('proj-detail-content');
   el.innerHTML=`
-    <!-- Back button -->
-    <div style="margin-bottom:20px">
-      <button class="btn btn-sm" onclick="setProjTab('grid')" style="gap:6px">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    <!-- Back nav -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
+      <button class="btn btn-sm" onclick="setProjTab('grid')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
         All Projects
       </button>
+      <span style="color:var(--border2)">·</span>
+      <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${proj.name}</span>
     </div>
 
-    <!-- Header -->
-    <div class="pd-header">
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-          ${isFinalized?'<span style="font-size:16px">🔒</span>':''}
-          <div class="pd-title">${proj.name}</div>
-          <span class="rag-badge ${ragClass}">${ragDot} ${rag.label}</span>
-          <span class="proj-status ${proj.status||'active'}" style="margin-left:4px"><span class="proj-status-dot"></span>${proj.status==='complete'?'Complete':'Active'}</span>
+    <!-- Project header card — matches pay section style -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:18px 20px;background:var(--bg);border-bottom:1px solid var(--border);gap:16px">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px">
+            ${isFinalized?'<span style="font-size:14px">🔒</span>':''}
+            <div style="font-family:\'Cormorant Garamond\',serif;font-size:22px;font-weight:600;color:var(--text)">${proj.name}</div>
+            <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:3px 9px;border-radius:5px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>
+            <span class="proj-status ${isFinalized?'complete':pStatus}" style="font-size:9px"><span class="proj-status-dot"></span>${isFinalized?'Finalized':pStatus==='complete'?'Complete':'Active'}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text3)">${proj.client||deal?.client||''} ${proj.start?'· Started '+new Date(proj.start+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''} ${proj.end?'· Due '+new Date(proj.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</div>
         </div>
-        <div class="pd-sub">${proj.client||deal?.client||'No client'} ${proj.start?`· Started ${new Date(proj.start+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`:''} ${proj.end?`· Due ${new Date(proj.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`:''}</div>
+        <div style="display:flex;gap:8px;flex-shrink:0;align-items:center">
+          ${!isFinalized&&can.createProject()?`
+            <button class="btn btn-sm" onclick="openTemplateModal('${pid}')">⚡ Template</button>
+            <button class="btn btn-primary" onclick="openTaskModalForProject('${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Task</button>
+          `:''}
+          ${auth.role==='admin'&&pStatus==='complete'&&!isFinalized?`<button class="btn btn-sm" onclick="finalizePayouts('${pid}')" style="color:var(--green);border-color:rgba(76,175,122,0.3)">⚑ Finalize</button>`:''}
+          ${auth.role==='admin'&&isFinalized?`<button class="btn btn-sm" onclick="unfinalizePayouts('${pid}')" style="color:var(--red);border-color:rgba(224,90,90,0.3)">⚠ Override</button>`:''}
+        </div>
       </div>
-      <div style="display:flex;gap:8px;flex-shrink:0">
-        ${!isFinalized&&can.createProject()?`<button class="btn" onclick="openTemplateModal('${pid}')" style="gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Template</button><button class="btn btn-primary" onclick="openTaskModalForProject('${pid}')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Task</button>`:''}
-        ${auth.role==='admin'&&proj.status==='complete'&&!isFinalized?`<button class="btn btn-sm" onclick="finalizePayouts('${pid}')" style="color:var(--green);border-color:rgba(76,175,122,0.35)">⚑ Finalize</button>`:''}
-        ${auth.role==='admin'&&isFinalized?`<button class="btn btn-sm" onclick="unfinalizePayouts('${pid}')" style="color:var(--red);border-color:rgba(224,90,90,0.3)">⚠ Override Unlock</button>`:''}
-      </div>
-    </div>
 
-    <!-- Stat strip -->
-    <div class="pd-stat-strip">
-      <div class="pd-stat"><div class="pd-stat-label">Tasks</div><div class="pd-stat-val" style="color:var(--text)">${done}/${tasks.length}</div><div style="font-size:10px;color:var(--text3)">${pct}% complete</div></div>
-      <div class="pd-stat"><div class="pd-stat-label">Hours</div><div class="pd-stat-val" style="color:var(--gold)">${totH}h</div><div style="font-size:10px;color:var(--text3)">allocated</div></div>
-      ${deal?`
-      <div class="pd-stat"><div class="pd-stat-label">Deal Value</div><div class="pd-stat-val" style="color:var(--gold)">${fmt(deal.value)}</div><div style="font-size:10px;color:var(--text3)">${deal.expenses?`−${fmt(deal.expenses)} exp`:''}</div></div>
-      <div class="pd-stat"><div class="pd-stat-label">Net Revenue</div><div class="pd-stat-val" style="color:var(--green)">${fmt(netRev(deal))}</div><div style="font-size:10px;color:var(--text3)">after expenses</div></div>
-      <div class="pd-stat"><div class="pd-stat-label">Production Pool</div><div class="pd-stat-val" style="color:var(--teal)">${fmt(pool)}</div><div style="font-size:10px;color:var(--text3)">${pb?.pct||0}% of net</div></div>
-      `:`<div class="pd-stat" style="grid-column:span 3"><div class="pd-stat-label">Deal</div><div style="font-size:12px;color:var(--text3)">No deal linked</div></div>`}
-    </div>
-
-    <!-- Progress bar -->
-    <div style="margin-bottom:24px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Task Progress</span>
-        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${pct}%</span>
+      <!-- Stat strip — same pattern as pay section sub-header -->
+      <div style="display:grid;grid-template-columns:repeat(${deal?5:2},1fr);border-bottom:1px solid var(--border)">
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${tasks.length}</span></div>
+        </div>
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Hours</div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--gold)">${totH}h</div>
+        </div>
+        ${deal?`
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Deal Value</div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--gold)">${fmt(deal.value)}</div>
+        </div>
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Net Revenue</div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--green)">${fmt(netRev(deal))}</div>
+        </div>
+        <div style="padding:12px 20px">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Prod. Pool</div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--teal)">${fmt(pool)}</div>
+        </div>`:''}
       </div>
-      <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
-        <div style="height:100%;width:${pct}%;background:${rag.rag==='green'?'var(--green)':rag.rag==='amber'?'var(--gold)':'var(--red)'};border-radius:4px;transition:width .3s"></div>
-      </div>
-    </div>
 
-    <!-- Team -->
-    ${Object.keys(memberHours).length?`<div style="margin-bottom:24px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Team on this project</div>
-      <div class="pd-team-grid">
-        ${Object.entries(memberHours).map(([mid,h])=>{
+      <!-- Progress bar -->
+      <div style="padding:12px 20px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Completion</span>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:${ragColor}">${pct}%${overdueTasks.length?` · <span style="color:var(--red)">${overdueTasks.length} overdue</span>`:''}</span>
+        </div>
+        <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${ragColor};border-radius:3px;transition:width .3s"></div>
+        </div>
+      </div>
+
+      <!-- Team strip -->
+      ${Object.keys(memberHours).length?`<div style="padding:12px 20px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Team</span>
+        ${Object.entries(memberHours).map(([mid,data])=>{
           const mem=state.team.find(m=>m.id===mid);
           if(!mem) return'';
-          const myTasks=tasks.filter(t=>t.assigneeId===mid);
-          const myDone=myTasks.filter(t=>t.status==='done').length;
-          const myPct=myTasks.length?Math.round(myDone/myTasks.length*100):0;
-          return`<div class="pd-member-card">
-            <div class="user-avatar" style="background:${mem.color};width:32px;height:32px;font-size:11px;flex-shrink:0">${mem.name.split(' ').map(n=>n[0]).join('')}</div>
-            <div style="flex:1;min-width:0">
-              <div style="font-size:12px;font-weight:500;color:var(--text)">${mem.name}</div>
-              <div style="font-size:10px;color:var(--text3)">${h}h · ${myTasks.length} tasks · ${myPct}%</div>
-              <div style="height:3px;background:var(--bg4);border-radius:2px;margin-top:5px;overflow:hidden"><div style="height:100%;width:${myPct}%;background:${mem.color};border-radius:2px"></div></div>
+          const mpct=data.total?Math.round(data.done/data.total*100):0;
+          return`<div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:6px 10px">
+            <div class="user-avatar" style="background:${mem.color};width:24px;height:24px;font-size:9px">${mem.name.split(' ').map(n=>n[0]).join('')}</div>
+            <div>
+              <div style="font-size:11px;font-weight:500;color:var(--text)">${mem.name.split(' ')[0]}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${data.hours}h · ${mpct}%</div>
             </div>
           </div>`;
         }).join('')}
-      </div>
-    </div>`:''}
+      </div>`:''}
+    </div>
 
-    <!-- Task view toggle -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Tasks</div>
+    <!-- Task view -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Tasks (${tasks.length})</div>
       <div class="view-toggle">
         <button class="view-btn ${state.projectDetailTab==='kanban'?'active':''}" onclick="state.projectDetailTab='kanban';renderProjectDetail('${pid}')">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>Kanban
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>Kanban
         </button>
         <button class="view-btn ${state.projectDetailTab==='list'?'active':''}" onclick="state.projectDetailTab='list';renderProjectDetail('${pid}')">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>List
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>List
         </button>
       </div>
     </div>
@@ -3300,7 +3338,7 @@ function renderProjectDetail(pid){
   `;
 }
 
-// Drag-drop within project detail (reuse kanban logic)
+// Drag-drop within project detail
 function pdetailDragOver(e,col){e.preventDefault();e.dataTransfer.dropEffect='move';col.classList.add('drag-over');}
 function pdetailDragLeave(col){col.classList.remove('drag-over');}
 async function pdetailDrop(e,status){
@@ -3312,10 +3350,7 @@ async function pdetailDrop(e,status){
 
 function openTaskModalForProject(pid){
   openTaskModal();
-  setTimeout(()=>{
-    const sel=document.getElementById('t-project');
-    if(sel) sel.value=pid;
-  },50);
+  setTimeout(()=>{ const sel=document.getElementById('t-project'); if(sel) sel.value=pid; },50);
 }
 
 // ============================================================
@@ -3324,59 +3359,65 @@ function openTaskModalForProject(pid){
 function renderHealthDashboard(){
   const el=document.getElementById('proj-health-board');
   if(!el) return;
-  const active=state.projects.filter(p=>!state.archivedProjects[p.id]&&(p.status||'active')!=='complete'&&!p.payoutsFinalized);
-  const complete=state.projects.filter(p=>(p.status==='complete')&&!p.payoutsFinalized);
-  const all=[...active,...complete].slice(0,50);
-
+  const all=state.projects.filter(p=>!state.archivedProjects[p.id]);
   const counts={green:0,amber:0,red:0,grey:0};
-  all.forEach(p=>{const r=calcProjectRag(p).rag;counts[r]++;});
+  all.forEach(p=>{counts[calcProjectRag(p).rag]++;});
+  const now=new Date();
 
   el.innerHTML=`
-    <!-- Summary pills -->
-    <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
-      <div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">On Track</div><div class="stat-value" style="color:var(--green)">${counts.green}</div></div>
-      <div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">At Risk</div><div class="stat-value" style="color:var(--gold)">${counts.amber}</div></div>
-      <div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">Behind</div><div class="stat-value" style="color:var(--red)">${counts.red}</div></div>
-      <div class="stat-card" style="flex:1;min-width:120px"><div class="stat-label">No Data</div><div class="stat-value" style="color:var(--text3)">${counts.grey}</div></div>
+    <!-- Summary cards — same stat-card pattern -->
+    <div class="month-summary" style="margin-bottom:24px">
+      <div class="stat-card"><div class="stat-label" style="color:var(--green)">On Track</div><div class="stat-value" style="color:var(--green)">${counts.green}</div><div class="stat-delta">all tasks healthy</div></div>
+      <div class="stat-card"><div class="stat-label" style="color:var(--gold)">At Risk</div><div class="stat-value" style="color:var(--gold)">${counts.amber}</div><div class="stat-delta">needs attention</div></div>
+      <div class="stat-card"><div class="stat-label" style="color:var(--red)">Behind</div><div class="stat-value" style="color:var(--red)">${counts.red}</div><div class="stat-delta">overdue tasks</div></div>
+      <div class="stat-card"><div class="stat-label">No Data</div><div class="stat-value" style="color:var(--text3)">${counts.grey}</div><div class="stat-delta">no tasks yet</div></div>
     </div>
 
-    <!-- Table -->
+    <!-- Project list — matches pay calculator table -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div class="health-row" style="background:var(--bg);border-bottom:2px solid var(--border2)">
+      <div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;gap:0;padding:9px 20px;background:var(--bg);border-bottom:2px solid var(--border2)">
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Health</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Progress</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Team</span>
       </div>
-      ${all.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-size:12px">No active projects</div>`:''}
+      ${all.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No projects yet</div>`:''}
       ${all.map(p=>{
         const tasks=state.tasks.filter(t=>t.projectId===p.id);
         const done=tasks.filter(t=>t.status==='done').length;
         const pct=tasks.length?Math.round(done/tasks.length*100):0;
-        const overdueCnt=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<new Date()).length;
+        const overdue=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
         const rag=calcProjectRag(p);
-        const ragClass={'green':'rag-green','amber':'rag-amber','red':'rag-red','grey':'rag-grey'}[rag.rag];
+        const ragColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
+        const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(201,168,76,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+        const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(201,168,76,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
         const deal=state.deals.find(d=>d.id===p.dealId);
         const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
-        const due=p.end?new Date(p.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-        const daysLeft=p.end?Math.ceil((new Date(p.end+'T23:59:59')-new Date())/86400000):null;
-        const dueColor=daysLeft!==null?(daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)'):'var(--text3)';
-        const fillColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--bg4)'}[rag.rag];
-        return`<div class="health-row" onclick="goToProjectTasks('${p.id}')">
+        const daysLeft=p.end?Math.ceil((new Date(p.end+'T23:59:59')-now)/86400000):null;
+        const dueStr=p.end?new Date(p.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+        const dueColor=daysLeft===null?'var(--text3)':daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)';
+        const isFinalized=!!p.payoutsFinalized;
+        return`<div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;gap:0;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="goToProjectTasks('${p.id}')">
           <div>
-            <div style="font-size:12px;font-weight:500;color:var(--text)">${p.name}</div>
-            <div style="font-size:10px;color:var(--text3)">${deal?.client||p.client||'—'}${overdueCnt>0?` · <span style="color:var(--red)">${overdueCnt} overdue</span>`:''}</div>
+            <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:2px">${isFinalized?'🔒 ':''}${p.name}</div>
+            <div style="font-size:10px;color:var(--text3)">${deal?.client||p.client||'—'}${overdue>0?` · <span style="color:var(--red)">${overdue} overdue</span>`:''}</div>
           </div>
-          <div><span class="rag-badge ${ragClass}" style="font-size:9px">${rag.label}</span></div>
+          <div><span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.04em;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span></div>
+          <div style="padding-right:16px">
+            <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+              <div style="height:100%;width:${pct}%;background:${ragColor};border-radius:3px;transition:width .3s"></div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% · ${done}/${tasks.length} tasks</div>
+          </div>
           <div>
-            <div class="health-progress"><div class="health-progress-fill" style="width:${pct}%;background:${fillColor}"></div></div>
-            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:3px">${pct}% · ${done}/${tasks.length} tasks</div>
+            <div style="font-family:'DM Mono',monospace;font-size:11px;color:${dueColor}">${dueStr}</div>
+            ${daysLeft!==null?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:${dueColor}">${daysLeft<0?Math.abs(daysLeft)+' days over':daysLeft+' days left'}</div>`:''}
           </div>
-          <div style="font-family:'DM Mono',monospace;font-size:11px;color:${dueColor}">${due}${daysLeft!==null?`<div style="font-size:9px;color:${dueColor}">${daysLeft<0?Math.abs(daysLeft)+' days over':daysLeft+' days left'}</div>`:''}</div>
-          <div style="display:flex;gap:-4px">
-            ${memberIds.slice(0,5).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-6px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
-            ${memberIds.length>5?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:10px;align-self:center">+${memberIds.length-5}</div>`:''}
+          <div style="display:flex;align-items:center">
+            ${memberIds.slice(0,5).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
+            ${memberIds.length>5?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:12px">+${memberIds.length-5}</span>`:''}
+            ${memberIds.length===0?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">No team</span>`:''}
           </div>
         </div>`;
       }).join('')}
@@ -3391,68 +3432,94 @@ function renderWorkloadView(){
   const el=document.getElementById('team-content');
   if(!el) return;
   const active=state.team.filter(m=>m.active!==false);
-  // Total open hours per member
+  const now=new Date();
   const memberLoad=active.map(m=>{
     const openTasks=state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done');
-    const inProgressTasks=state.tasks.filter(t=>t.assigneeId===m.id&&t.status==='progress');
-    const overdueTasks=openTasks.filter(t=>t.due&&new Date(t.due+'T23:59:59')<new Date());
+    const overdueTasks=openTasks.filter(t=>t.due&&new Date(t.due+'T23:59:59')<now);
     const hours=openTasks.reduce((s,t)=>s+(t.estHours||0),0);
-    return{...m,openTasks,inProgressTasks,overdueTasks,hours};
-  });
+    return{...m,openTasks,overdueTasks,hours};
+  }).sort((a,b)=>b.hours-a.hours);
   const maxH=Math.max(...memberLoad.map(m=>m.hours),1);
   const avgH=memberLoad.reduce((s,m)=>s+m.hours,0)/Math.max(memberLoad.length,1);
+  const totalOpen=memberLoad.reduce((s,m)=>s+m.openTasks.length,0);
+  const totalOverdue=memberLoad.reduce((s,m)=>s+m.overdueTasks.length,0);
 
   el.innerHTML=`
-    <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">
-        Team avg: <strong style="color:var(--text)">${Math.round(avgH)}h open</strong>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
-        <span style="width:10px;height:10px;border-radius:2px;background:var(--green);display:inline-block"></span>Normal
-        <span style="width:10px;height:10px;border-radius:2px;background:var(--gold);margin-left:8px;display:inline-block"></span>High (>1.5× avg)
-        <span style="width:10px;height:10px;border-radius:2px;background:var(--red);margin-left:8px;display:inline-block"></span>Overloaded (>2× avg)
-      </div>
+    <!-- Summary row -->
+    <div class="month-summary" style="margin-bottom:24px">
+      <div class="stat-card"><div class="stat-label">Open Tasks</div><div class="stat-value">${totalOpen}</div><div class="stat-delta">across team</div></div>
+      <div class="stat-card"><div class="stat-label" style="color:var(--red)">Overdue</div><div class="stat-value" style="color:${totalOverdue>0?'var(--red)':'var(--text3)'}">${totalOverdue}</div><div class="stat-delta">need attention</div></div>
+      <div class="stat-card"><div class="stat-label">Team Avg Load</div><div class="stat-value">${Math.round(avgH)}h</div><div class="stat-delta">open hours / member</div></div>
+      <div class="stat-card"><div class="stat-label">Active Members</div><div class="stat-value">${active.length}</div><div class="stat-delta">${memberLoad.filter(m=>m.hours>0).length} with tasks</div></div>
     </div>
-    ${memberLoad.sort((a,b)=>b.hours-a.hours).map(m=>{
+
+    <!-- Legend -->
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
+      <div style="display:flex;align-items:center;gap:5px"><div style="width:10px;height:10px;border-radius:2px;background:var(--green)"></div>Normal load</div>
+      <div style="display:flex;align-items:center;gap:5px"><div style="width:10px;height:10px;border-radius:2px;background:var(--gold)"></div>High (>1.5× avg)</div>
+      <div style="display:flex;align-items:center;gap:5px"><div style="width:10px;height:10px;border-radius:2px;background:var(--red)"></div>Overloaded (>2× avg)</div>
+    </div>
+
+    <!-- Member blocks — matches team monthly card pattern -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+    ${memberLoad.map(m=>{
       const loadColor=m.hours>avgH*2?'var(--red)':m.hours>avgH*1.5?'var(--gold)':'var(--green)';
       const barW=maxH>0?Math.round(m.hours/maxH*100):0;
-      return`<div class="wl-member-block">
-        <div class="wl-member-header">
-          <div class="user-avatar" style="background:${m.color};width:34px;height:34px;font-size:12px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
-          <div style="flex:1">
+      const statusBuckets={todo:0,progress:0,review:0};
+      m.openTasks.forEach(t=>{if(statusBuckets[t.status]!==undefined)statusBuckets[t.status]++;});
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <!-- Member header — matches team monthly header -->
+        <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+          <div class="user-avatar" style="background:${m.color};width:36px;height:36px;font-size:13px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+          <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:600;color:var(--text)">${m.name}</div>
-            <div style="font-size:10px;color:var(--text3)">${m.role} · ${m.openTasks.length} open tasks · ${m.inProgressTasks.length} in progress${m.overdueTasks.length?` · <span style="color:var(--red)">${m.overdueTasks.length} overdue</span>`:''}</div>
+            <div style="font-size:10px;color:var(--text3);margin-top:2px">${m.role}
+              ${statusBuckets.todo?` · <span style="color:var(--text3)">${statusBuckets.todo} to do</span>`:''}
+              ${statusBuckets.progress?` · <span style="color:var(--gold)">${statusBuckets.progress} in progress</span>`:''}
+              ${statusBuckets.review?` · <span style="color:var(--blue)">${statusBuckets.review} in review</span>`:''}
+              ${m.overdueTasks.length?` · <span style="color:var(--red)">${m.overdueTasks.length} overdue</span>`:''}
+            </div>
           </div>
-          <div style="text-align:right;min-width:80px">
-            <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:${loadColor}">${m.hours}h</div>
-            <div style="font-size:10px;color:var(--text3)">open hours</div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:${loadColor}">${m.hours}h</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">open hours</div>
           </div>
         </div>
-        <!-- Hour bar -->
-        <div style="padding:8px 18px 12px">
-          <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+        <!-- Load bar -->
+        <div style="padding:10px 20px;border-bottom:1px solid var(--border)">
+          <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
             <div style="height:100%;width:${barW}%;background:${loadColor};border-radius:3px;transition:width .3s"></div>
           </div>
         </div>
-        <!-- Task list -->
-        ${m.openTasks.length===0?`<div style="padding:10px 18px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">No open tasks</div>`:''}
-        ${m.openTasks.slice(0,8).map(t=>{
-          const proj=state.projects.find(p=>p.id===t.projectId);
-          const isOverdue=t.due&&new Date(t.due+'T23:59:59')<new Date()&&t.status!=='done';
-          const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-          return`<div class="wl-task-row" style="${isOverdue?'background:rgba(224,90,90,0.04)':''}">
-            <div>
-              <div style="font-size:12px;color:var(--text)">${t.title}</div>
-              <div style="font-size:10px;color:var(--text3)">${proj?.name||'—'}</div>
+        <!-- Task list — matches pay table rows -->
+        ${m.openTasks.length===0
+          ?`<div style="padding:14px 20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">No open tasks</div>`
+          :`<div style="display:grid;grid-template-columns:1fr 120px 90px 90px;padding:7px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Status</span>
             </div>
-            <span class="task-tag priority-${t.priority}">${t.priority}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</span>
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em">${t.status}</span>
-          </div>`;
-        }).join('')}
-        ${m.openTasks.length>8?`<div style="padding:8px 18px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">+ ${m.openTasks.length-8} more tasks</div>`:''}
+            ${m.openTasks.slice(0,10).map(t=>{
+              const proj=state.projects.find(p=>p.id===t.projectId);
+              const isOverdue=t.due&&new Date(t.due+'T23:59:59')<now;
+              const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+              const statusColor={'progress':'var(--gold)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
+              return`<div style="display:grid;grid-template-columns:1fr 120px 90px 90px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="task-tag priority-${t.priority}">${t.priority}</span>
+                  <span style="font-size:12px;color:var(--text)">${t.title}</span>
+                </div>
+                <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:${statusColor}">${t.status}</div>
+              </div>`;
+            }).join('')}
+            ${m.openTasks.length>10?`<div style="padding:8px 20px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">+ ${m.openTasks.length-10} more tasks</div>`:''}`
+        }
       </div>`;
     }).join('')}
+    </div>
   `;
 }
 
