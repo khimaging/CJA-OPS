@@ -758,7 +758,7 @@
       <div class="crm-tabs" style="margin-bottom:24px">
         <button class="crm-tab active" id="ptab-grid" onclick="setProjTab('grid')">All Projects</button>
         <button class="crm-tab" id="ptab-monthly" onclick="setProjTab('monthly')">Monthly View</button>
-        <button class="crm-tab" id="ptab-health" onclick="setProjTab('health')">Health Dashboard</button>
+        <button class="crm-tab" id="ptab-health" onclick="setProjTab('health');state.healthTab='active'">Health Dashboard</button>
       </div>
       <!-- Status filter pills -->
       <div id="proj-filter-bar" style="display:flex;gap:8px;margin-bottom:20px;align-items:center">
@@ -797,6 +797,7 @@
       </div>
     </div>
     <div class="content">
+      <div id="task-workload-bar" style="display:none;margin-bottom:16px"></div>
       <div class="task-toolbar">
         <div class="view-toggle">
           <button class="view-btn active" id="btn-kanban" onclick="setTaskView('kanban')">
@@ -1318,9 +1319,9 @@ let state={
     {id:uid(),name:'Blaise Freeman',  role:'Copywriter',       color:AVATAR_COLORS[2],profitSharePct:25,active:true},
   ],
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
-  projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',
+  projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',calOffset:0,workloadPeriod:'week',
   payStatusFilter:'all',archivedProjects:{},
-  teamTab:'overview',teamMonthOffset:0,
+  teamTab:'overview',teamMonthOffset:0,healthTab:'active',
 };
 
 // ============================================================
@@ -3353,37 +3354,58 @@ function openTaskModalForProject(pid){
   setTimeout(()=>{ const sel=document.getElementById('t-project'); if(sel) sel.value=pid; },50);
 }
 
-// ============================================================
-//  HEALTH DASHBOARD
-// ============================================================
 function renderHealthDashboard(){
   const el=document.getElementById('proj-health-board');
   if(!el) return;
-  const all=state.projects.filter(p=>!state.archivedProjects[p.id]);
-  const counts={green:0,amber:0,red:0,grey:0};
-  all.forEach(p=>{counts[calcProjectRag(p).rag]++;});
+  const tab=state.healthTab||'active';
   const now=new Date();
 
+  // Filter by tab
+  const allProjects=state.projects.filter(p=>!state.archivedProjects[p.id]);
+  const activeProjects=allProjects.filter(p=>(p.status||'active')!=='complete'&&!p.payoutsFinalized);
+  const completeProjects=allProjects.filter(p=>p.status==='complete'||p.payoutsFinalized);
+  const shown=tab==='active'?activeProjects:completeProjects;
+
+  const counts={green:0,amber:0,red:0,grey:0};
+  shown.forEach(p=>{counts[calcProjectRag(p).rag]++;});
+
   el.innerHTML=`
-    <!-- Summary cards — same stat-card pattern -->
+    <!-- Tabs — same crm-tab pattern -->
+    <div class="crm-tabs" style="margin-bottom:20px">
+      <button class="crm-tab ${tab==='active'?'active':''}" onclick="state.healthTab='active';renderHealthDashboard()">
+        Active Projects <span style="font-family:'DM Mono',monospace;font-size:9px;opacity:0.6;margin-left:4px">${activeProjects.length}</span>
+      </button>
+      <button class="crm-tab ${tab==='complete'?'active':''}" onclick="state.healthTab='complete';renderHealthDashboard()">
+        Completed <span style="font-family:'DM Mono',monospace;font-size:9px;opacity:0.6;margin-left:4px">${completeProjects.length}</span>
+      </button>
+    </div>
+
+    <!-- Summary cards -->
     <div class="month-summary" style="margin-bottom:24px">
+      ${tab==='active'?`
       <div class="stat-card"><div class="stat-label" style="color:var(--green)">On Track</div><div class="stat-value" style="color:var(--green)">${counts.green}</div><div class="stat-delta">all tasks healthy</div></div>
       <div class="stat-card"><div class="stat-label" style="color:var(--gold)">At Risk</div><div class="stat-value" style="color:var(--gold)">${counts.amber}</div><div class="stat-delta">needs attention</div></div>
       <div class="stat-card"><div class="stat-label" style="color:var(--red)">Behind</div><div class="stat-value" style="color:var(--red)">${counts.red}</div><div class="stat-delta">overdue tasks</div></div>
-      <div class="stat-card"><div class="stat-label">No Data</div><div class="stat-value" style="color:var(--text3)">${counts.grey}</div><div class="stat-delta">no tasks yet</div></div>
+      <div class="stat-card"><div class="stat-label">No Tasks</div><div class="stat-value" style="color:var(--text3)">${counts.grey}</div><div class="stat-delta">not started</div></div>
+      `:`
+      <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value">${completeProjects.length}</div><div class="stat-delta">projects done</div></div>
+      <div class="stat-card"><div class="stat-label" style="color:var(--green)">Finalized</div><div class="stat-value" style="color:var(--green)">${completeProjects.filter(p=>p.payoutsFinalized).length}</div><div class="stat-delta">payouts locked</div></div>
+      <div class="stat-card"><div class="stat-label" style="color:var(--gold)">Awaiting Finalization</div><div class="stat-value" style="color:var(--gold)">${completeProjects.filter(p=>!p.payoutsFinalized).length}</div><div class="stat-delta">complete, not locked</div></div>
+      <div class="stat-card"><div class="stat-label">Total Tasks</div><div class="stat-value">${completeProjects.reduce((s,p)=>s+state.tasks.filter(t=>t.projectId===p.id).length,0)}</div><div class="stat-delta">delivered</div></div>
+      `}
     </div>
 
-    <!-- Project list — matches pay calculator table -->
+    <!-- Project table -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;gap:0;padding:9px 20px;background:var(--bg);border-bottom:2px solid var(--border2)">
+      <div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;padding:9px 20px;background:var(--bg);border-bottom:2px solid var(--border2)">
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Health</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${tab==='active'?'Health':'Status'}</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Progress</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${tab==='active'?'Due':'Completed'}</span>
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Team</span>
       </div>
-      ${all.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No projects yet</div>`:''}
-      ${all.map(p=>{
+      ${shown.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No ${tab} projects</div>`:''}
+      ${shown.map(p=>{
         const tasks=state.tasks.filter(t=>t.projectId===p.id);
         const done=tasks.filter(t=>t.status==='done').length;
         const pct=tasks.length?Math.round(done/tasks.length*100):0;
@@ -3394,25 +3416,37 @@ function renderHealthDashboard(){
         const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(201,168,76,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
         const deal=state.deals.find(d=>d.id===p.dealId);
         const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
-        const daysLeft=p.end?Math.ceil((new Date(p.end+'T23:59:59')-now)/86400000):null;
-        const dueStr=p.end?new Date(p.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-        const dueColor=daysLeft===null?'var(--text3)':daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)';
         const isFinalized=!!p.payoutsFinalized;
-        return`<div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;gap:0;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="goToProjectTasks('${p.id}')">
+
+        // Date display
+        const dueDate=tab==='active'?p.end:null;
+        const daysLeft=dueDate?Math.ceil((new Date(dueDate+'T23:59:59')-now)/86400000):null;
+        const dueStr=dueDate?new Date(dueDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+        const dueColor=daysLeft===null?'var(--text3)':daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)';
+
+        // Completed tab: show finalization status badge
+        const completeBadge=tab==='complete'?(isFinalized
+          ?`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(76,175,122,0.1);color:var(--green);border:1px solid rgba(76,175,122,0.25)">⚑ Finalized</span>`
+          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(201,168,76,0.08);color:var(--gold);border:1px solid rgba(201,168,76,0.2)">Pending</span>`)
+          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>`;
+
+        const barColor=tab==='complete'?(isFinalized?'var(--green)':'var(--gold)'):(ragColor);
+
+        return`<div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="goToProjectTasks('${p.id}')">
           <div>
             <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:2px">${isFinalized?'🔒 ':''}${p.name}</div>
-            <div style="font-size:10px;color:var(--text3)">${deal?.client||p.client||'—'}${overdue>0?` · <span style="color:var(--red)">${overdue} overdue</span>`:''}</div>
+            <div style="font-size:10px;color:var(--text3)">${deal?.client||p.client||'—'}${tab==='active'&&overdue>0?` · <span style="color:var(--red)">${overdue} overdue</span>`:''}</div>
           </div>
-          <div><span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.04em;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span></div>
+          <div>${completeBadge}</div>
           <div style="padding-right:16px">
             <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
-              <div style="height:100%;width:${pct}%;background:${ragColor};border-radius:3px;transition:width .3s"></div>
+              <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width .3s"></div>
             </div>
             <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% · ${done}/${tasks.length} tasks</div>
           </div>
           <div>
-            <div style="font-family:'DM Mono',monospace;font-size:11px;color:${dueColor}">${dueStr}</div>
-            ${daysLeft!==null?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:${dueColor}">${daysLeft<0?Math.abs(daysLeft)+' days over':daysLeft+' days left'}</div>`:''}
+            ${tab==='active'?`<div style="font-family:'DM Mono',monospace;font-size:11px;color:${dueColor}">${dueStr}</div>${daysLeft!==null?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:${dueColor}">${daysLeft<0?Math.abs(daysLeft)+' days over':daysLeft+' days left'}</div>`:''}`:
+            `<span class="proj-status complete" style="font-size:9px"><span class="proj-status-dot"></span>Complete</span>`}
           </div>
           <div style="display:flex;align-items:center">
             ${memberIds.slice(0,5).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
@@ -3797,7 +3831,72 @@ function setTaskView(mode){
     document.getElementById('task-'+v).className='task-'+v+'-view'+(v===mode?' active':'');
     document.getElementById('btn-'+v).className='view-btn'+(v===mode?' active':'');
   });
+  // Show workload bar on calendar view
+  const wb=document.getElementById('task-workload-bar');
+  if(wb) wb.style.display=mode==='calendar'?'block':'none';
+  renderWorkloadBar();
   renderTaskView();
+}
+
+function renderWorkloadBar(){
+  const el=document.getElementById('task-workload-bar');
+  if(!el||state.taskView!=='calendar') return;
+  const period=state.workloadPeriod||'week';
+  const now=new Date();
+  const CAPS={day:10,week:50,month:200};
+  const cap=CAPS[period];
+
+  // Calculate hours per member for the period
+  const active=state.team.filter(m=>m.active!==false);
+
+  function hoursInPeriod(memberId){
+    return state.tasks.filter(t=>{
+      if(t.assigneeId!==memberId||t.status==='done'||!t.due) return false;
+      const due=new Date(t.due+'T12:00:00');
+      if(period==='day'){
+        return t.due===now.toISOString().split('T')[0];
+      } else if(period==='week'){
+        const wStart=new Date(now);wStart.setDate(now.getDate()-now.getDay());wStart.setHours(0,0,0,0);
+        const wEnd=new Date(wStart);wEnd.setDate(wStart.getDate()+7);
+        return due>=wStart&&due<wEnd;
+      } else {
+        return due.getFullYear()===now.getFullYear()&&due.getMonth()===now.getMonth();
+      }
+    }).reduce((s,t)=>s+(t.estHours||0),0);
+  }
+
+  const loads=active.map(m=>({...m,hours:hoursInPeriod(m.id)}));
+  const periodLabel={day:'Today',week:'This Week',month:'This Month'}[period];
+
+  el.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:4px">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--border)">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Workload — ${periodLabel} <span style="color:var(--text3);font-weight:400">/ ${cap}h cap</span></div>
+      <div style="display:flex;gap:4px">
+        ${['day','week','month'].map(p=>`<button onclick="state.workloadPeriod='${p}';renderWorkloadBar()" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ${period===p?'var(--gold)':'var(--border)'};background:${period===p?'rgba(201,168,76,0.1)':'var(--bg3)'};color:${period===p?'var(--gold)':'var(--text3)'};cursor:pointer">${{day:'Daily',week:'Weekly',month:'Monthly'}[p]}</button>`).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:0;overflow-x:auto;padding:12px 16px;gap:12px;flex-wrap:wrap">
+      ${loads.map(m=>{
+        const pct=Math.min(Math.round(m.hours/cap*100),100);
+        const over=m.hours>cap;
+        const barColor=over?'var(--red)':m.hours>cap*0.8?'var(--gold)':'var(--green)';
+        const textColor=over?'var(--red)':m.hours>cap*0.8?'var(--gold)':'var(--text)';
+        return`<div style="display:flex;align-items:center;gap:8px;min-width:160px;flex:1">
+          <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:9px;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+              <span style="font-size:11px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.name.split(' ')[0]}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:${textColor};flex-shrink:0;margin-left:4px">${m.hours}/${cap}h</span>
+            </div>
+            <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px;transition:width .3s"></div>
+            </div>
+            ${over?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--red);margin-top:2px">+${m.hours-cap}h over cap</div>`:''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
 }
 function renderTaskView(){
   const projFilter=document.getElementById('task-project-filter')?.value;
@@ -3942,41 +4041,87 @@ function renderList(tasks){
 }
 function renderCalendar(tasks){
   const now=new Date();
-  const yr=now.getFullYear(),mo=now.getMonth();
+  const base=new Date(now.getFullYear(),now.getMonth()+state.calOffset,1);
+  const yr=base.getFullYear(),mo=base.getMonth();
   const fd=new Date(yr,mo,1).getDay(),dim=new Date(yr,mo+1,0).getDate();
+  const ts=now.toISOString().split('T')[0];
+
+  // Group tasks by due date
   const tbd={};
   tasks.forEach(t=>{if(t.due){if(!tbd[t.due])tbd[t.due]=[];tbd[t.due].push(t);}});
+
   const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   let cells='';
-  for(let i=0;i<fd;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${new Date(yr,mo,0).getDate()-fd+i+1}</div></div>`;
-  const ts=now.toISOString().split('T')[0];
+
+  // Prev month filler
+  const prevDim=new Date(yr,mo,0).getDate();
+  for(let i=0;i<fd;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${prevDim-fd+i+1}</div></div>`;
+
   for(let d=1;d<=dim;d++){
     const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dt=tbd[ds]||[];
-    cells+=`<div class="cal-day${ds===ts?' today':''}"
+    const isToday=ds===ts;
+    const totalHours=dt.reduce((s,t)=>s+(t.estHours||0),0);
+    cells+=`<div class="cal-day${isToday?' today':''}"
         data-date="${ds}"
         ondragover="calDragOver(event,this)"
         ondragleave="calDragLeave(this)"
         ondrop="calDrop(event,'${ds}')">
-      <div class="cal-day-num">${d}</div>
-      ${dt.slice(0,3).map(t=>{
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px">
+        <div class="cal-day-num">${d}</div>
+        ${totalHours>0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--gold);opacity:0.8">${totalHours}h</div>`:''}
+      </div>
+      ${dt.slice(0,4).map(t=>{
         const a=state.team.find(m=>m.id===t.assigneeId);
+        const proj=state.projects.find(p=>p.id===t.projectId);
+        const locked=isProjectLocked(t.projectId);
+        const statusDot={'todo':'','progress':'◉ ','review':'◎ ','done':'✓ '}[t.status]||'';
         return`<div class="cal-task"
-            style="background:${a?.color||'#888'}"
-            draggable="true"
+            style="background:${a?.color||'var(--bg4)'};cursor:${locked?'default':'grab'}"
+            draggable="${!locked}"
             data-task-id="${t.id}"
-            ondragstart="calDragStart(event,'${t.id}')"
-            ondragend="calDragEnd(event)"
+            ondragstart="${locked?'':` + "\"calDragStart(event,'"+t.id+"')\"" + `}"
+            ondragend="${locked?'':'calDragEnd(event)'}"
             onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
-            title="${t.title}">${t.title}</div>`;
+            title="${t.title} · ${proj?.name||''} · ${a?.name||'Unassigned'} · ${t.estHours||0}h">
+          <div style="font-size:9px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${statusDot}${t.title}</div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:2px;opacity:0.75">
+            ${a?`<div style="width:10px;height:10px;border-radius:50%;background:#0e0e0f;opacity:0.3;display:flex;align-items:center;justify-content:center;font-size:6px;font-weight:700;color:#fff;flex-shrink:0">${a.name.split(' ').map(n=>n[0]).join('')}</div>`:''}
+            <span style="font-size:8px;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name?proj.name.substring(0,12)+(proj.name.length>12?'…':''):''}</span>
+            ${t.estHours?`<span style="font-size:8px;color:#0e0e0f;margin-left:auto;flex-shrink:0">${t.estHours}h</span>`:''}
+          </div>
+        </div>`;
       }).join('')}
-      ${dt.length>3?`<div style="font-size:9px;color:var(--text3);cursor:pointer" onclick="event.stopPropagation()" title="${dt.slice(3).map(t=>t.title).join(', ')}">+${dt.length-3} more</div>`:''}
+      ${dt.length>4?`<div style="font-size:9px;color:var(--text3);padding:1px 3px;cursor:pointer;font-family:'DM Mono',monospace" title="${dt.slice(4).map(t=>t.title).join(', ')}">+${dt.length-4} more</div>`:''}
     </div>`;
   }
+
+  // Next month filler
   const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
   for(let i=1;i<=rem;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${i}</div></div>`;
-  document.getElementById('task-calendar').innerHTML=`<div style="margin-bottom:16px"><span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span></div><div class="calendar-grid">${dn.map(d=>`<div class="cal-header">${d}</div>`).join('')}${cells}</div>`;
+
+  document.getElementById('task-calendar').innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <button class="month-nav-btn" onclick="state.calOffset--;renderTaskView()">‹</button>
+      <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
+      <button class="month-nav-btn" onclick="state.calOffset++;renderTaskView()">›</button>
+      ${state.calOffset!==0?`<button class="btn btn-sm" onclick="state.calOffset=0;renderTaskView()" style="margin-left:4px">Today</button>`:''}
+      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${tasks.filter(t=>t.due&&t.due.startsWith(yr+'-'+String(mo+1).padStart(2,'0'))).length} tasks this month</div>
+    </div>
+    <div class="calendar-grid">
+      ${dn.map(d=>`<div class="cal-header">${d}</div>`).join('')}
+      ${cells}
+    </div>
+  `;
 }
+
+// Update cal-task CSS to support richer chips
+(function(){
+  const existing=document.querySelector('style');
+  if(existing&&!existing.textContent.includes('cal-task-meta')){
+    existing.textContent+='.cal-task{font-size:9px;padding:3px 5px;border-radius:3px;margin-bottom:2px;cursor:grab;}.cal-day{min-height:110px;padding:7px;}';
+  }
+})();
 
 let _calDragTaskId=null;
 function calDragStart(e, taskId){
