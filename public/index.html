@@ -758,12 +758,7 @@
   <div id="view-projects" class="view">
     <div class="topbar">
       <div><div class="page-title">Projects</div><div class="page-sub" id="proj-sub">Active engagements</div></div>
-      <div class="topbar-actions">
-        ${can.createProject() ? `<button class="btn btn-primary" onclick="openProjectModal()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-          New Project
-        </button>` : ''}
-      </div>
+      <div class="topbar-actions" id="proj-topbar-actions"></div>
     </div>
     <div class="content">
       <div class="crm-tabs" style="margin-bottom:24px">
@@ -2746,8 +2741,8 @@ function renderExpensesView(){
               <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${dateStr}</div>
               <div><span class="exp-ptype-badge exp-ptype-${e.paymentType}">${isReimb?'Reimb.':'Co. Card'}</span></div>
               <div class="exp-amount-cell">${fmt(e.amount)}</div>
-              <div>${e.receipt
-                ?`<a class="exp-receipt-link" href="${e.receipt}" target="_blank" rel="noopener"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>View</a>`
+              <div>${e.receiptUrl
+                ?`<a class="exp-receipt-link" href="${e.receiptUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>View</a>`
                 :`<span class="exp-receipt-missing">Missing</span>`}
               </div>
               <div>
@@ -2997,6 +2992,11 @@ function setProjFilter(f){
 }
 
 function renderProjects(){
+  // Render topbar actions based on permission
+  const ta=document.getElementById('proj-topbar-actions');
+  if(ta) ta.innerHTML=can.createProject()
+    ?`<button class="btn btn-primary" onclick="openProjectModal()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> New Project</button>`
+    :'';
   const grid=document.getElementById('projects-grid');
   if(!state.projects.length){grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1"><div class="empty-title">No projects yet</div></div>`;return;}
 
@@ -3040,7 +3040,7 @@ function renderProjects(){
           }
         </div>
       </div>
-      <div class="project-client" style="margin-bottom:14px">${p.client||(deal?deal.client:'—')}${p.end?` · Due ${new Date(p.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`:''}</div>
+      <div class="project-client" style="margin-bottom:14px">${p.client||(deal?deal.client:'—')}${(p.endDate||p.end)?` · Due ${new Date((p.endDate||p.end)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`:''}</div>
       <div class="project-progress"><div class="progress-fill" style="width:${pct}%;background:${progressColor}"></div></div>
       <div class="project-stats">
         <div class="project-stat"><strong>${done}/${tasks.length}</strong>Tasks Done</div>
@@ -3168,8 +3168,8 @@ function calcProjectRag(proj){
   const overdue=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
   if(overdue>0) return{rag:'red',label:'Overdue',pct};
   // Time-based: how far through the project are we vs completion %
-  const start=proj.start?new Date(proj.start+'T00:00:00'):null;
-  const end=proj.end?new Date(proj.end+'T23:59:59'):null;
+  const start=(proj.startDate||proj.start)?new Date((proj.startDate||proj.start)+'T00:00:00'):null;
+  const end=(proj.endDate||proj.end)?new Date((proj.endDate||proj.end)+'T23:59:59'):null;
   if(start&&end){
     const total=end-start;
     const elapsed=Math.min(now-start,total);
@@ -3219,7 +3219,10 @@ function renderProjectDetail(pid){
       const ct=tasks.filter(t=>t.status===col.id);
       const colColor=col.id==='done'?'var(--green)':col.id==='progress'?'var(--gold)':col.id==='review'?'var(--blue)':'var(--text3)';
       return`<div class="kanban-col" ondragover="pdetailDragOver(event,this)" ondragleave="pdetailDragLeave(this)" ondrop="pdetailDrop(event,'${col.id}')">
-        <div class="kanban-col-header"><span class="kanban-col-title" style="color:${colColor}">${col.label}</span><span class="kanban-count">${ct.length}</span></div>
+        <div class="kanban-header">
+          <div class="kanban-stage"><span class="stage-dot" style="background:${colColor}"></span><span style="color:${colColor}">${col.label}</span></div>
+          <span class="stage-count">${ct.length}</span>
+        </div>
         <div class="kanban-cards">
           ${ct.map(t=>renderTaskCard(t)).join('')||`<div style="padding:20px;text-align:center;color:var(--text3);font-size:11px;font-family:'DM Mono',monospace;opacity:0.5">Empty</div>`}
         </div>
@@ -3279,7 +3282,7 @@ function renderProjectDetail(pid){
             <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:3px 9px;border-radius:5px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>
             <span class="proj-status ${isFinalized?'complete':pStatus}" style="font-size:9px"><span class="proj-status-dot"></span>${isFinalized?'Finalized':pStatus==='complete'?'Complete':'Active'}</span>
           </div>
-          <div style="font-size:11px;color:var(--text3)">${proj.client||deal?.client||''} ${proj.start?'· Started '+new Date(proj.start+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''} ${proj.end?'· Due '+new Date(proj.end+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</div>
+          <div style="font-size:11px;color:var(--text3)">${proj.client||deal?.client||''} ${(proj.startDate||proj.start)?'· Started '+new Date((proj.startDate||proj.start)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''} ${(proj.endDate||proj.end)?'· Due '+new Date((proj.endDate||proj.end)+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</div>
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;align-items:center">
           ${!isFinalized&&can.createProject()?`
@@ -3441,7 +3444,7 @@ function renderHealthDashboard(){
         const isFinalized=!!p.payoutsFinalized;
 
         // Date display
-        const dueDate=tab==='active'?p.end:null;
+        const dueDate=tab==='active'?(p.endDate||p.end):null;
         const daysLeft=dueDate?Math.ceil((new Date(dueDate+'T23:59:59')-now)/86400000):null;
         const dueStr=dueDate?new Date(dueDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
         const dueColor=daysLeft===null?'var(--text3)':daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)';
@@ -3782,8 +3785,8 @@ function renderProjMonthly(){
   // If no start date, fall back to checking if it spans the month.
   const monthly=state.projects.filter(p=>{
     if(!!state.archivedProjects[p.id]) return false;
-    const s=p.start?p.start.substring(0,7):'';
-    const e=p.end?p.end.substring(0,7):'';
+    const s=(p.startDate||p.start||'').substring(0,7);
+    const e=(p.endDate||p.end||'').substring(0,7);
     if(s) return s===vYM; // primary: start month
     if(e) return e===vYM; // fallback: end month
     return false;
