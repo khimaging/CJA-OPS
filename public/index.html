@@ -695,6 +695,17 @@
       </div>
     </div>
     <div class="nav-section">
+      <div class="nav-label">Project Management</div>
+      <div class="nav-item" onclick="switchView('health')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Health Dashboard
+      </div>
+      <div class="nav-item" onclick="switchView('workload')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+        Workload
+      </div>
+    </div>
+    <div class="nav-section">
       <div class="nav-label">Team</div>
       <div class="nav-item" id="nav-team" onclick="switchView('team')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
@@ -758,7 +769,6 @@
       <div class="crm-tabs" style="margin-bottom:24px">
         <button class="crm-tab active" id="ptab-grid" onclick="setProjTab('grid')">All Projects</button>
         <button class="crm-tab" id="ptab-monthly" onclick="setProjTab('monthly')">Monthly View</button>
-        <button class="crm-tab" id="ptab-health" onclick="setProjTab('health');state.healthTab='active'">Health Dashboard</button>
       </div>
       <!-- Status filter pills -->
       <div id="proj-filter-bar" style="display:flex;gap:8px;margin-bottom:20px;align-items:center">
@@ -774,13 +784,26 @@
       <div class="crm-tab-content" id="ptc-monthly">
         <div id="proj-monthly-board"></div>
       </div>
-      <div class="crm-tab-content" id="ptc-health">
-        <div id="proj-health-board"></div>
-      </div>
       <div class="crm-tab-content" id="ptc-detail">
         <div id="proj-detail-content"></div>
       </div>
     </div>
+  </div>
+
+  <!-- HEALTH DASHBOARD -->
+  <div id="view-health" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Health Dashboard</div><div class="page-sub">Project status at a glance</div></div>
+    </div>
+    <div class="content"><div id="proj-health-board"></div></div>
+  </div>
+
+  <!-- WORKLOAD -->
+  <div id="view-workload" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Workload</div><div class="page-sub">Task load distribution across the team</div></div>
+    </div>
+    <div class="content"><div id="workload-board"></div></div>
   </div>
 
   <!-- TASKS -->
@@ -904,7 +927,6 @@
       <div class="crm-tabs" style="margin-bottom:24px">
         <button class="crm-tab active" id="ttab-overview" onclick="setTeamTab('overview')">Overview</button>
         <button class="crm-tab" id="ttab-monthly" onclick="setTeamTab('monthly')">Monthly Earnings</button>
-        <button class="crm-tab" id="ttab-workload" onclick="setTeamTab('workload')">Workload</button>
         <button class="crm-tab" id="ttab-manage" onclick="setTeamTab('manage')">Manage Profiles</button>
       </div>
       <div id="team-content"></div>
@@ -2207,7 +2229,7 @@ async function updateMemberPsPct(mid, val) {
 // ============================================================
 //  NAV
 // ============================================================
-const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team',paylog:'Pay Log',auditlog:'Audit Log',
+const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team',paylog:'Pay Log',auditlog:'Audit Log',health:'Health Dashboard',workload:'Workload',
 };
 
 function switchView(name){
@@ -2237,7 +2259,6 @@ function renderPage(name){
   if(name==='crm')renderCRM();
   if(name==='projects'){
     if(state.projectTab==='monthly') renderProjMonthly();
-    else if(state.projectTab==='health') renderHealthDashboard();
     else if(state.projectTab==='detail') renderProjectDetail(state.activeProjectId);
     else renderProjects();
   }
@@ -2253,6 +2274,8 @@ function renderPage(name){
   if(name==='expenses'){renderExpensesView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
+  if(name==='health'){state.healthTab=state.healthTab||'active';renderHealthDashboard();}
+  if(name==='workload')renderStandaloneWorkload();
   updateBadges();
 }
 function updateBadges(){
@@ -2951,7 +2974,7 @@ function changeMonth(dir){state.monthOffset+=dir;renderMonthly();}
 // ============================================================
 function setProjTab(tab){
   state.projectTab=tab;
-  ['grid','monthly','health','detail'].forEach(t=>{
+  ['grid','monthly','detail'].forEach(t=>{
     const btn=document.getElementById('ptab-'+t);
     const pane=document.getElementById('ptc-'+t);
     if(btn) btn.classList.toggle('active',t===tab);
@@ -2960,7 +2983,6 @@ function setProjTab(tab){
   const filterBar=document.getElementById('proj-filter-bar');
   filterBar.style.display=(tab==='grid')?'flex':'none';
   if(tab==='monthly') renderProjMonthly();
-  else if(tab==='health') renderHealthDashboard();
   else if(tab==='detail') renderProjectDetail(state.activeProjectId);
   else renderProjects();
 }
@@ -3462,9 +3484,21 @@ function renderHealthDashboard(){
 // ============================================================
 //  WORKLOAD VIEW
 // ============================================================
+function renderStandaloneWorkload(){
+  // Temporarily swap the target element so renderWorkloadView renders into the standalone page
+  const el=document.getElementById('workload-board');
+  if(!el) return;
+  // Build inline — same logic as renderWorkloadView but targeting workload-board
+  _renderWorkloadInto(el);
+}
+
 function renderWorkloadView(){
   const el=document.getElementById('team-content');
   if(!el) return;
+  _renderWorkloadInto(el);
+}
+
+function _renderWorkloadInto(el){
   const active=state.team.filter(m=>m.active!==false);
   const now=new Date();
   const memberLoad=active.map(m=>{
@@ -4423,7 +4457,7 @@ function renderBucketsView(){
 // ============================================================
 function setTeamTab(tab){
   state.teamTab=tab;
-  ['overview','monthly','workload','manage'].forEach(t=>{
+  ['overview','monthly','manage'].forEach(t=>{
     const el=document.getElementById('ttab-'+t);
     if(el) el.classList.toggle('active',t===tab);
   });
@@ -4444,7 +4478,6 @@ function renderTeamView(){
 
   if(state.teamTab==='overview') renderTeamOverview();
   else if(state.teamTab==='monthly') renderTeamMonthly();
-  else if(state.teamTab==='workload') renderWorkloadView();
   else if(state.teamTab==='manage') renderTeamManage();
 }
 
