@@ -2961,9 +2961,9 @@ function renderMonthly(){
       <button class="btn btn-sm btn-primary" onclick="openDealModal()" style="margin-left:8px">+ Add Closed Deal</button>
     </div>
     <div class="month-summary">
-      <div class="stat-card"><div class="stat-label">Closed This Month</div><div class="stat-value">${fmt(totV)}</div><div class="stat-delta">${won.length} deals</div></div>
-      <div class="stat-card"><div class="stat-label">Collected (Paid in Full)</div><div class="stat-value" style="color:var(--green)">${fmt(paidV)}</div><div class="stat-delta" style="color:var(--green)">${won.filter(d=>d.invoiceStatus==='paid').length} deals</div></div>
-      <div class="stat-card"><div class="stat-label">Outstanding</div><div class="stat-value" style="color:var(--orange)">${fmt(outV)}</div><div class="stat-delta" style="color:var(--orange)">${won.filter(d=>d.invoiceStatus!=='paid').length} deals</div></div>
+      <div class="stat-card"><div class="stat-label">Closed This Month</div><div class="stat-value">${fmt(won.reduce((s,d)=>s+d.value,0))}</div><div class="stat-delta">${won.length} deals · gross value</div></div>
+      <div class="stat-card"><div class="stat-label">Net Revenue</div><div class="stat-value" style="color:var(--gold)">${fmt(totV)}</div><div class="stat-delta" style="color:var(--text3)">after expenses</div></div>
+      <div class="stat-card"><div class="stat-label">Collected (Paid in Full)</div><div class="stat-value" style="color:var(--green)">${fmt(paidV)}</div><div class="stat-delta" style="color:var(--green)">${won.filter(d=>d.invoiceStatus==='paid').length} deals paid</div></div>
     </div>
     ${won.length===0
       ?`<div class="empty-state"><div class="empty-title">No closed deals in ${lbl}</div><div class="empty-sub">Navigate to another month or close a deal from the pipeline.</div></div>`
