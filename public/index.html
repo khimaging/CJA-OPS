@@ -1017,7 +1017,8 @@
 <!-- PROJECT MODAL -->
 <div class="modal-overlay" id="project-modal">
   <div class="modal">
-    <div class="modal-title">New Project<button class="modal-close" onclick="closeModal('project-modal')">✕</button></div>
+    <div class="modal-title" id="p-modal-title">New Project<button class="modal-close" onclick="closeModal('project-modal')">✕</button></div>
+    <input type="hidden" id="p-edit-id">
     <div class="form-row">
       <div class="form-group"><label class="form-label">Project Name</label><input class="form-input" id="p-name" placeholder="Brand Identity Refresh"></div>
       <div class="form-group"><label class="form-label">Linked Deal</label><select class="form-select" id="p-deal"><option value="">No Deal</option></select></div>
@@ -1822,19 +1823,37 @@ async function updateInvStatus(id, status) {
 async function saveProject() {
   const name   = document.getElementById('p-name').value.trim();
   if (!name) { notify('Please enter a project name'); return; }
+  const editId = document.getElementById('p-edit-id').value;
   const dealId = document.getElementById('p-deal').value;
   const deal   = state.deals.find(d => d.id === dealId);
   const status = document.getElementById('p-status').value || 'active';
+  const startDate = document.getElementById('p-start').value;
+  const endDate   = document.getElementById('p-end').value;
   closeModal('project-modal');
   try {
-    const proj = await api('POST', '/projects', {
-      name, dealId: dealId || null, client: deal?.client || '',
-      startDate: document.getElementById('p-start').value,
-      endDate:   document.getElementById('p-end').value, status,
-    });
-    state.projects.push(proj);
-    notify('Project created ✓'); renderProjects(); updateBadges();
-    document.getElementById('p-name').value = '';
+    if (editId) {
+      // Edit existing project
+      const existing = state.projects.find(p => p.id === editId);
+      if (existing?.payoutsFinalized) { notify('🔒 Project payouts are finalized — cannot edit'); return; }
+      const updated = await api('PATCH', '/projects/' + editId, {
+        name, dealId: dealId || null, client: deal?.client || existing?.client || '',
+        startDate, endDate, status,
+      });
+      const idx = state.projects.findIndex(p => p.id === editId);
+      if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...updated, startDate, endDate, name, status };
+      notify('Project updated ✓');
+      if (state.activeProjectId === editId) renderProjectDetail(editId);
+    } else {
+      // Create new project
+      const proj = await api('POST', '/projects', {
+        name, dealId: dealId || null, client: deal?.client || '',
+        startDate, endDate, status,
+      });
+      state.projects.push(proj);
+      notify('Project created ✓');
+    }
+    renderProjects(); updateBadges();
+    if (!editId) document.getElementById('p-name').value = '';
   } catch(e) { notify('Save failed: ' + e.message); }
 }
 
@@ -3066,6 +3085,9 @@ function renderProjects(){
             ${auth.role==='admin'?`<button class="btn btn-sm" onclick="event.stopPropagation();unfinalizePayouts('${p.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3);font-size:9px">⚠ Override Unlock</button>`:''}
           </div>`
         : `<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            ${can.createProject()?`<button class="btn btn-sm" onclick="event.stopPropagation();openProjectModal('${p.id}')" style="justify-content:center" title="Edit project details">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>`:''}
             <button class="btn btn-sm" onclick="event.stopPropagation();cycleProjectStatus('${p.id}')" style="flex:1;justify-content:center">
               ${isComplete?'↺ Mark Active':'✓ Mark Complete'}
             </button>
@@ -3298,6 +3320,7 @@ function renderProjectDetail(pid){
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0;align-items:center">
           ${!isFinalized&&can.createProject()?`
+          ${can.createProject()?`<button class="btn btn-sm" onclick="openProjectModal('${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit</button>`:''}
             <button class="btn btn-sm" onclick="openTemplateModal('${pid}')">⚡ Template</button>
             <button class="btn btn-primary" onclick="openTaskModalForProject('${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Task</button>
           `:''}
@@ -3768,13 +3791,14 @@ function _renderProdCalCalendar(view){
     <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)"><div style="width:10px;height:4px;background:var(--green);border-radius:2px"></div>&lt;80% cap</div>
     <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)"><div style="width:10px;height:4px;background:var(--gold);border-radius:2px"></div>&gt;80% cap</div>
     <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--red)"><div style="width:10px;height:4px;background:var(--red);border-radius:2px"></div>Over cap</div>
+    <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;color:var(--green)"><div style="width:10px;height:4px;background:var(--bg4);border-radius:2px;border-left:2px solid var(--green)"></div>✓ Completed</div>
   </div>`;
 
   // ── DAY VIEW ──────────────────────────────────────────────────
   if(view==='day'){
     const d=new Date(now);d.setDate(now.getDate()+offset);d.setHours(0,0,0,0);
     const ds=d.toISOString().split('T')[0];
-    const dayTasks=state.tasks.filter(t=>t.due===ds&&t.status!=='done');
+    const dayTasks=state.tasks.filter(t=>t.due===ds);
 
     const rows=active.map(m=>{
       const mTasks=dayTasks.filter(t=>t.assigneeId===m.id);
@@ -3799,10 +3823,11 @@ function _renderProdCalCalendar(view){
             </div>
             ${mTasks.map(t=>{
               const proj=state.projects.find(p=>p.id===t.projectId);
-              return`<div style="display:grid;grid-template-columns:1fr 160px 70px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openEditTaskModal('${t.id}')">
-                <div style="display:flex;align-items:center;gap:7px"><span class="task-tag priority-${t.priority}">${t.priority}</span><span style="font-size:12px;color:var(--text)">${t.title}</span></div>
+              const isDone=t.status==='done';
+              return`<div style="display:grid;grid-template-columns:1fr 160px 70px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;opacity:${isDone?'0.6':'1'}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openEditTaskModal('${t.id}')">
+                <div style="display:flex;align-items:center;gap:7px"><span class="task-tag priority-${t.priority}">${t.priority}</span><span style="font-size:12px;color:${isDone?'var(--text3)':'var(--text)'};${isDone?'text-decoration:line-through':''}">${isDone?'✓ ':''}${t.title}</span></div>
                 <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
-                <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${t.estHours||0}h</div>
+                <div style="font-family:'DM Mono',monospace;font-size:12px;color:${isDone?'var(--green)':'var(--gold)'}">${t.estHours||0}h</div>
               </div>`;
             }).join('')}`
         }
@@ -3820,7 +3845,7 @@ function _renderProdCalCalendar(view){
       const d=new Date(ws);d.setDate(ws.getDate()+i);
       return{date:d,ds:d.toISOString().split('T')[0],label:d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:d.toDateString()===now.toDateString()};
     });
-    const weekTasks=state.tasks.filter(t=>t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds&&t.status!=='done');
+    const weekTasks=state.tasks.filter(t=>t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds);
 
     const rows=active.map(m=>{
       const mTasks=weekTasks.filter(t=>t.assigneeId===m.id);
@@ -3837,12 +3862,13 @@ function _renderProdCalCalendar(view){
           ${dH>0?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc};margin-bottom:5px">${dH}h</div>`:''}
           ${dTasks.map(t=>{
             const proj=state.projects.find(p=>p.id===t.projectId);
-            return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h"
-              style="background:${m.color};border-radius:3px;padding:3px 5px;margin-bottom:3px;cursor:pointer;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
-              onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
-              <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
-              <div style="font-size:8px;color:rgba(0,0,0,0.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
-              <div style="font-family:'DM Mono',monospace;font-size:7px;color:rgba(0,0,0,0.5)">${t.estHours||0}h</div>
+            const isDone=t.status==='done';
+          return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h${isDone?' · DONE':''}"
+              style="background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:3px 5px;margin-bottom:3px;cursor:pointer;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+              onmouseover="this.style.opacity='0.75'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
+              <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
+              <div style="font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:7px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'}">${t.estHours||0}h</div>
             </div>`;
           }).join('')}
           ${dTasks.length===0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--bg4)">—</div>`:''}
@@ -3871,7 +3897,7 @@ function _renderProdCalCalendar(view){
 
   const dayMap={};
   const dayTaskMap={};
-  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)&&t.status!=='done').forEach(t=>{
+  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)).forEach(t=>{
     if(!dayMap[t.due]) dayMap[t.due]={};
     if(!dayMap[t.due][t.assigneeId]) dayMap[t.due][t.assigneeId]=0;
     dayMap[t.due][t.assigneeId]+=(t.estHours||0);
@@ -3901,12 +3927,14 @@ function _renderProdCalCalendar(view){
     const chips=dtasks.slice(0,3).map(t=>{
       const a=active.find(m=>m.id===t.assigneeId);
       const proj=state.projects.find(p=>p.id===t.projectId);
+      const isDone=t.status==='done';
+      const chipBg=isDone?'var(--bg4)':(a?.color||'var(--bg4)');
       return`<div onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
-        title="${t.title} · ${proj?.name||''} · ${a?.name||''} · ${t.estHours||0}h"
-        style="background:${a?.color||'var(--bg4)'};border-radius:3px;padding:2px 5px;margin-bottom:2px;cursor:pointer;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
-        onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
-        <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
-        <div style="font-size:7px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''} · ${t.estHours||0}h</div>
+        title="${t.title} · ${proj?.name||''} · ${a?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''}"
+        style="background:${chipBg};border-radius:3px;padding:2px 5px;margin-bottom:2px;cursor:pointer;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+        onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
+        <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:${isDone?'var(--text3)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
+        <div style="font-size:7px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''} · ${t.estHours||0}h</div>
       </div>`;
     }).join('');
 
@@ -3950,7 +3978,7 @@ function _renderProdCalGantt(view){
     // Show today only — Gantt day view shows hours 0-23 as columns
     const HOURS=Array.from({length:14},(_,i)=>i+7); // 7am–8pm
     const ds=d.toISOString().split('T')[0];
-    const dayTasks=state.tasks.filter(t=>t.due===ds&&t.status!=='done');
+    const dayTasks=state.tasks.filter(t=>t.due===ds);
     const CELL_W=48;
     const navLabel=_prodCalNavLabel('day');
     const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">Today</button>`:'';
@@ -3966,13 +3994,14 @@ function _renderProdCalGantt(view){
         const w=Math.min(h*CELL_W,HOURS.length*CELL_W-left);
         cursor+=h;
         const proj=state.projects.find(p=>p.id===t.projectId);
+        const isDone=t.status==='done';
         return`<div onclick="openEditTaskModal('${t.id}')"
-          title="${t.title} · ${proj?.name||''} · ${h}h"
-          style="position:absolute;left:${left}px;width:${w-4}px;top:4px;bottom:4px;background:${m.color};border-radius:4px;padding:3px 6px;cursor:pointer;overflow:hidden;box-sizing:border-box;${t.priority==='high'?'border:1.5px solid rgba(224,90,90,0.7)':''}"
-          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
-          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
-          <div style="font-size:8px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:8px;color:rgba(0,0,0,0.5)">${h}h</div>
+          title="${t.title} · ${proj?.name||''} · ${h}h${isDone?' · DONE':''}"
+          style="position:absolute;left:${left}px;width:${w-4}px;top:4px;bottom:4px;background:${isDone?'var(--bg4)':m.color};border-radius:4px;padding:3px 6px;cursor:pointer;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.6':'1'};${isDone?'border:1.5px solid var(--green)':t.priority==='high'?'border:1.5px solid rgba(224,90,90,0.7)':''}"
+          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='${isDone?'0.6':'1'}'">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
+          <div style="font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'}">${h}h</div>
         </div>`;
       }).join('');
 
@@ -4032,7 +4061,7 @@ function _renderProdCalGantt(view){
   });
 
   const startDs=windowDays[0].ds,endDs=windowDays[DAYS-1].ds;
-  const windowTasks=state.tasks.filter(t=>t.due&&t.due>=startDs&&t.due<=endDs&&t.status!=='done');
+  const windowTasks=state.tasks.filter(t=>t.due&&t.due>=startDs&&t.due<=endDs);
   const todayIdx=windowDays.findIndex(d=>d.isToday);
   const navLabel=_prodCalNavLabel(view);
   const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.prodCalOffset=0;renderProdCal()">${isWeek?'This Week':'This Month'}</button>`:'';
@@ -4066,13 +4095,14 @@ function _renderProdCalGantt(view){
         const proj=state.projects.find(p=>p.id===t.projectId);
         const barH=isWeek?44:28;
         const top=4+si*20;
+        const isDone=t.status==='done';
         return`<div onclick="openEditTaskModal('${t.id}')"
-          title="${t.title} · ${proj?.name||''} · ${t.estHours||0}h"
-          style="position:absolute;left:${i*CELL_W+2}px;width:${CELL_W-6}px;top:${top}px;height:${barH}px;background:${m.color};border-radius:3px;padding:2px 4px;cursor:pointer;overflow:hidden;box-sizing:border-box;${t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
-          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
-          <div style="font-family:'DM Mono',monospace;font-size:${isWeek?9:7}px;font-weight:700;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
-          ${isWeek||barH>20?`<div style="font-size:${isWeek?8:7}px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>`:''}
-          <div style="font-family:'DM Mono',monospace;font-size:7px;color:rgba(0,0,0,0.5)">${t.estHours||0}h</div>
+          title="${t.title} · ${proj?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''}"
+          style="position:absolute;left:${i*CELL_W+2}px;width:${CELL_W-6}px;top:${top}px;height:${barH}px;background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:2px 4px;cursor:pointer;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+          onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
+          <div style="font-family:'DM Mono',monospace;font-size:${isWeek?9:7}px;font-weight:700;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
+          ${isWeek||barH>20?`<div style="font-size:${isWeek?8:7}px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>`:''}
+          <div style="font-family:'DM Mono',monospace;font-size:7px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'}">${t.estHours||0}h</div>
         </div>`;
       });
     }).join('');
@@ -4121,6 +4151,7 @@ function _renderProdCalGantt(view){
       <div>Task bars show: title · project · hours</div>
       <div style="display:flex;align-items:center;gap:4px"><div style="width:2px;height:12px;background:rgba(201,168,76,0.6)"></div>Today</div>
       <div style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:8px;border-left:2px solid rgba(224,90,90,0.7);background:rgba(255,255,255,0.1)"></div>High priority</div>
+      <div style="display:flex;align-items:center;gap:4px;color:var(--green)"><div style="width:10px;height:8px;border-left:2px solid var(--green);background:var(--bg4);opacity:0.6"></div>Completed</div>
     </div>
   `;
 }
@@ -5791,8 +5822,15 @@ function showAutoProjectToast(proj,dealName){
 // ============================================================
 //  OTHER MODALS
 // ============================================================
-function openProjectModal(){
-  document.getElementById('p-deal').innerHTML='<option value="">No Deal</option>'+state.deals.map(d=>`<option value="${d.id}">${d.name} — ${d.client}</option>`).join('');
+function openProjectModal(editId){
+  const p=editId?state.projects.find(x=>x.id===editId):null;
+  document.getElementById('p-modal-title').childNodes[0].nodeValue=p?'Edit Project ':'New Project ';
+  document.getElementById('p-edit-id').value=editId||'';
+  document.getElementById('p-deal').innerHTML='<option value="">No Deal</option>'+state.deals.map(d=>`<option value="${d.id}" ${p&&p.dealId===d.id?'selected':''}>${d.name} — ${d.client}</option>`).join('');
+  document.getElementById('p-name').value=p?p.name:'';
+  document.getElementById('p-start').value=p?(p.startDate||p.start||''):'';
+  document.getElementById('p-end').value=p?(p.endDate||p.end||''):'';
+  document.getElementById('p-status').value=p?(p.status||'active'):'active';
   document.getElementById('project-modal').classList.add('open');
 }
 function openTaskModal(editId){
