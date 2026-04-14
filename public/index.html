@@ -253,6 +253,10 @@
   .priority-high{background:var(--red-dim);color:var(--red);}
   .priority-med{background:rgba(212,122,58,0.12);color:var(--orange);}
   .priority-low{background:var(--green-dim);color:var(--green);}
+  .task-type-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;text-transform:uppercase;white-space:nowrap;}
+  .tag-production{background:rgba(102,126,234,0.12);color:var(--blue);}
+  .tag-post-production{background:rgba(149,97,226,0.12);color:var(--purple);}
+  .tag-admin{background:rgba(201,168,76,0.12);color:var(--gold);}
   .status-todo{background:var(--bg4);color:var(--text3);}
   .status-progress{background:var(--blue-dim);color:var(--blue);}
   .status-review{background:rgba(154,127,212,0.12);color:var(--purple);}
@@ -840,6 +844,14 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>Calendar
           </button>
         </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Type</span>
+          <button class="filter-pill active" id="ttype-all"    onclick="setTaskTagFilter('')">All</button>
+          <button class="filter-pill tag-production"     id="ttype-production"      onclick="setTaskTagFilter('production')"      style="background:rgba(102,126,234,0.08)">Production</button>
+          <button class="filter-pill tag-post-production" id="ttype-post-production" onclick="setTaskTagFilter('post-production')"  style="background:rgba(149,97,226,0.08)">Post-Prod</button>
+          <button class="filter-pill tag-admin"          id="ttype-admin"           onclick="setTaskTagFilter('admin')"            style="background:rgba(201,168,76,0.08)">Admin</button>
+          <button class="filter-pill"                    id="ttype-none"            onclick="setTaskTagFilter('none')"             style="color:var(--text3)">Untagged</button>
+        </div>
       </div>
       <div class="task-kanban-view active" id="task-kanban"></div>
       <div class="task-list-view" id="task-list"></div>
@@ -1065,6 +1077,16 @@
           <option value="todo">To Do</option><option value="progress">In Progress</option><option value="review">In Review</option><option value="done">Done</option>
         </select>
       </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Task Type</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="t-tag-picker">
+        <button type="button" class="task-type-tag tag-production" data-tag="production" onclick="_selectTag('production')" style="cursor:pointer;border:1px solid transparent;padding:5px 12px">Production</button>
+        <button type="button" class="task-type-tag tag-post-production" data-tag="post-production" onclick="_selectTag('post-production')" style="cursor:pointer;border:1px solid transparent;padding:5px 12px">Post-Production</button>
+        <button type="button" class="task-type-tag tag-admin" data-tag="admin" onclick="_selectTag('admin')" style="cursor:pointer;border:1px solid transparent;padding:5px 12px">Admin</button>
+        <button type="button" class="task-type-tag" data-tag="" onclick="_selectTag('')" style="cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text3);padding:5px 12px">None</button>
+      </div>
+      <input type="hidden" id="t-tag">
     </div>
     <!-- Pay preview -->
     <div id="t-pay-preview" style="display:none;align-items:center;justify-content:space-between;background:var(--green-dim);border:1px solid rgba(76,175,122,0.25);border-radius:8px;padding:12px 16px;margin-top:4px">
@@ -1349,7 +1371,7 @@ let state={
     {id:uid(),name:'Blaise Freeman',  role:'Copywriter',       color:AVATAR_COLORS[2],profitSharePct:25,active:true},
   ],
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
-  projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',calOffset:0,workloadPeriod:'week',
+  projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',
 };
@@ -1914,6 +1936,7 @@ async function saveTask() {
     priority:   document.getElementById('t-priority').value,
     status:     document.getElementById('t-status').value,
     estHours:   parseFloat(document.getElementById('t-est').value) || 0,
+    tag:        document.getElementById('t-tag').value || null,
   };
   closeModal('task-modal');
   try {
@@ -3366,7 +3389,7 @@ function renderProjectDetail(pid){
       </div>
 
       <!-- Team strip -->
-      ${Object.keys(memberHours).length?`<div style="padding:12px 20px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+      ${Object.keys(memberHours).length?`<div style="padding:12px 20px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border)">
         <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Team</span>
         ${Object.entries(memberHours).map(([mid,data])=>{
           const mem=state.team.find(m=>m.id===mid);
@@ -3381,6 +3404,58 @@ function renderProjectDetail(pid){
           </div>`;
         }).join('')}
       </div>`:''}
+
+      <!-- Hours by tag -->
+      ${(()=>{
+        const TAGS=[
+          {id:'production',      label:'Production',      color:'var(--blue)',   bg:'rgba(102,126,234,0.1)'},
+          {id:'post-production', label:'Post-Production',  color:'var(--purple)', bg:'rgba(149,97,226,0.1)'},
+          {id:'admin',           label:'Admin',            color:'var(--gold)',   bg:'rgba(201,168,76,0.1)'},
+        ];
+        const untaggedH=tasks.filter(t=>!t.tag).reduce((s,t)=>s+(t.estHours||0),0);
+        const untaggedDone=tasks.filter(t=>!t.tag&&t.status==='done').length;
+        const untaggedTotal=tasks.filter(t=>!t.tag).length;
+        const tagData=TAGS.map(tg=>{
+          const tTasks=tasks.filter(t=>t.tag===tg.id);
+          const hours=tTasks.reduce((s,t)=>s+(t.estHours||0),0);
+          const done=tTasks.filter(t=>t.status==='done').length;
+          return{...tg,hours,count:tTasks.length,done};
+        }).filter(tg=>tg.count>0);
+        if(!tagData.length&&!untaggedH) return'';
+        return`<div style="padding:14px 20px;border-bottom:1px solid var(--border)">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Hours by Task Type</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
+            ${tagData.map(tg=>{
+              const pct=totH>0?Math.round(tg.hours/totH*100):0;
+              const donePct=tg.count>0?Math.round(tg.done/tg.count*100):0;
+              return`<div style="flex:1;min-width:140px;background:${tg.bg};border:1px solid ${tg.color.replace('var(','').replace(')','') === tg.color ? tg.color : tg.color};border-radius:8px;padding:10px 14px;border-color:${tg.color};opacity:0.9">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                  <span class="task-type-tag tag-${tg.id}" style="font-size:8px;padding:2px 6px">${tg.label}</span>
+                  <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${tg.count} task${tg.count!==1?'s':''}</span>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:${tg.color};line-height:1;margin-bottom:4px">${tg.hours}h</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:6px">${pct}% of ${totH}h total</div>
+                <div style="height:3px;background:var(--bg4);border-radius:2px;overflow:hidden">
+                  <div style="height:100%;width:${donePct}%;background:${tg.color};border-radius:2px;opacity:0.7"></div>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px">${donePct}% done</div>
+              </div>`;
+            }).join('')}
+            ${untaggedH>0?`<div style="flex:1;min-width:140px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.06em;text-transform:uppercase;color:var(--text3)">Untagged</span>
+                <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${untaggedTotal} task${untaggedTotal!==1?'s':''}</span>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:var(--text3);line-height:1;margin-bottom:4px">${untaggedH}h</div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:6px">${totH>0?Math.round(untaggedH/totH*100):0}% of ${totH}h total</div>
+              <div style="height:3px;background:var(--bg4);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${untaggedTotal>0?Math.round(untaggedDone/untaggedTotal*100):0}%;background:var(--text3);border-radius:2px;opacity:0.5"></div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px">${untaggedTotal>0?Math.round(untaggedDone/untaggedTotal*100):0}% done</div>
+            </div>`:''}
+          </div>
+        </div>`;
+      })()}
     </div>
 
     <!-- Task view -->
@@ -3541,19 +3616,21 @@ const WL_CAPS={day:10,week:50,month:200};
 
 function _calcMemberHours(memberId, period){
   const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate(),0,0,0,0);
   let start,end;
   if(period==='day'){
-    start=new Date(now.getFullYear(),now.getMonth(),now.getDate());
-    end=new Date(start);end.setDate(end.getDate()+1);
+    start=today;
+    end=new Date(today.getFullYear(),today.getMonth(),today.getDate(),23,59,59,999);
   } else if(period==='week'){
-    start=new Date(now);start.setDate(now.getDate()-6);start.setHours(0,0,0,0);
-    end=new Date(now);end.setHours(23,59,59,999);
+    start=today;
+    end=new Date(today);end.setDate(today.getDate()+6);end.setHours(23,59,59,999);
   } else {
-    start=new Date(now);start.setDate(now.getDate()-29);start.setHours(0,0,0,0);
-    end=new Date(now);end.setHours(23,59,59,999);
+    start=today;
+    end=new Date(today);end.setDate(today.getDate()+29);end.setHours(23,59,59,999);
   }
+  // Include all tasks (including done) so completed work counts toward utilization
   return state.tasks.filter(t=>{
-    if(t.assigneeId!==memberId||t.status==='done'||!t.due) return false;
+    if(t.assigneeId!==memberId||!t.due) return false;
     const d=new Date(t.due+'T12:00:00');
     return d>=start&&d<=end;
   });
@@ -4365,6 +4442,15 @@ function goToProjectTasks(pid){
 // ============================================================
 //  TASKS
 // ============================================================
+function setTaskTagFilter(tag){
+  state.taskTagFilter=tag;
+  ['all','production','post-production','admin','none'].forEach(t=>{
+    const el=document.getElementById('ttype-'+(t==='all'?'all':t));
+    if(el) el.classList.toggle('active',(tag===''&&t==='all')||(tag===t));
+  });
+  renderTaskView();
+}
+
 function setTaskView(mode){
   state.taskView=mode;
   ['kanban','list','calendar'].forEach(v=>{
@@ -4390,17 +4476,18 @@ function renderWorkloadBar(){
   const active=state.team.filter(m=>m.active!==false);
 
   function hoursInPeriod(memberId){
+    const today=new Date(now.getFullYear(),now.getMonth(),now.getDate(),0,0,0,0);
     return state.tasks.filter(t=>{
-      if(t.assigneeId!==memberId||t.status==='done'||!t.due) return false;
+      if(t.assigneeId!==memberId||!t.due) return false;
       const due=new Date(t.due+'T12:00:00');
       if(period==='day'){
-        return t.due===now.toISOString().split('T')[0];
+        return due>=today&&due<new Date(today.getTime()+86400000);
       } else if(period==='week'){
-        const wStart=new Date(now);wStart.setDate(now.getDate()-now.getDay());wStart.setHours(0,0,0,0);
-        const wEnd=new Date(wStart);wEnd.setDate(wStart.getDate()+7);
-        return due>=wStart&&due<wEnd;
+        const wEnd=new Date(today);wEnd.setDate(today.getDate()+6);wEnd.setHours(23,59,59,999);
+        return due>=today&&due<=wEnd;
       } else {
-        return due.getFullYear()===now.getFullYear()&&due.getMonth()===now.getMonth();
+        const mEnd=new Date(today);mEnd.setDate(today.getDate()+29);mEnd.setHours(23,59,59,999);
+        return due>=today&&due<=mEnd;
       }
     }).reduce((s,t)=>s+(t.estHours||0),0);
   }
@@ -4441,9 +4528,12 @@ function renderWorkloadBar(){
 function renderTaskView(){
   const projFilter=document.getElementById('task-project-filter')?.value;
   const memberFilter=document.getElementById('task-member-filter')?.value;
+  const tagFilter=state.taskTagFilter||'';
   let tasks=state.tasks;
   if(projFilter) tasks=tasks.filter(t=>t.projectId===projFilter);
   if(memberFilter) tasks=tasks.filter(t=>t.assigneeId===memberFilter);
+  if(tagFilter==='none') tasks=tasks.filter(t=>!t.tag);
+  else if(tagFilter) tasks=tasks.filter(t=>t.tag===tagFilter);
 
   // Update subtitle
   const proj=projFilter?state.projects.find(p=>p.id===projFilter):null;
@@ -4525,6 +4615,7 @@ function renderTaskCard(t){
     <div class="task-title" style="display:flex;align-items:center;gap:6px">${locked?'<span title="Project complete &amp; paid" style="font-size:10px">🔒</span>':''}${t.title}</div>
     <div class="task-meta">
       <span class="task-tag priority-${t.priority}">${t.priority}</span>
+      ${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:''}
       ${proj?`<span style="font-size:10px;color:var(--text3)">${proj.name.length>14?proj.name.substring(0,13)+'…':proj.name}</span>`:''}
       ${ds?`<span class="task-due ${dc}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>${ds}</span>`:''}
       <span class="task-hours"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${h}h</span>
@@ -4562,14 +4653,17 @@ function kanbanDragLeave(col){
 
 function renderList(tasks){
   document.getElementById('task-list').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-    <table class="list-table"><thead><tr><th>Task</th><th>Project</th><th>Assigned To</th><th>Due</th><th>Priority</th><th>Status</th><th>Hours</th><th>Task Pay</th></tr></thead>
-    <tbody>${tasks.length===0?`<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`:tasks.map(t=>{
+    <table class="list-table"><thead><tr><th>Task</th><th>Type</th><th>Project</th><th>Assigned To</th><th>Due</th><th>Priority</th><th>Status</th><th>Hours</th><th>Task Pay</th></tr></thead>
+    <tbody>${tasks.length===0?`<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`:tasks.map(t=>{
       const proj=state.projects.find(p=>p.id===t.projectId);
       const a=state.team.find(m=>m.id===t.assigneeId);
       const dc=t.due?getDueClass(t.due):'';
       const pay=calcTaskPay(t);
       const locked=isProjectLocked(t.projectId);
-      return`<tr style="cursor:pointer;${locked?'opacity:0.7':''}" onclick="openEditTaskModal('${t.id}')"><td style="color:var(--text);font-weight:500">${locked?'🔒 ':''}${t.title}</td><td style="color:var(--text3)">${proj?.name||'—'}</td>
+      return`<tr style="cursor:pointer;${locked?'opacity:0.7':''}" onclick="openEditTaskModal('${t.id}')">
+        <td style="color:var(--text);font-weight:500">${locked?'🔒 ':''}${t.title}</td>
+        <td>${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}</td>
+        <td style="color:var(--text3)">${proj?.name||'—'}</td>
         <td><div style="display:flex;align-items:center;gap:7px"><div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div><span style="color:var(--text2)">${a?.name||'—'}</span></div></td>
         <td class="${'task-due '+dc}">${t.due?formatDue(t.due):'—'}</td>
         <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
@@ -5844,6 +5938,7 @@ function openTaskModal(editId){
   document.getElementById('t-status').value=t?t.status:'todo';
   document.getElementById('t-est').value=t?(t.estHours||''):'';
   document.getElementById('task-modal').dataset.editId=editId||'';
+  _selectTag(t?t.tag||'':'');
   // Show delete button only for admins editing an existing task
   const delWrap=document.getElementById('t-delete-wrap');
   if(delWrap) delWrap.style.display=(auth.role==='admin'&&editId)?'block':'none';
@@ -5851,6 +5946,23 @@ function openTaskModal(editId){
   document.getElementById('task-modal').classList.add('open');
 }
 function openEditTaskModal(id){openTaskModal(id);}
+
+function _selectTag(tag){
+  document.getElementById('t-tag').value=tag||'';
+  document.querySelectorAll('#t-tag-picker button').forEach(btn=>{
+    const isSelected=btn.dataset.tag===tag;
+    btn.style.borderColor=isSelected?'currentColor':'transparent';
+    btn.style.boxShadow=isSelected?'0 0 0 1px currentColor inset':'none';
+    btn.style.fontWeight=isSelected?'700':'500';
+  });
+  // None button special case
+  const noneBtn=document.querySelector('#t-tag-picker button[data-tag=""]');
+  if(noneBtn){
+    const isNone=!tag;
+    noneBtn.style.borderColor=isNone?'var(--text2)':'var(--border)';
+    noneBtn.style.fontWeight=isNone?'700':'500';
+  }
+}
 
 
 function updateTaskPayPreview(){
