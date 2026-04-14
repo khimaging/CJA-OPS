@@ -254,6 +254,8 @@
   .priority-med{background:rgba(212,122,58,0.12);color:var(--orange);}
   .priority-low{background:var(--green-dim);color:var(--green);}
   .task-type-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;text-transform:uppercase;white-space:nowrap;}
+  .pc-drop-zone.pc-dz-over{outline:2px dashed var(--gold)!important;background:rgba(201,168,76,0.07)!important;}
+  .pc-drop-member.pc-dz-over{background:rgba(201,168,76,0.1)!important;}
   .tag-production{background:rgba(102,126,234,0.12);color:var(--blue);}
   .tag-post-production{background:rgba(149,97,226,0.12);color:var(--purple);}
   .tag-admin{background:rgba(201,168,76,0.12);color:var(--gold);}
@@ -3796,6 +3798,84 @@ function _renderWorkloadInto(el){
 // ============================================================
 //  PRODUCTION CALENDAR
 // ============================================================
+// ============================================================
+//  PRODUCTION CALENDAR — DRAG & DROP
+// ============================================================
+let _prodCalDragId=null;
+
+function _pcDragStart(e,taskId){
+  _prodCalDragId=taskId;
+  e.dataTransfer.effectAllowed='move';
+  e.dataTransfer.setData('text/plain',taskId);
+  setTimeout(()=>{if(e.target)e.target.style.opacity='0.4';},0);
+}
+function _pcDragEnd(e){
+  if(e.target)e.target.style.opacity='';
+  document.querySelectorAll('.pc-drop-zone').forEach(z=>{
+    z.classList.remove('pc-dz-over');
+  });
+  _prodCalDragId=null;
+}
+function _pcDragOver(e,el){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  el.classList.add('pc-dz-over');
+}
+function _pcDragLeave(el){
+  el.classList.remove('pc-dz-over');
+}
+
+// Drop onto a date cell — updates due date
+async function _pcDropDate(e,dateStr){
+  e.preventDefault();
+  const taskId=e.dataTransfer.getData('text/plain')||_prodCalDragId;
+  if(!taskId||!dateStr) return;
+  document.querySelectorAll('.pc-drop-zone').forEach(z=>z.classList.remove('pc-dz-over'));
+  const task=state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  if(isProjectLocked(task.projectId)){notify('🔒 Project is locked');return;}
+  if(task.due===dateStr) return; // no change
+  const prev=task.due;
+  task.due=dateStr;
+  const d=new Date(dateStr+'T12:00:00');
+  notify('Due date → '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'}));
+  renderProdCal();
+  try{
+    await api('PATCH','/tasks/'+taskId,{dueDate:dateStr});
+  } catch(ex){
+    task.due=prev;
+    notify('Update failed: '+ex.message);
+    renderProdCal();
+  }
+}
+
+// Drop onto a member row — updates assignee (and optionally date)
+async function _pcDropMember(e,memberId,dateStr){
+  e.preventDefault();
+  const taskId=e.dataTransfer.getData('text/plain')||_prodCalDragId;
+  if(!taskId) return;
+  document.querySelectorAll('.pc-drop-zone').forEach(z=>z.classList.remove('pc-dz-over'));
+  const task=state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  if(isProjectLocked(task.projectId)){notify('🔒 Project is locked');return;}
+  const prevAssignee=task.assigneeId;
+  const prevDue=task.due;
+  const changed={};
+  if(memberId&&memberId!==task.assigneeId){task.assigneeId=memberId;changed.assigneeId=memberId;}
+  if(dateStr&&dateStr!==task.due){task.due=dateStr;changed.dueDate=dateStr;}
+  if(!Object.keys(changed).length) return;
+  const mem=state.team.find(m=>m.id===memberId);
+  notify('Reassigned to '+mem?.name+(dateStr?' · '+new Date(dateStr+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):''));
+  renderProdCal();
+  try{
+    await api('PATCH','/tasks/'+taskId,changed);
+  } catch(ex){
+    task.assigneeId=prevAssignee;task.due=prevDue;
+    notify('Update failed: '+ex.message);
+    renderProdCal();
+  }
+}
+
 function renderProdCal(){
   const el=document.getElementById('prodcal-board');
   if(!el) return;
@@ -3901,7 +3981,7 @@ function _renderProdCalCalendar(view){
             ${mTasks.map(t=>{
               const proj=state.projects.find(p=>p.id===t.projectId);
               const isDone=t.status==='done';
-              return`<div style="display:grid;grid-template-columns:1fr 160px 70px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;opacity:${isDone?'0.6':'1'}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openEditTaskModal('${t.id}')">
+              return`<div draggable="true" ondragstart="_pcDragStart(event,'${t.id}')" ondragend="_pcDragEnd(event)" style="display:grid;grid-template-columns:1fr 160px 70px;padding:9px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:grab;transition:background .1s;opacity:${isDone?'0.6':'1'}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openEditTaskModal('${t.id}')">
                 <div style="display:flex;align-items:center;gap:7px"><span class="task-tag priority-${t.priority}">${t.priority}</span><span style="font-size:12px;color:${isDone?'var(--text3)':'var(--text)'};${isDone?'text-decoration:line-through':''}">${isDone?'✓ ':''}${t.title}</span></div>
                 <div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
                 <div style="font-family:'DM Mono',monospace;font-size:12px;color:${isDone?'var(--green)':'var(--gold)'}">${t.estHours||0}h</div>
@@ -3934,14 +4014,17 @@ function _renderProdCalCalendar(view){
         const dH=dTasks.reduce((s,t)=>s+(t.estHours||0),0);
         const overD=dH>DAY_CAP;
         const dc=overD?'var(--red)':dH>DAY_CAP*0.8?'var(--gold)':dH>0?'var(--green)':'var(--text3)';
-        return`<div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:8px 10px;${wd.isToday?'background:rgba(201,168,76,0.04)':''}">
+        return`<div class="pc-drop-zone" style="flex:1;min-width:0;border-right:1px solid var(--border);padding:8px 10px;${wd.isToday?'background:rgba(201,168,76,0.04)':''}"
+          ondragover="_pcDragOver(event,this)" ondragleave="_pcDragLeave(this)" ondrop="_pcDropMember(event,'${m.id}','${wd.ds}')">
           <div style="font-family:'DM Mono',monospace;font-size:8px;color:${wd.isToday?'var(--gold)':'var(--text3)'};margin-bottom:6px;white-space:nowrap">${wd.label}</div>
           ${dH>0?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc};margin-bottom:5px">${dH}h</div>`:''}
           ${dTasks.map(t=>{
             const proj=state.projects.find(p=>p.id===t.projectId);
             const isDone=t.status==='done';
-          return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h${isDone?' · DONE':''}"
-              style="background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:3px 5px;margin-bottom:3px;cursor:pointer;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+          return`<div onclick="openEditTaskModal('${t.id}')" title="${t.title}${proj?' · '+proj.name:''} · ${t.estHours||0}h${isDone?' · DONE':''} · Drag to move"
+              draggable="true"
+              ondragstart="_pcDragStart(event,'${t.id}')" ondragend="_pcDragEnd(event)"
+              style="background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:3px 5px;margin-bottom:3px;cursor:grab;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
               onmouseover="this.style.opacity='0.75'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
               <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
               <div style="font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
@@ -4007,15 +4090,19 @@ function _renderProdCalCalendar(view){
       const isDone=t.status==='done';
       const chipBg=isDone?'var(--bg4)':(a?.color||'var(--bg4)');
       return`<div onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
-        title="${t.title} · ${proj?.name||''} · ${a?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''}"
-        style="background:${chipBg};border-radius:3px;padding:2px 5px;margin-bottom:2px;cursor:pointer;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+        title="${t.title} · ${proj?.name||''} · ${a?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''} · Drag to move"
+        draggable="true"
+        ondragstart="event.stopPropagation();_pcDragStart(event,'${t.id}')"
+        ondragend="_pcDragEnd(event)"
+        style="background:${chipBg};border-radius:3px;padding:2px 5px;margin-bottom:2px;cursor:grab;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
         onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
         <div style="font-family:'DM Mono',monospace;font-size:8px;font-weight:600;color:${isDone?'var(--text3)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
         <div style="font-size:7px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''} · ${t.estHours||0}h</div>
       </div>`;
     }).join('');
 
-    cells+=`<div class="cal-day${isToday?' today':''}" style="border-color:${borderColor};min-height:110px">
+    cells+=`<div class="cal-day pc-drop-zone${isToday?' today':''}" style="border-color:${borderColor};min-height:110px"
+        ondragover="_pcDragOver(event,this)" ondragleave="_pcDragLeave(this)" ondrop="_pcDropDate(event,'${ds}')">
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
         <div class="cal-day-num">${d}</div>
         ${totalH>0?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:${overCap?'var(--red)':totalH>DAY_CAP*0.8?'var(--gold)':'var(--text3)'}">${totalH}h</div>`:''}
@@ -4073,8 +4160,9 @@ function _renderProdCalGantt(view){
         const proj=state.projects.find(p=>p.id===t.projectId);
         const isDone=t.status==='done';
         return`<div onclick="openEditTaskModal('${t.id}')"
-          title="${t.title} · ${proj?.name||''} · ${h}h${isDone?' · DONE':''}"
-          style="position:absolute;left:${left}px;width:${w-4}px;top:4px;bottom:4px;background:${isDone?'var(--bg4)':m.color};border-radius:4px;padding:3px 6px;cursor:pointer;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.6':'1'};${isDone?'border:1.5px solid var(--green)':t.priority==='high'?'border:1.5px solid rgba(224,90,90,0.7)':''}"
+          title="${t.title} · ${proj?.name||''} · ${h}h${isDone?' · DONE':''} · Drag to reassign"
+          draggable="true" ondragstart="_pcDragStart(event,'${t.id}')" ondragend="_pcDragEnd(event)"
+          style="position:absolute;left:${left}px;width:${w-4}px;top:4px;bottom:4px;background:${isDone?'var(--bg4)':m.color};border-radius:4px;padding:3px 6px;cursor:grab;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.6':'1'};${isDone?'border:1.5px solid var(--green)':t.priority==='high'?'border:1.5px solid rgba(224,90,90,0.7)':''}"
           onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='${isDone?'0.6':'1'}'">
           <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
           <div style="font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
@@ -4174,8 +4262,9 @@ function _renderProdCalGantt(view){
         const top=4+si*20;
         const isDone=t.status==='done';
         return`<div onclick="openEditTaskModal('${t.id}')"
-          title="${t.title} · ${proj?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''}"
-          style="position:absolute;left:${i*CELL_W+2}px;width:${CELL_W-6}px;top:${top}px;height:${barH}px;background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:2px 4px;cursor:pointer;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
+          title="${t.title} · ${proj?.name||''} · ${t.estHours||0}h${isDone?' · DONE':''} · Drag to move/reassign"
+          draggable="true" ondragstart="_pcDragStart(event,'${t.id}')" ondragend="_pcDragEnd(event)"
+          style="position:absolute;left:${i*CELL_W+2}px;width:${CELL_W-6}px;top:${top}px;height:${barH}px;background:${isDone?'var(--bg4)':m.color};border-radius:3px;padding:2px 4px;cursor:grab;overflow:hidden;box-sizing:border-box;opacity:${isDone?'0.55':'1'};${isDone?'border-left:2px solid var(--green)':t.priority==='high'?'border-left:2px solid rgba(224,90,90,0.7)':''}"
           onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='${isDone?'0.55':'1'}'">
           <div style="font-family:'DM Mono',monospace;font-size:${isWeek?9:7}px;font-weight:700;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${t.title}</div>
           ${isWeek||barH>20?`<div style="font-size:${isWeek?8:7}px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>`:''}
@@ -4188,7 +4277,8 @@ function _renderProdCalGantt(view){
     const pCap=isWeek?WL_CAPS.week:WL_CAPS.month;
     const hColor=periodH>pCap?'var(--red)':periodH>pCap*0.8?'var(--gold)':'var(--text3)';
 
-    return`<div style="display:flex;align-items:stretch;border-bottom:1px solid var(--border)">
+    return`<div class="pc-drop-zone pc-drop-member" style="display:flex;align-items:stretch;border-bottom:1px solid var(--border)"
+      ondragover="_pcDragOver(event,this)" ondragleave="_pcDragLeave(this)" ondrop="_pcDropMember(event,'${m.id}',null)">
       <div style="width:${LABEL_W}px;flex-shrink:0;padding:10px 16px;background:var(--bg);display:flex;align-items:center;gap:8px">
         <div class="user-avatar" style="background:${m.color};width:24px;height:24px;font-size:9px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
         <div style="min-width:0">
@@ -4651,27 +4741,148 @@ function kanbanDragLeave(col){
   col.classList.remove('drag-over');
 }
 
+// ── CSS for inline editing (injected once) ──────────────────────────────────
+(function(){
+  if(document.getElementById('list-edit-styles')) return;
+  const s=document.createElement('style');
+  s.id='list-edit-styles';
+  s.textContent=`
+    .le-cell{cursor:pointer;border-radius:4px;padding:2px 4px;margin:-2px -4px;transition:background .1s;}
+    .le-cell:hover{background:var(--bg4);}
+    .le-input{background:var(--bg);border:1px solid var(--gold);border-radius:4px;color:var(--text);font-family:inherit;font-size:12px;padding:3px 7px;outline:none;width:100%;box-sizing:border-box;}
+    .le-select{background:var(--bg);border:1px solid var(--gold);border-radius:4px;color:var(--text);font-family:'DM Mono',monospace;font-size:11px;padding:3px 6px;outline:none;cursor:pointer;}
+  `;
+  document.head.appendChild(s);
+})();
+
+// Patch a task field inline and re-render list
+async function _listPatch(taskId, field, value){
+  const task=state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const prev=task[field];
+  task[field]=value;
+  try{
+    const apiField={
+      title:'title', assigneeId:'assigneeId', due:'dueDate',
+      priority:'priority', status:'status', estHours:'estHours', tag:'tag',
+    }[field];
+    await api('PATCH','/tasks/'+taskId,{[apiField]:value||null});
+  } catch(e){
+    task[field]=prev;
+    notify('Save failed: '+e.message);
+  }
+  renderTaskView();
+}
+
+// Make a cell editable: type = 'text'|'date'|'select'|'number'
+function _listEditCell(td, taskId, field, currentVal, opts){
+  td.onclick=null; // prevent row click bubbling while editing
+  if(opts?.type==='select'){
+    const sel=document.createElement('select');
+    sel.className='le-select';
+    opts.choices.forEach(([v,l])=>{
+      const o=document.createElement('option');
+      o.value=v; o.textContent=l;
+      if(v===currentVal) o.selected=true;
+      sel.appendChild(o);
+    });
+    td.innerHTML='';
+    td.appendChild(sel);
+    sel.focus();
+    sel.onchange=()=>_listPatch(taskId,field,sel.value);
+    sel.onblur=()=>renderTaskView();
+    return;
+  }
+  const inp=document.createElement('input');
+  inp.className='le-input';
+  inp.type=opts?.type||'text';
+  inp.value=currentVal||'';
+  if(opts?.step) inp.step=opts.step;
+  if(opts?.min!==undefined) inp.min=opts.min;
+  td.innerHTML='';
+  td.appendChild(inp);
+  inp.focus();
+  inp.select?.();
+  inp.onkeydown=e=>{
+    if(e.key==='Enter'){inp.blur();}
+    if(e.key==='Escape'){renderTaskView();}
+  };
+  inp.onblur=()=>{
+    const v=opts?.type==='number'?parseFloat(inp.value)||0:inp.value.trim();
+    if(v!==currentVal) _listPatch(taskId,field,v||null);
+    else renderTaskView();
+  };
+}
+
 function renderList(tasks){
   document.getElementById('task-list').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-    <table class="list-table"><thead><tr><th>Task</th><th>Type</th><th>Project</th><th>Assigned To</th><th>Due</th><th>Priority</th><th>Status</th><th>Hours</th><th>Task Pay</th></tr></thead>
-    <tbody>${tasks.length===0?`<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`:tasks.map(t=>{
-      const proj=state.projects.find(p=>p.id===t.projectId);
-      const a=state.team.find(m=>m.id===t.assigneeId);
-      const dc=t.due?getDueClass(t.due):'';
-      const pay=calcTaskPay(t);
-      const locked=isProjectLocked(t.projectId);
-      return`<tr style="cursor:pointer;${locked?'opacity:0.7':''}" onclick="openEditTaskModal('${t.id}')">
-        <td style="color:var(--text);font-weight:500">${locked?'🔒 ':''}${t.title}</td>
-        <td>${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}</td>
-        <td style="color:var(--text3)">${proj?.name||'—'}</td>
-        <td><div style="display:flex;align-items:center;gap:7px"><div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div><span style="color:var(--text2)">${a?.name||'—'}</span></div></td>
-        <td class="${'task-due '+dc}">${t.due?formatDue(t.due):'—'}</td>
-        <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
-        <td><span class="task-tag status-${t.status}">${statusLabel(t.status)}</span></td>
-        <td style="font-family:'DM Mono',monospace;color:var(--gold)">${t.estHours||0}h</td>
-        <td style="font-family:'DM Mono',monospace;color:${pay>0?'var(--green)':'var(--text3)'}">${pay>0?fmt(pay):'—'}</td>
-      </tr>`;
-    }).join('')}</tbody></table></div>`;
+    <table class="list-table">
+      <thead><tr>
+        <th>Task</th><th>Type</th><th>Assigned To</th><th>Due</th>
+        <th>Priority</th><th>Status</th><th>Hours</th><th>Task Pay</th>
+      </tr></thead>
+      <tbody>${tasks.length===0
+        ?`<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`
+        :tasks.map(t=>{
+          const a=state.team.find(m=>m.id===t.assigneeId);
+          const dc=t.due?getDueClass(t.due):'';
+          const pay=calcTaskPay(t);
+          const locked=isProjectLocked(t.projectId);
+          const rowId='lr-'+t.id;
+          if(locked) return`<tr id="${rowId}" style="opacity:0.7">
+            <td style="color:var(--text);font-weight:500">🔒 ${t.title}</td>
+            <td>${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}</td>
+            <td><div style="display:flex;align-items:center;gap:7px"><div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div><span style="color:var(--text2)">${a?.name||'—'}</span></div></td>
+            <td class="task-due ${dc}">${t.due?formatDue(t.due):'—'}</td>
+            <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
+            <td><span class="task-tag status-${t.status}">${statusLabel(t.status)}</span></td>
+            <td style="font-family:'DM Mono',monospace;color:var(--gold)">${t.estHours||0}h</td>
+            <td style="font-family:'DM Mono',monospace;color:${pay>0?'var(--green)':'var(--text3)'}">${pay>0?fmt(pay):'—'}</td>
+          </tr>`;
+          return`<tr id="${rowId}" style="cursor:default">
+            <!-- Title -->
+            <td class="le-cell" title="Click to edit" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','title','${t.title.replace(/'/g,"\\'")}',{type:'text'})">
+              <span style="color:var(--text);font-weight:500">${t.title}</span>
+            </td>
+            <!-- Tag -->
+            <td class="le-cell" title="Click to change type" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','tag','${t.tag||''}',{type:'select',choices:[['','None'],['production','Production'],['post-production','Post-Production'],['admin','Admin']]})">
+              ${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}
+            </td>
+            <!-- Assignee -->
+            <td class="le-cell" title="Click to reassign" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','assigneeId','${t.assigneeId||''}',{type:'select',choices:[['','Unassigned'],...state.team.map(m=>[m.id,m.name])]})">
+              <div style="display:flex;align-items:center;gap:7px">
+                <div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div>
+                <span style="color:var(--text2)">${a?.name||'—'}</span>
+              </div>
+            </td>
+            <!-- Due date -->
+            <td class="le-cell task-due ${dc}" title="Click to change date" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','due','${t.due||''}',{type:'date'})">
+              ${t.due?formatDue(t.due):'<span style="color:var(--text3)">—</span>'}
+            </td>
+            <!-- Priority -->
+            <td class="le-cell" title="Click to change priority" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','priority','${t.priority}',{type:'select',choices:[['low','Low'],['med','Medium'],['high','High']]})">
+              <span class="task-tag priority-${t.priority}">${t.priority}</span>
+            </td>
+            <!-- Status -->
+            <td class="le-cell" title="Click to change status" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','status','${t.status}',{type:'select',choices:[['todo','To Do'],['progress','In Progress'],['review','In Review'],['done','Done']]})">
+              <span class="task-tag status-${t.status}">${statusLabel(t.status)}</span>
+            </td>
+            <!-- Hours -->
+            <td class="le-cell" title="Click to edit hours" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','estHours',${t.estHours||0},{type:'number',step:'0.5',min:0})">
+              <span style="font-family:'DM Mono',monospace;color:var(--gold)">${t.estHours||0}h</span>
+            </td>
+            <!-- Task pay (read only) -->
+            <td style="font-family:'DM Mono',monospace;color:${pay>0?'var(--green)':'var(--text3)'}">
+              ${pay>0?fmt(pay):'—'}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div style="padding:8px 16px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);border-top:1px solid var(--border)">
+      Click any cell to edit in place · Press Enter to save · Esc to cancel
+    </div>
+  </div>`;
 }
 function renderCalendar(tasks){
   const now=new Date();
