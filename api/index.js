@@ -363,11 +363,12 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
   try {
-    const { title, projectId, assigneeId, dueDate, priority, status, estHours } = req.body;
+    const { title, projectId, assigneeId, dueDate, priority, status, estHours, tag } = req.body;
     const { data, error } = await supabase.from('tasks').insert({
       title, project_id: projectId, assignee_id: assigneeId || null,
       due_date: dueDate || null, priority: priority || 'med',
       status: status || 'todo', est_hours: estHours || 0,
+      tag: tag || null,
     }).select().single();
     if (error) throw error;
     res.status(201).json(mapTask(data));
@@ -394,6 +395,7 @@ app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
     if (req.body.priority   !== undefined) updates.priority    = req.body.priority;
     if (req.body.status     !== undefined) updates.status      = req.body.status;
     if (req.body.estHours   !== undefined) updates.est_hours   = req.body.estHours;
+    if (req.body.tag        !== undefined) updates.tag         = req.body.tag || null;
     const { data, error } = await supabase.from('tasks').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapTask(data));
@@ -710,6 +712,7 @@ function mapTask(t) {
     priority:   t.priority,
     status:     t.status,
     estHours:   t.est_hours || 0,
+    tag:        t.tag || null,
   };
 }
 
