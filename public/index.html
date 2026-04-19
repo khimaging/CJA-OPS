@@ -684,6 +684,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 20h20M5 20V8l7-6 7 6v12M9 20v-5h6v5"/><path d="M9 8h.01M12 8h.01M15 8h.01"/></svg>
         Expenses
       </div>
+      <div class="nav-item" id="nav-pending-expenses" onclick="switchView('pending-expenses')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+        Pending Expenses
+        <span id="pending-badge" class="nav-badge" style="display:none"></span>
+      </div>
       <div class="nav-item" onclick="switchView('buckets')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
         Deal Buckets
@@ -694,6 +699,10 @@
       <div class="nav-item" onclick="switchView('paylog')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
         Pay Log
+      </div>
+      <div class="nav-item" onclick="switchView('payroll')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><path d="M6 15h2M10 15h4"/></svg>
+        Run Payroll
       </div>
       <div class="nav-item" onclick="switchView('auditlog')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="16" r="1" fill="currentColor"/></svg>
@@ -908,6 +917,38 @@
       <div><div class="page-title">Audit Log</div><div class="page-sub">Changes to paid deals, locked tasks, and profit share</div></div>
     </div>
     <div class="content"><div id="auditlog-content"></div></div>
+  </div>
+
+  <!-- PENDING EXPENSES -->
+  <div id="view-pending-expenses" class="view">
+    <div class="topbar">
+      <div>
+        <div class="page-title">Pending Expenses</div>
+        <div class="page-sub" id="pending-exp-sub">Receipts from Drive · awaiting review</div>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" onclick="openBulkImportModal()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Import from Drive
+        </button>
+        <button class="btn btn-sm" onclick="renderPendingExpenses()" title="Refresh">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+    <div class="content"><div id="pending-expenses-content"></div></div>
+  </div>
+
+  <!-- RUN PAYROLL -->
+  <div id="view-payroll" class="view">
+    <div class="topbar">
+      <div>
+        <div class="page-title">Run Payroll</div>
+        <div class="page-sub">Review unpaid distributions, generate pay stubs, mark batch paid</div>
+      </div>
+    </div>
+    <div class="content"><div id="payroll-content"></div></div>
   </div>
 
   <!-- EXPENSES -->
@@ -1280,6 +1321,77 @@
   </div>
 </div>
 
+<!-- BULK IMPORT RECEIPTS MODAL -->
+<div class="modal-overlay" id="bulk-import-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-title">Import Receipts from Drive<button class="modal-close" onclick="closeModal('bulk-import-modal')">✕</button></div>
+
+    <!-- Step 1: folder selection -->
+    <div id="bi-step-folder">
+      <div class="form-group">
+        <label class="form-label">Google Drive Folder URL or ID</label>
+        <input class="form-input" id="bi-folder-url" placeholder="https://drive.google.com/drive/folders/..." autocomplete="off">
+        <div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5">
+          Paste the share link for a Drive folder containing receipt files (images or PDFs).
+          The folder must be shared with the service account email as a Viewer or Editor.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Default Project (pre-fills the review form)</label>
+        <select class="form-select" id="bi-default-project">
+          <option value="">— none (assign per-receipt during review) —</option>
+        </select>
+        <div style="font-size:10px;color:var(--text3);margin-top:6px">
+          If the team uploads receipts to a per-project folder, pick that project here to save clicks during review.
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Default Submitter</label>
+        <select class="form-select" id="bi-default-submitter"></select>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+        <button class="btn" onclick="closeModal('bulk-import-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="_bulkImportPreview()">Preview Folder</button>
+      </div>
+    </div>
+
+    <!-- Step 2: preview + confirm -->
+    <div id="bi-step-preview" style="display:none">
+      <div id="bi-preview-info" style="padding:14px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:14px;font-size:12px;color:var(--text2)"></div>
+      <div id="bi-preview-files" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn" onclick="_bulkImportReset()">‹ Back</button>
+        <button class="btn btn-primary" id="bi-process-btn" onclick="_bulkImportProcess()">Process with AI</button>
+      </div>
+    </div>
+
+    <!-- Step 3: progress -->
+    <div id="bi-step-progress" style="display:none">
+      <div style="text-align:center;padding:24px 16px">
+        <div class="spinner" style="width:40px;height:40px;border:3px solid var(--bg4);border-top-color:var(--gold);border-radius:50%;animation:bi-spin 1s linear infinite;margin:0 auto 16px"></div>
+        <div id="bi-progress-label" style="font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--text);margin-bottom:4px">Processing receipts…</div>
+        <div id="bi-progress-sub" style="font-size:11px;color:var(--text3)">This may take a minute. Claude is reading each receipt.</div>
+      </div>
+    </div>
+
+    <!-- Step 4: results -->
+    <div id="bi-step-results" style="display:none">
+      <div id="bi-results-summary" style="padding:14px 16px;background:var(--green-dim);border:1px solid rgba(76,175,122,0.3);border-radius:8px;margin-bottom:14px"></div>
+      <div id="bi-results-failed" style="display:none;padding:14px 16px;background:rgba(224,90,90,0.08);border:1px solid rgba(224,90,90,0.25);border-radius:8px;margin-bottom:14px"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn btn-primary" onclick="_bulkImportDone()">Done — Review Pending</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes bi-spin { to { transform: rotate(360deg); } }
+</style>
+
 <div class="notification" id="notif"></div>
 
 <script>
@@ -1530,6 +1642,11 @@ async function bootstrapState() {
   state.archivedProjects = {};
   state.projects.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
   syncDealExpenses(); // compute deal.expenses from expenses table immediately
+  // Quietly fetch pending expenses count for nav badge (non-blocking)
+  api('GET', '/pending-expenses').then(pending => {
+    state.pendingExpenses = pending || [];
+    updatePendingBadge();
+  }).catch(() => {});
   updateBadges();
 }
 
@@ -2322,6 +2439,8 @@ function renderPage(name){
   if(name==='paylog'){renderPayLog();}
   if(name==='auditlog'){renderAuditLog();}
   if(name==='expenses'){renderExpensesView();}
+  if(name==='pending-expenses'){renderPendingExpenses();}
+  if(name==='payroll'){renderPayrollView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
   if(name==='health'){state.healthTab=state.healthTab||'active';renderHealthDashboard();}
@@ -2839,6 +2958,586 @@ function renderExpensesView(){
     const proj=projFilter?state.projects.find(p=>p.id===projFilter):null;
     sub.textContent=proj?`${proj.name} · ${fmt(totalAll)} total`:`All projects · ${fmt(totalAll)} total · synced to CRM`;
   }
+}
+
+// ============================================================
+//  PENDING EXPENSES (email inbox review queue)
+// ============================================================
+
+async function renderPendingExpenses(){
+  const el=document.getElementById('pending-expenses-content');
+  if(!el) return;
+  el.innerHTML=`<div style="padding:40px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">Loading…</div>`;
+  let pending=[];
+  try{
+    pending=await api('GET','/pending-expenses');
+  } catch(e){
+    el.innerHTML=`<div class="empty-state"><div class="empty-title">Failed to load</div><div class="empty-sub">${e.message}</div></div>`;
+    return;
+  }
+  state.pendingExpenses=pending;
+  updatePendingBadge();
+
+  if(pending.length===0){
+    el.innerHTML=`<div class="empty-state">
+      <div class="empty-title">No pending receipts</div>
+      <div class="empty-sub">Click <strong>Import from Drive</strong> above to pull a batch of receipts from a shared folder. Claude will read each one and drop them here for review.</div>
+    </div>`;
+    return;
+  }
+
+  const sub=document.getElementById('pending-exp-sub');
+  if(sub) sub.textContent=`${pending.length} receipt${pending.length===1?'':'s'} waiting for review`;
+
+  // Batch approve bar — only shown when more than one pending item
+  const batchBar=pending.length>1?`
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Batch Actions</div>
+      <span style="font-size:11px;color:var(--text3)">Apply the same values to all pending:</span>
+      <select class="form-select" id="pe-batch-proj" style="padding:5px 9px;font-size:11px;max-width:220px">
+        <option value="">— project —</option>
+        ${state.projects.filter(pr=>!pr.archived&&pr.status!=='complete'&&!pr.payoutsFinalized).map(pr=>`<option value="${pr.id}" ${state.bulkImportDefaultProject===pr.id?'selected':''}>${pr.name}</option>`).join('')}
+      </select>
+      <select class="form-select" id="pe-batch-pay" style="padding:5px 9px;font-size:11px;max-width:180px">
+        <option value="company">Company card</option>
+        <option value="reimbursement">Reimbursement</option>
+      </select>
+      <button class="btn btn-sm btn-primary" onclick="_peApproveAll()" style="margin-left:auto">
+        Approve All (${pending.length})
+      </button>
+    </div>
+  `:'';
+
+  el.innerHTML=batchBar+pending.map(p=>_renderPendingExpenseCard(p)).join('');
+}
+
+async function _peApproveAll(){
+  const projectId=document.getElementById('pe-batch-proj')?.value;
+  const paymentType=document.getElementById('pe-batch-pay')?.value||'company';
+  if(!projectId){ notify('Pick a project for the batch'); return; }
+  const submittedBy=state.bulkImportDefaultSubmitter||auth.userId;
+  const pending=state.pendingExpenses||[];
+  const toProcess=pending.filter(p=>p.amount!=null&&p.amount>0);
+  if(!toProcess.length){ notify('No pending expenses have an amount set — review individually first'); return; }
+  const skipped=pending.length-toProcess.length;
+  const msg=`Approve ${toProcess.length} pending expense${toProcess.length===1?'':'s'} to project "${state.projects.find(p=>p.id===projectId)?.name}"?${skipped>0?` (${skipped} will be skipped due to missing amount)`:''}`;
+  if(!confirm(msg)) return;
+
+  let success=0, failed=0;
+  for(const p of toProcess){
+    try{
+      const expense=await api('POST','/pending-expenses/'+p.id+'/approve',{
+        projectId, submittedBy, paymentType,
+      });
+      if(expense&&expense.id) state.expenses.push(expense);
+      success++;
+    } catch(e){
+      console.error('Approve failed for',p.id,e.message);
+      failed++;
+    }
+  }
+  state.pendingExpenses=state.pendingExpenses.filter(p=>!toProcess.some(tp=>tp.id===p.id&&failed===0));
+  notify(`Approved ${success}${failed?` · ${failed} failed`:''} ✓`);
+  syncDealExpenses();
+  renderPendingExpenses();
+}
+
+function _renderPendingExpenseCard(p){
+  const confColor={high:'var(--green)',medium:'var(--gold)',low:'var(--red)'}[p.aiConfidence]||'var(--text3)';
+  const confLabel={high:'High confidence',medium:'Review carefully',low:'Low confidence — verify'}[p.aiConfidence]||'';
+  const ts=p.createdAt?new Date(p.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'';
+  return`<div class="pe-card" data-id="${p.id}" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px">
+    <!-- Header -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+          <span style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--text)">${p.vendor||p.subject||'Receipt'}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;padding:2px 7px;border-radius:4px;background:${confColor}22;color:${confColor}">${confLabel}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text3)">From ${p.senderName||p.senderEmail||'unknown'} · ${ts}</div>
+      </div>
+      ${p.receiptUrl?`<a href="${p.receiptUrl}" target="_blank" rel="noreferrer" style="color:var(--gold);font-size:11px;font-family:'DM Mono',monospace;text-decoration:none;padding:5px 10px;border:1px solid var(--border);border-radius:6px;white-space:nowrap;margin-left:12px">View receipt ↗</a>`:''}
+    </div>
+
+    <!-- Editable fields -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Vendor</label>
+        <input class="form-input" style="padding:6px 10px;font-size:12px" value="${(p.vendor||'').replace(/"/g,'&quot;')}" onblur="_pePatch('${p.id}','vendor',this.value)">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Amount</label>
+        <input class="form-input" type="number" step="0.01" min="0" style="padding:6px 10px;font-size:12px;font-family:'DM Mono',monospace" value="${p.amount||''}" onblur="_pePatch('${p.id}','amount',parseFloat(this.value)||null)">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Date</label>
+        <input class="form-input" type="date" style="padding:6px 10px;font-size:12px" value="${p.expenseDate||''}" onblur="_pePatch('${p.id}','expenseDate',this.value)">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Category</label>
+        <select class="form-select" style="padding:6px 10px;font-size:12px" onchange="_pePatch('${p.id}','category',this.value)">
+          ${['software','equipment','travel','meals','contractor','supplies','shipping','marketing','other'].map(c=>`<option value="${c}" ${p.category===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
+    ${p.suggestedNotes?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin-bottom:12px;padding:6px 10px;background:var(--bg3);border-radius:6px">${p.suggestedNotes}</div>`:''}
+
+    <!-- Approval controls -->
+    <div style="display:grid;grid-template-columns:2fr 1.5fr 1fr auto auto;gap:10px;align-items:end">
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Assign to Project</label>
+        <select class="form-select" id="pe-proj-${p.id}" style="padding:6px 10px;font-size:12px">
+          <option value="">— select —</option>
+          ${state.projects.filter(pr=>!pr.archived&&pr.status!=='complete'&&!pr.payoutsFinalized).map(pr=>`<option value="${pr.id}" ${state.bulkImportDefaultProject===pr.id?'selected':''}>${pr.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Submitted By</label>
+        <select class="form-select" id="pe-sub-${p.id}" style="padding:6px 10px;font-size:12px">
+          ${state.team.filter(m=>m.active!==false).map(m=>`<option value="${m.id}" ${m.id===(state.bulkImportDefaultSubmitter||auth.userId)?'selected':''}>${m.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Pay Type</label>
+        <select class="form-select" id="pe-pay-${p.id}" style="padding:6px 10px;font-size:12px">
+          <option value="company">Company card</option>
+          <option value="reimbursement">Reimbursement</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="_peApprove('${p.id}')" style="padding:7px 14px">Approve</button>
+      <button class="btn btn-sm" onclick="_peReject('${p.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.35);padding:7px 12px">Reject</button>
+    </div>
+  </div>`;
+}
+
+async function _pePatch(id,field,value){
+  try{
+    await api('PATCH','/pending-expenses/'+id,{[field]:value});
+    const entry=state.pendingExpenses?.find(p=>p.id===id);
+    if(entry) entry[field]=value;
+  } catch(e){ notify('Save failed: '+e.message); }
+}
+
+async function _peApprove(id){
+  const entry=state.pendingExpenses?.find(p=>p.id===id);
+  if(!entry) return;
+  if(entry.amount==null||entry.amount<=0){ notify('Enter an amount first'); return; }
+  const projectId=document.getElementById('pe-proj-'+id)?.value;
+  const submittedBy=document.getElementById('pe-sub-'+id)?.value;
+  const paymentType=document.getElementById('pe-pay-'+id)?.value||'company';
+  if(!projectId){ notify('Select a project'); return; }
+  if(!submittedBy){ notify('Select a submitter'); return; }
+  try{
+    const expense=await api('POST','/pending-expenses/'+id+'/approve',{
+      projectId, submittedBy, paymentType,
+    });
+    if(expense&&expense.id) state.expenses.push(expense);
+    state.pendingExpenses=state.pendingExpenses.filter(p=>p.id!==id);
+    notify('Expense approved ✓');
+    renderPendingExpenses();
+    syncDealExpenses();
+  } catch(e){ notify('Approve failed: '+e.message); }
+}
+
+async function _peReject(id){
+  const reason=prompt('Reject reason (optional):')||'';
+  try{
+    await api('POST','/pending-expenses/'+id+'/reject',{reason});
+    state.pendingExpenses=state.pendingExpenses.filter(p=>p.id!==id);
+    notify('Rejected');
+    renderPendingExpenses();
+  } catch(e){ notify('Reject failed: '+e.message); }
+}
+
+function updatePendingBadge(){
+  const count=(state.pendingExpenses||[]).length;
+  const badge=document.getElementById('pending-badge');
+  if(!badge) return;
+  if(count>0){
+    badge.textContent=count;
+    badge.style.display='';
+  } else {
+    badge.style.display='none';
+  }
+}
+
+// ── Bulk Import Receipts from Drive ───────────────────────────────────────────
+
+let _bulkPreviewCache=null;
+
+function openBulkImportModal(){
+  // Populate project + submitter dropdowns fresh
+  const projSel=document.getElementById('bi-default-project');
+  if(projSel){
+    const active=state.projects.filter(p=>!p.archived&&p.status!=='complete'&&!p.payoutsFinalized);
+    projSel.innerHTML='<option value="">— none (assign per-receipt during review) —</option>'+
+      active.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  }
+  const subSel=document.getElementById('bi-default-submitter');
+  if(subSel){
+    subSel.innerHTML=state.team.filter(m=>m.active!==false).map(m=>
+      `<option value="${m.id}" ${m.id===auth.userId?'selected':''}>${m.name}</option>`
+    ).join('');
+  }
+  document.getElementById('bi-folder-url').value='';
+  _bulkImportReset();
+  document.getElementById('bulk-import-modal').classList.add('open');
+}
+
+function _bulkImportReset(){
+  document.getElementById('bi-step-folder').style.display='';
+  document.getElementById('bi-step-preview').style.display='none';
+  document.getElementById('bi-step-progress').style.display='none';
+  document.getElementById('bi-step-results').style.display='none';
+  _bulkPreviewCache=null;
+}
+
+async function _bulkImportPreview(){
+  const folderUrl=document.getElementById('bi-folder-url').value.trim();
+  if(!folderUrl){ notify('Paste a Drive folder URL or ID'); return; }
+
+  // Show loading state inline on button
+  const previewBtn=event?.target;
+  const originalText=previewBtn?.textContent;
+  if(previewBtn){ previewBtn.disabled=true; previewBtn.textContent='Loading…'; }
+
+  try{
+    const result=await api('POST','/expenses/bulk-preview',{folderUrl});
+    _bulkPreviewCache=result;
+    _renderBulkPreview(result);
+  } catch(e){
+    notify('Preview failed: '+e.message);
+    if(previewBtn){ previewBtn.disabled=false; previewBtn.textContent=originalText||'Preview Folder'; }
+  }
+}
+
+function _renderBulkPreview(result){
+  document.getElementById('bi-step-folder').style.display='none';
+  document.getElementById('bi-step-preview').style.display='';
+
+  const info=document.getElementById('bi-preview-info');
+  info.innerHTML=`<div style="display:flex;align-items:center;gap:10px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+    <div>
+      <div style="font-weight:600;color:var(--text)">${result.folderName}</div>
+      <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">
+        ${result.files.length} receipt-eligible file${result.files.length===1?'':'s'}${result.skipped>0?` · ${result.skipped} skipped (not image/PDF)`:''}
+      </div>
+    </div>
+  </div>`;
+
+  const list=document.getElementById('bi-preview-files');
+  if(result.files.length===0){
+    list.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">No images or PDFs found in this folder</div>`;
+    document.getElementById('bi-process-btn').disabled=true;
+  } else {
+    list.innerHTML=result.files.map(f=>{
+      const icon=f.mimeType==='application/pdf'
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+      const kb=f.size?Math.round(Number(f.size)/1024):null;
+      return`<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:11px">
+        ${icon}
+        <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)">${f.name}</div>
+        ${kb?`<div style="font-family:'DM Mono',monospace;color:var(--text3);font-size:10px">${kb}KB</div>`:''}
+      </div>`;
+    }).join('');
+    document.getElementById('bi-process-btn').disabled=false;
+    document.getElementById('bi-process-btn').textContent=`Process ${result.files.length} Receipt${result.files.length===1?'':'s'}`;
+  }
+}
+
+async function _bulkImportProcess(){
+  if(!_bulkPreviewCache||!_bulkPreviewCache.files.length) return;
+
+  document.getElementById('bi-step-preview').style.display='none';
+  document.getElementById('bi-step-progress').style.display='';
+  document.getElementById('bi-progress-label').textContent=`Processing ${_bulkPreviewCache.files.length} receipt${_bulkPreviewCache.files.length===1?'':'s'}…`;
+  document.getElementById('bi-progress-sub').textContent=`Claude is reading each receipt. This typically takes 3–5 seconds per file.`;
+
+  const defaultProjectId=document.getElementById('bi-default-project').value||null;
+  const submittedBy=document.getElementById('bi-default-submitter').value||null;
+
+  try{
+    const result=await api('POST','/expenses/bulk-import',{
+      fileIds: _bulkPreviewCache.files.map(f=>f.id),
+      defaultProjectId,
+      submittedBy,
+    });
+    // Remember the default project for the next review session
+    state.bulkImportDefaultProject=defaultProjectId;
+    state.bulkImportDefaultSubmitter=submittedBy;
+    _showBulkImportResults(result);
+  } catch(e){
+    notify('Import failed: '+e.message);
+    document.getElementById('bi-step-progress').style.display='none';
+    document.getElementById('bi-step-preview').style.display='';
+  }
+}
+
+function _showBulkImportResults(result){
+  document.getElementById('bi-step-progress').style.display='none';
+  document.getElementById('bi-step-results').style.display='';
+
+  const summary=document.getElementById('bi-results-summary');
+  const proc=result.processed||[];
+  const extractedCount=proc.filter(p=>p.amount!=null).length;
+  summary.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:600;color:var(--green)">
+        ${proc.length} receipt${proc.length===1?'':'s'} imported
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">
+      AI extracted an amount from ${extractedCount} of ${proc.length} ·
+      review and approve in the Pending queue below
+    </div>
+  `;
+
+  const failed=result.failed||[];
+  if(failed.length){
+    const el=document.getElementById('bi-results-failed');
+    el.style.display='';
+    el.innerHTML=`
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;color:var(--red)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span style="font-size:12px;font-weight:600">${failed.length} failed</span>
+      </div>
+      <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;max-height:100px;overflow-y:auto">
+        ${failed.map(f=>`<div>${f.fileId}: ${f.error}</div>`).join('')}
+      </div>
+    `;
+  }
+}
+
+function _bulkImportDone(){
+  closeModal('bulk-import-modal');
+  renderPendingExpenses();
+}
+
+// ============================================================
+//  RUN PAYROLL
+// ============================================================
+
+async function renderPayrollView(){
+  const el=document.getElementById('payroll-content');
+  if(!el) return;
+  if(auth.role!=='admin'){
+    el.innerHTML=`<div class="empty-state"><div class="empty-title">Admin access required</div></div>`;
+    return;
+  }
+  // Initialize date range to current month if not set
+  if(!state.payrollFrom||!state.payrollTo){
+    const now=new Date();
+    state.payrollFrom=new Date(now.getFullYear(),now.getMonth(),1).toISOString().split('T')[0];
+    state.payrollTo  =new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().split('T')[0];
+  }
+  el.innerHTML=`
+    <!-- Date range picker -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:20px;display:flex;gap:16px;align-items:end;flex-wrap:wrap">
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Period Start</label>
+        <input class="form-input" type="date" id="pr-from" value="${state.payrollFrom}" style="padding:7px 12px;font-size:12px">
+      </div>
+      <div>
+        <label style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Period End</label>
+        <input class="form-input" type="date" id="pr-to" value="${state.payrollTo}" style="padding:7px 12px;font-size:12px">
+      </div>
+      <button class="btn btn-primary" onclick="_loadPayroll()" style="padding:9px 18px">Load Period</button>
+      <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+        ${['This Month','Last Month','This Quarter'].map((q,i)=>`<button class="btn btn-sm" onclick="_payrollQuickRange(${i})">${q}</button>`).join('')}
+      </div>
+    </div>
+    <div id="payroll-body"></div>
+  `;
+  await _loadPayroll();
+}
+
+function _payrollQuickRange(idx){
+  const now=new Date();
+  let from,to;
+  if(idx===0){
+    from=new Date(now.getFullYear(),now.getMonth(),1);
+    to=new Date(now.getFullYear(),now.getMonth()+1,0);
+  } else if(idx===1){
+    from=new Date(now.getFullYear(),now.getMonth()-1,1);
+    to=new Date(now.getFullYear(),now.getMonth(),0);
+  } else {
+    const q=Math.floor(now.getMonth()/3);
+    from=new Date(now.getFullYear(),q*3,1);
+    to=new Date(now.getFullYear(),q*3+3,0);
+  }
+  state.payrollFrom=from.toISOString().split('T')[0];
+  state.payrollTo  =to.toISOString().split('T')[0];
+  document.getElementById('pr-from').value=state.payrollFrom;
+  document.getElementById('pr-to').value=state.payrollTo;
+  _loadPayroll();
+}
+
+async function _loadPayroll(){
+  const fromEl=document.getElementById('pr-from');
+  const toEl=document.getElementById('pr-to');
+  if(fromEl&&toEl){
+    state.payrollFrom=fromEl.value;
+    state.payrollTo=toEl.value;
+  }
+  const body=document.getElementById('payroll-body');
+  body.innerHTML=`<div style="padding:40px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">Loading unpaid items…</div>`;
+  let result;
+  try{
+    result=await api('GET',`/payroll/unpaid?from=${state.payrollFrom}&to=${state.payrollTo}`);
+  } catch(e){
+    body.innerHTML=`<div class="empty-state"><div class="empty-title">Failed to load</div><div class="empty-sub">${e.message}</div></div>`;
+    return;
+  }
+  state.payrollData=result;
+  // Initialize selected set — all selected by default
+  state.payrollSelected=new Set();
+  (result.members||[]).forEach(m=>m.items.forEach(it=>state.payrollSelected.add(it.payKey)));
+  _renderPayrollBody();
+}
+
+function _renderPayrollBody(){
+  const body=document.getElementById('payroll-body');
+  const data=state.payrollData||{members:[]};
+  if(!data.members||data.members.length===0){
+    body.innerHTML=`<div class="empty-state">
+      <div class="empty-title">Nothing to pay</div>
+      <div class="empty-sub">No unpaid production pool or fees for ${data.from} – ${data.to}</div>
+    </div>`;
+    return;
+  }
+
+  const selectedTotal=data.members.reduce((s,m)=>s+m.items.filter(it=>state.payrollSelected.has(it.payKey)).reduce((ss,it)=>ss+it.amount,0),0);
+  const selectedCount=Array.from(state.payrollSelected).length;
+
+  body.innerHTML=`
+    <!-- Batch actions -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 20px;margin-bottom:18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:200px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Selected Total</div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:600;color:var(--green)">${fmt(selectedTotal)}</div>
+        <div style="font-size:11px;color:var(--text3)">${selectedCount} line item${selectedCount===1?'':'s'} across ${data.members.filter(m=>m.items.some(it=>state.payrollSelected.has(it.payKey))).length} member${data.members.length===1?'':'s'}</div>
+      </div>
+      <button class="btn btn-sm" onclick="_payrollToggleAll(true)">Select All</button>
+      <button class="btn btn-sm" onclick="_payrollToggleAll(false)">Clear</button>
+      <button class="btn btn-primary" onclick="_payrollGenerateDocx()" ${selectedCount===0?'disabled':''} style="padding:9px 16px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Generate .docx
+      </button>
+      <button class="btn btn-primary" onclick="_payrollMarkPaid()" ${selectedCount===0?'disabled':''} style="padding:9px 16px;background:var(--green);border-color:var(--green)">
+        Mark Selected Paid
+      </button>
+    </div>
+
+    <!-- Per-member cards -->
+    ${data.members.map(m=>{
+      const mem=state.team.find(tm=>tm.id===m.memberId);
+      const selAmt=m.items.filter(it=>state.payrollSelected.has(it.payKey)).reduce((s,it)=>s+it.amount,0);
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">
+        <!-- Member header -->
+        <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+          <div class="user-avatar" style="background:${mem?.color||'#555'};width:36px;height:36px;font-size:13px">${m.memberName.split(' ').map(n=>n[0]).join('')}</div>
+          <div style="flex:1">
+            <div style="font-size:14px;font-weight:600;color:var(--text)">${m.memberName}</div>
+            <div style="font-size:10px;color:var(--text3)">${m.items.length} line item${m.items.length===1?'':'s'} · Total unpaid: ${fmt(m.total)}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Selected</div>
+            <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:var(--green)">${fmt(selAmt)}</div>
+          </div>
+        </div>
+        <!-- Items table -->
+        <div style="display:grid;grid-template-columns:40px 1fr 100px 120px;padding:8px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+          <span></span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Item</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Type</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--green);text-align:right">Amount</span>
+        </div>
+        ${m.items.map(it=>{
+          const sel=state.payrollSelected.has(it.payKey);
+          return`<div style="display:grid;grid-template-columns:40px 1fr 100px 120px;padding:10px 20px;border-bottom:1px solid var(--border);align-items:center">
+            <input type="checkbox" ${sel?'checked':''} onchange="_payrollToggle('${it.payKey}')" style="cursor:pointer">
+            <span style="font-size:12px;color:var(--text)">${it.label}</span>
+            <span><span class="task-tag ${it.type==='production'?'priority-low':'priority-med'}">${it.type}</span></span>
+            <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--green);text-align:right">${fmt(it.amount)}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function _payrollToggle(key){
+  if(state.payrollSelected.has(key)) state.payrollSelected.delete(key);
+  else state.payrollSelected.add(key);
+  _renderPayrollBody();
+}
+
+function _payrollToggleAll(select){
+  state.payrollSelected=new Set();
+  if(select&&state.payrollData){
+    state.payrollData.members.forEach(m=>m.items.forEach(it=>state.payrollSelected.add(it.payKey)));
+  }
+  _renderPayrollBody();
+}
+
+async function _payrollGenerateDocx(){
+  const data=state.payrollData;
+  if(!data) return;
+  const members=data.members.map(m=>{
+    const items=m.items.filter(it=>state.payrollSelected.has(it.payKey));
+    const total=items.reduce((s,it)=>s+it.amount,0);
+    return{memberId:m.memberId,memberName:m.memberName,items,total};
+  }).filter(m=>m.items.length>0);
+  if(!members.length){notify('Nothing selected');return;}
+  notify('Generating pay stubs…');
+  try{
+    const { files }=await api('POST','/payroll/generate-docx',{
+      from:data.from, to:data.to, members,
+    });
+    for(const f of files||[]){
+      const bin=atob(f.base64);
+      const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url; a.download=f.filename;
+      document.body.appendChild(a); a.click();
+      setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},200);
+    }
+    notify(`Generated ${files.length} pay stub${files.length===1?'':'s'} ✓`);
+  } catch(e){notify('Generation failed: '+e.message);}
+}
+
+async function _payrollMarkPaid(){
+  const data=state.payrollData;
+  if(!data) return;
+  const items=[];
+  data.members.forEach(m=>{
+    m.items.forEach(it=>{
+      if(state.payrollSelected.has(it.payKey)){
+        items.push({
+          memberId:m.memberId, memberName:m.memberName,
+          payKey:it.payKey, amount:it.amount, type:it.type,
+          projectId:it.projectId, projectName:it.projectName,
+          label:it.label,
+        });
+      }
+    });
+  });
+  if(!items.length){notify('Nothing selected');return;}
+  if(!confirm(`Mark ${items.length} item${items.length===1?'':'s'} as paid? This will create pay_log entries and cannot be easily undone.`)) return;
+  try{
+    const result=await api('POST','/payroll/mark-paid',{items});
+    notify(`Marked ${result.processed} item${result.processed===1?'':'s'} as paid ✓`);
+    // Refresh both local pay_status and the list
+    if(typeof refreshTable==='function'){refreshTable('pay-status');refreshTable('pay-log');}
+    _loadPayroll();
+  } catch(e){notify('Failed: '+e.message);}
 }
 
 // ============================================================
