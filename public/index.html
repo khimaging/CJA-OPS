@@ -3076,7 +3076,7 @@ function _renderPendingExpenseCard(p){
       <div>
         <label style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Category</label>
         <select class="form-select" style="padding:6px 10px;font-size:12px" onchange="_pePatch('${p.id}','category',this.value)">
-          ${['software','equipment','travel','meals','contractor','supplies','shipping','marketing','other'].map(c=>`<option value="${c}" ${p.category===c?'selected':''}>${c}</option>`).join('')}
+          ${['software','contractor','assets','advertising','printing','travel','equipment','other'].map(c=>`<option value="${c}" ${p.category===c?'selected':''}>${c}</option>`).join('')}
         </select>
       </div>
     </div>
