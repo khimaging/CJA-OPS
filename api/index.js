@@ -891,7 +891,9 @@ app.post('/api/pending-expenses/:id/approve', requireAuth, async (req, res) => {
     }
 
     const description = req.body.description || pending.vendor || pending.subject || 'Receipt';
-    const category    = req.body.category    || pending.category || 'other';
+    const ALLOWED_CATEGORIES = ['software','contractor','assets','advertising','printing','travel','equipment','other'];
+    const rawCategory = req.body.category || pending.category || 'other';
+    const category = ALLOWED_CATEGORIES.includes(rawCategory) ? rawCategory : 'other';
     const amount      = req.body.amount != null ? req.body.amount : pending.amount;
     const date        = req.body.date        || pending.expense_date || new Date().toISOString().split('T')[0];
     if (amount == null) return res.status(400).json({ error: 'amount is required' });
@@ -1002,7 +1004,7 @@ async function extractReceiptDetails({ base64, mimeType, emailSubject, emailBody
   const Anthropic = require('@anthropic-ai/sdk');
   const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const EXPENSE_CATEGORIES = ['software','equipment','travel','meals','contractor','supplies','shipping','marketing','other'];
+  const EXPENSE_CATEGORIES = ['software','contractor','assets','advertising','printing','travel','equipment','other'];
 
   const systemPrompt = `You are an accounting assistant. Extract expense details from a receipt image.
 Return ONLY a JSON object with these fields (no markdown, no prose):
