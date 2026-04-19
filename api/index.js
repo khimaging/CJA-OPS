@@ -658,6 +658,635 @@ app.delete('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── PENDING EXPENSES (bulk import from Drive) ────────────────────────────────
+
+/**
+ * Preview a Drive folder — lists all receipt-eligible files so the UI can show
+ * a count before the user confirms processing.
+ * Body: { folderUrl: "https://drive.google.com/drive/folders/..." }
+ * Returns: { folderId, folderName, files: [{ id, name, mimeType, size }], skipped }
+ */
+app.post('/api/expenses/bulk-preview', requireAuth, async (req, res) => {
+  try {
+    const { folderUrl } = req.body || {};
+    if (!folderUrl) return res.status(400).json({ error: 'folderUrl is required' });
+
+    const folderId = parseDriveFolderId(folderUrl);
+    if (!folderId) return res.status(400).json({ error: 'Could not parse folder ID from URL' });
+
+    const drive = await getDriveClient();
+
+    // Get folder name for UI display
+    let folderName = folderId;
+    try {
+      const meta = await drive.files.get({ fileId: folderId, fields: 'name', supportsAllDrives: true });
+      folderName = meta.data.name || folderId;
+    } catch (ex) {
+      return res.status(404).json({ error: 'Folder not found or service account does not have access' });
+    }
+
+    // List files in folder (non-recursive for v1)
+    const listResp = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id,name,mimeType,size)',
+      pageSize: 200,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    const allFiles = listResp.data.files || [];
+    const files = allFiles.filter(f =>
+      f.mimeType && (f.mimeType.startsWith('image/') || f.mimeType === 'application/pdf')
+    );
+    const skipped = allFiles.length - files.length;
+
+    res.json({ folderId, folderName, files, skipped });
+  } catch (e) {
+    console.error('Bulk preview error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Process a batch of Drive file IDs — for each: download, AI-extract,
+ * create a pending_expenses row.
+ * Body: { fileIds: [string], defaultProjectId?: string, submittedBy?: string }
+ * Returns: { processed: [{fileId, pendingId, vendor, amount, error?}], failed: [...] }
+ */
+app.post('/api/expenses/bulk-import', requireAuth, async (req, res) => {
+  try {
+    const { fileIds, defaultProjectId, submittedBy } = req.body || {};
+    if (!Array.isArray(fileIds) || !fileIds.length) {
+      return res.status(400).json({ error: 'fileIds array required' });
+    }
+    if (fileIds.length > 50) {
+      return res.status(400).json({ error: 'Maximum 50 files per batch' });
+    }
+
+    const drive = await getDriveClient();
+    const processed = [];
+    const failed = [];
+
+    // Process in series — Vision calls are sequential to avoid rate limiting
+    for (const fileId of fileIds) {
+      try {
+        // Get metadata
+        const metaResp = await drive.files.get({
+          fileId,
+          fields: 'id,name,mimeType,size,webViewLink,createdTime',
+          supportsAllDrives: true,
+        });
+        const meta = metaResp.data;
+
+        // Download file bytes
+        const bytesResp = await drive.files.get(
+          { fileId, alt: 'media', supportsAllDrives: true },
+          { responseType: 'arraybuffer' }
+        );
+        const base64 = Buffer.from(bytesResp.data).toString('base64');
+
+        // AI-extract
+        let extracted = { vendor: null, amount: null, expense_date: null, category: null, notes: null, confidence: 'low' };
+        if (process.env.ANTHROPIC_API_KEY) {
+          try {
+            extracted = await extractReceiptDetails({
+              base64,
+              mimeType: meta.mimeType,
+              emailSubject: meta.name,
+              emailBody: '',
+            });
+          } catch (ex) {
+            console.error(`AI extraction failed for ${meta.name}:`, ex.message);
+          }
+        }
+
+        // Make Drive file shareable so the review link works
+        try {
+          await drive.permissions.create({
+            fileId,
+            requestBody: { role: 'reader', type: 'anyone' },
+            supportsAllDrives: true,
+          });
+        } catch (ex) {
+          // Non-fatal: link may still work if user has Drive access
+        }
+
+        // Create pending row
+        const { data, error } = await supabase.from('pending_expenses').insert({
+          source: 'drive-bulk',
+          sender_email: null,
+          sender_name: null,
+          subject: meta.name,
+          body_snippet: `Imported from Drive${defaultProjectId ? ` · default project pre-set` : ''}`,
+          vendor: extracted.vendor,
+          amount: extracted.amount,
+          expense_date: extracted.expense_date,
+          category: extracted.category,
+          suggested_notes: extracted.notes,
+          ai_confidence: extracted.confidence,
+          receipt_url: meta.webViewLink,
+          receipt_filename: meta.name,
+          status: 'pending',
+        }).select().single();
+        if (error) throw error;
+
+        processed.push({
+          fileId,
+          pendingId: data.id,
+          filename: meta.name,
+          vendor: extracted.vendor,
+          amount: extracted.amount,
+          confidence: extracted.confidence,
+        });
+      } catch (ex) {
+        console.error(`Bulk import failed for file ${fileId}:`, ex.message);
+        failed.push({ fileId, error: ex.message });
+      }
+    }
+
+    // If defaultProjectId was provided, tag newly created rows (stored in suggested_notes for now;
+    // the UI pre-fills the project dropdown with this)
+    if (defaultProjectId && processed.length) {
+      // We don't have a project_id column on pending_expenses by design (project is assigned at approval).
+      // The UI honors defaultProjectId client-side to pre-fill the dropdowns after bulk import.
+    }
+
+    await auditLog(req.user, 'BULK_IMPORT_RECEIPTS', 'pending_expenses', null, {
+      processed: processed.length, failed: failed.length,
+    });
+
+    res.json({ processed, failed, defaultProjectId });
+  } catch (e) {
+    console.error('Bulk import error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Parse a Drive folder ID from either a full URL or raw ID
+function parseDriveFolderId(input) {
+  if (!input) return null;
+  const trimmed = String(input).trim();
+  // Bare ID
+  if (/^[a-zA-Z0-9_-]{20,}$/.test(trimmed)) return trimmed;
+  // URL forms:
+  //   https://drive.google.com/drive/folders/<ID>
+  //   https://drive.google.com/drive/folders/<ID>?usp=sharing
+  //   https://drive.google.com/drive/u/0/folders/<ID>
+  const m = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  // id= query param fallback
+  const q = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (q) return q[1];
+  return null;
+}
+
+app.get('/api/pending-expenses', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('pending_expenses')
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data.map(mapPendingExpense));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/pending-expenses/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.vendor         !== undefined) updates.vendor          = req.body.vendor;
+    if (req.body.amount         !== undefined) updates.amount          = req.body.amount;
+    if (req.body.expenseDate    !== undefined) updates.expense_date    = req.body.expenseDate;
+    if (req.body.category       !== undefined) updates.category        = req.body.category;
+    if (req.body.suggestedNotes !== undefined) updates.suggested_notes = req.body.suggestedNotes;
+    const { data, error } = await supabase
+      .from('pending_expenses')
+      .update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapPendingExpense(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Promote a pending expense into the real expenses table.
+ * Body: { projectId, submittedBy, paymentType, description?, category?, amount?, date? }
+ * The pending row gets marked approved with a reference to the new expense.
+ */
+app.post('/api/pending-expenses/:id/approve', requireAuth, async (req, res) => {
+  try {
+    const { data: pending, error: fetchErr } = await supabase
+      .from('pending_expenses').select('*').eq('id', req.params.id).single();
+    if (fetchErr || !pending) return res.status(404).json({ error: 'Pending expense not found' });
+    if (pending.status !== 'pending') return res.status(400).json({ error: 'Already reviewed' });
+
+    const { projectId, submittedBy, paymentType } = req.body;
+    if (!projectId || !submittedBy || !paymentType) {
+      return res.status(400).json({ error: 'projectId, submittedBy, paymentType required' });
+    }
+    // Block if project is finalized
+    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized').eq('id', projectId).single();
+    if (proj?.payouts_finalized) {
+      return res.status(403).json({ error: `Project "${proj.name}" is finalized — cannot add expenses.` });
+    }
+
+    const description = req.body.description || pending.vendor || pending.subject || 'Receipt';
+    const category    = req.body.category    || pending.category || 'other';
+    const amount      = req.body.amount != null ? req.body.amount : pending.amount;
+    const date        = req.body.date        || pending.expense_date || new Date().toISOString().split('T')[0];
+    if (amount == null) return res.status(400).json({ error: 'amount is required' });
+
+    const { data: expense, error: insErr } = await supabase.from('expenses').insert({
+      description, amount, project_id: projectId, category, date,
+      submitted_by: submittedBy, payment_type: paymentType,
+      receipt_url: pending.receipt_url, reimbursed: false,
+    }).select().single();
+    if (insErr) throw insErr;
+
+    await supabase.from('pending_expenses').update({
+      status: 'approved',
+      reviewed_by: req.user.sub,
+      reviewed_at: new Date().toISOString(),
+      promoted_expense_id: expense.id,
+    }).eq('id', req.params.id);
+
+    await auditLog(req.user, 'APPROVE_PENDING_EXPENSE', 'pending_expenses', req.params.id, {
+      expense_id: expense.id, amount, description,
+    });
+
+    res.json(mapExpense(expense));
+  } catch (e) {
+    console.error('Approve error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/pending-expenses/:id/reject', requireAuth, async (req, res) => {
+  try {
+    const { error } = await supabase.from('pending_expenses').update({
+      status: 'rejected',
+      reviewed_by: req.user.sub,
+      reviewed_at: new Date().toISOString(),
+      reject_reason: req.body.reason || null,
+    }).eq('id', req.params.id);
+    if (error) throw error;
+    await auditLog(req.user, 'REJECT_PENDING_EXPENSE', 'pending_expenses', req.params.id, { reason: req.body.reason });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DRIVE + AI HELPERS ──────────────────────────────────────────────────────
+
+let _driveClient = null;
+let _driveRootFolderId = null;
+async function getDriveClient() {
+  if (_driveClient) return _driveClient;
+  const { google } = require('googleapis');
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON not set');
+  }
+  const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  const auth = new google.auth.JWT({
+    email: creds.client_email,
+    key: creds.private_key,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  _driveClient = google.drive({ version: 'v3', auth });
+  _driveRootFolderId = process.env.DRIVE_RECEIPTS_ROOT_ID;
+  if (!_driveRootFolderId) throw new Error('DRIVE_RECEIPTS_ROOT_ID not set');
+  return _driveClient;
+}
+
+async function ensureDriveSubfolder(path) {
+  const drive = await getDriveClient();
+  const parts = path.split('/').filter(Boolean);
+  let parentId = _driveRootFolderId;
+  for (const part of parts) {
+    const q = `'${parentId}' in parents and name='${part}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    const list = await drive.files.list({ q, fields: 'files(id,name)' });
+    if (list.data.files && list.data.files.length) {
+      parentId = list.data.files[0].id;
+    } else {
+      const created = await drive.files.create({
+        requestBody: {
+          name: part, mimeType: 'application/vnd.google-apps.folder', parents: [parentId],
+        },
+        fields: 'id',
+      });
+      parentId = created.data.id;
+    }
+  }
+  return parentId;
+}
+
+async function uploadToDrive({ filename, mimeType, base64, subfolder }) {
+  const drive = await getDriveClient();
+  const folderId = await ensureDriveSubfolder(subfolder);
+  const buffer = Buffer.from(base64, 'base64');
+  const { Readable } = require('stream');
+  const stream = Readable.from(buffer);
+  const { data } = await drive.files.create({
+    requestBody: { name: filename, parents: [folderId] },
+    media: { mimeType, body: stream },
+    fields: 'id,webViewLink',
+  });
+  // Make link-shareable
+  await drive.permissions.create({
+    fileId: data.id,
+    requestBody: { role: 'reader', type: 'anyone' },
+  });
+  return { id: data.id, webViewLink: data.webViewLink };
+}
+
+async function extractReceiptDetails({ base64, mimeType, emailSubject, emailBody }) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const EXPENSE_CATEGORIES = ['software','equipment','travel','meals','contractor','supplies','shipping','marketing','other'];
+
+  const systemPrompt = `You are an accounting assistant. Extract expense details from a receipt image.
+Return ONLY a JSON object with these fields (no markdown, no prose):
+{
+  "vendor": string or null,
+  "amount": number or null (total including tax, in USD),
+  "expense_date": string or null (YYYY-MM-DD),
+  "category": one of ${JSON.stringify(EXPENSE_CATEGORIES)} or null,
+  "notes": short string summarizing what was purchased or null,
+  "confidence": "high" | "medium" | "low"
+}
+If you cannot determine a field, use null. Only use "high" confidence when the amount and vendor are clearly legible.`;
+
+  const content = [];
+  if (mimeType === 'application/pdf') {
+    content.push({
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+    });
+  } else {
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: mimeType, data: base64 },
+    });
+  }
+  content.push({
+    type: 'text',
+    text: `Email subject: ${emailSubject || '(none)'}\nEmail body excerpt: ${(emailBody || '').substring(0, 500)}\n\nExtract the receipt details.`,
+  });
+
+  const resp = await client.messages.create({
+    model: 'claude-opus-4-5',
+    max_tokens: 500,
+    system: systemPrompt,
+    messages: [{ role: 'user', content }],
+  });
+
+  const text = resp.content.find(c => c.type === 'text')?.text || '{}';
+  const clean = text.replace(/```json|```/g, '').trim();
+  try {
+    const parsed = JSON.parse(clean);
+    return {
+      vendor:       parsed.vendor || null,
+      amount:       typeof parsed.amount === 'number' ? parsed.amount : null,
+      expense_date: parsed.expense_date || null,
+      category:     parsed.category || null,
+      notes:        parsed.notes || null,
+      confidence:   parsed.confidence || 'low',
+    };
+  } catch {
+    return { vendor: null, amount: null, expense_date: null, category: null, notes: null, confidence: 'low' };
+  }
+}
+
+// ─── PAYROLL ──────────────────────────────────────────────────────────────────
+
+/**
+ * Return all unpaid line items in a date range, grouped by member.
+ * Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD
+ *
+ * Line items surfaced:
+ *   - Production pool allocations (tasks on projects with linked paid deals, grouped by member)
+ *   - Special fees (deal buckets with assignedTo)
+ *   - Profit share distributions (by month)
+ * Only items WITHOUT a matching pay_status entry marked paid are returned.
+ */
+app.get('/api/payroll/unpaid', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const fromStr = req.query.from;
+    const toStr   = req.query.to;
+    if (!fromStr || !toStr) return res.status(400).json({ error: 'from and to query params required (YYYY-MM-DD)' });
+
+    // Fetch everything we need
+    const [{ data: team }, { data: deals }, { data: projects }, { data: tasks }, { data: payStatus }] = await Promise.all([
+      supabase.from('team_members').select('id,name,role,color,profit_share_pct').eq('active', true),
+      supabase.from('deals').select('*'),
+      supabase.from('projects').select('*'),
+      supabase.from('tasks').select('*'),
+      supabase.from('pay_status').select('*'),
+    ]);
+
+    const paidSet = new Set(payStatus.filter(p => p.paid).map(p => p.pay_key || `${p.project_id}_${p.member_id}`));
+
+    const items = []; // { memberId, memberName, type, label, amount, payKey, projectId?, projectName? }
+
+    // Production pool + special fees per completed+paid project in range
+    for (const proj of projects) {
+      const deal = deals.find(d => d.id === proj.deal_id);
+      if (!deal) continue;
+      if (deal.stage !== 'Closed Won' || deal.invoice_status !== 'paid') continue;
+      if (proj.status !== 'complete') continue;
+      // Only include if project was completed (end_date or close_date) in range
+      // Using close_date as the proxy since project lacks a completed_at
+      const ref = deal.close_date || proj.end_date;
+      if (!ref) continue;
+      const refDate = ref.length === 7 ? ref + '-01' : ref;
+      if (refDate < fromStr || refDate > toStr) continue;
+
+      const projTasks = tasks.filter(t => t.project_id === proj.id);
+      const totalHours = projTasks.reduce((s, t) => s + (t.est_hours || 0), 0);
+      const netRev = Number(deal.value || 0) - Number(deal.expenses || 0);
+      const pb = (deal.buckets || []).find(b => b.name === 'Production Pool');
+      const pool = pb ? netRev * pb.pct / 100 : 0;
+
+      // Production pool — by member hours share
+      if (totalHours > 0 && pool > 0) {
+        const memberHours = {};
+        projTasks.forEach(t => {
+          if (!t.assignee_id) return;
+          memberHours[t.assignee_id] = (memberHours[t.assignee_id] || 0) + (t.est_hours || 0);
+        });
+        for (const [mid, hrs] of Object.entries(memberHours)) {
+          const payKey = `${proj.id}_${mid}`;
+          if (paidSet.has(payKey)) continue;
+          const member = team.find(m => m.id === mid);
+          if (!member) continue;
+          items.push({
+            memberId: mid, memberName: member.name,
+            type: 'production',
+            label: `${proj.name} — production pool (${hrs}h)`,
+            projectId: proj.id, projectName: proj.name,
+            amount: Math.round(pool * (hrs / totalHours) * 100) / 100,
+            payKey,
+          });
+        }
+      }
+
+      // Special fees
+      const fees = (deal.buckets || []).filter(b => b.isPersonal && b.assignedTo);
+      for (const fee of fees) {
+        const amt = netRev * (fee.pct || 0) / 100;
+        if (amt <= 0) continue;
+        const feeKeyBase = fee.name.replace(/\s/g, '_');
+        const payKey = `${proj.id}_fee_${feeKeyBase}_${fee.assignedTo}`;
+        if (paidSet.has(payKey)) continue;
+        const member = team.find(m => m.id === fee.assignedTo);
+        if (!member) continue;
+        items.push({
+          memberId: fee.assignedTo, memberName: member.name,
+          type: 'fee',
+          label: `${proj.name} — ${fee.name}`,
+          projectId: proj.id, projectName: proj.name,
+          amount: Math.round(amt * 100) / 100,
+          payKey,
+        });
+      }
+    }
+
+    // Group by member
+    const grouped = {};
+    for (const it of items) {
+      if (!grouped[it.memberId]) grouped[it.memberId] = { memberId: it.memberId, memberName: it.memberName, items: [], total: 0 };
+      grouped[it.memberId].items.push(it);
+      grouped[it.memberId].total += it.amount;
+    }
+    Object.values(grouped).forEach(g => { g.total = Math.round(g.total * 100) / 100; });
+
+    res.json({ from: fromStr, to: toStr, members: Object.values(grouped) });
+  } catch (e) {
+    console.error('Payroll unpaid error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Batch-mark a list of pay keys as paid and create a pay_log entry for each.
+ * Body: { items: [{ memberId, payKey, amount, projectId?, label }] }
+ */
+app.post('/api/payroll/mark-paid', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { items } = req.body || {};
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array required' });
+
+    const results = [];
+    for (const it of items) {
+      if (!it.payKey || !it.memberId || it.amount == null) continue;
+      // pay_status upsert
+      const parts = it.payKey.split('_');
+      const projectId = it.projectId || parts[0];
+      await supabase.from('pay_status').upsert({
+        pay_key: it.payKey, project_id: projectId, member_id: it.memberId, paid: true,
+      }, { onConflict: 'pay_key' });
+
+      // pay_log entry
+      const member = it.memberName || '';
+      const { data: logRow } = await supabase.from('pay_log').insert({
+        member_id: it.memberId, member_name: member,
+        pay_type: it.type || 'production',
+        amount: it.amount,
+        project_id: projectId,
+        project_name: it.projectName || null,
+        source_key: it.payKey,
+        notes: it.label || 'Payroll batch',
+        is_manual: false,
+        created_by_id: req.user.sub,
+        created_by_name: req.user.name,
+      }).select().single();
+
+      await auditLog(req.user, 'PAYROLL_MARK_PAID', 'pay_status', it.payKey, {
+        amount: it.amount, member_id: it.memberId, project_id: projectId,
+      });
+      results.push({ payKey: it.payKey, payLogId: logRow?.id });
+    }
+
+    res.json({ ok: true, processed: results.length, results });
+  } catch (e) {
+    console.error('Mark paid error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Generate per-member docx pay stubs for a list of items.
+ * Body: { from, to, members: [{ memberName, items: [{ label, amount, type }], total }] }
+ * Returns: { files: [{ memberName, filename, base64 }] }
+ */
+app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { from, to, members } = req.body || {};
+    if (!Array.isArray(members) || !members.length) {
+      return res.status(400).json({ error: 'members array required' });
+    }
+
+    const docx = require('docx');
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, WidthType } = docx;
+
+    const files = [];
+    for (const mem of members) {
+      const rows = [new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Description', bold: true })] })], width: { size: 70, type: WidthType.PERCENTAGE } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Type', bold: true })] })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Amount', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+        ],
+      })];
+      for (const it of (mem.items || [])) {
+        rows.push(new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph(it.label || '')] }),
+            new TableCell({ children: [new Paragraph(it.type || '')] }),
+            new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun(`$${Number(it.amount || 0).toFixed(2)}`)] })] }),
+          ],
+        }));
+      }
+      rows.push(new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Total', bold: true })] })] }),
+          new TableCell({ children: [new Paragraph('')] }),
+          new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `$${Number(mem.total || 0).toFixed(2)}`, bold: true })] })] }),
+        ],
+      }));
+
+      const doc = new Document({
+        sections: [{
+          children: [
+            new Paragraph({ children: [new TextRun({ text: 'Creative Juice Agency', bold: true, size: 32 })] }),
+            new Paragraph({ children: [new TextRun({ text: 'Pay Summary', size: 24 })] }),
+            new Paragraph({ children: [new TextRun({ text: ' ' })] }),
+            new Paragraph({ children: [new TextRun({ text: `Paid to: ${mem.memberName || ''}`, bold: true })] }),
+            new Paragraph({ children: [new TextRun({ text: `Period: ${from || ''} to ${to || ''}` })] }),
+            new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' })}` })] }),
+            new Paragraph({ children: [new TextRun({ text: ' ' })] }),
+            new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } }),
+            new Paragraph({ children: [new TextRun({ text: ' ' })] }),
+            new Paragraph({ children: [new TextRun({ text: 'Thank you for your work.', italics: true })] }),
+          ],
+        }],
+      });
+      const buffer = await Packer.toBuffer(doc);
+      const safe = String(mem.memberName || 'member').replace(/[^A-Za-z0-9_-]/g, '_');
+      files.push({
+        memberName: mem.memberName,
+        filename: `PayStub_${safe}_${from}_to_${to}.docx`,
+        base64: buffer.toString('base64'),
+      });
+    }
+
+    res.json({ files });
+  } catch (e) {
+    console.error('Payroll docx error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── DATA MAPPERS — DB row → frontend object ──────────────────────────────────
 
 function mapTeamMember(m) {
@@ -728,6 +1357,30 @@ function mapExpense(e) {
     paymentType: e.payment_type,
     receiptUrl:  e.receipt_url,
     reimbursed:  e.reimbursed || false,
+  };
+}
+
+function mapPendingExpense(p) {
+  return {
+    id:               p.id,
+    createdAt:        p.created_at,
+    source:           p.source,
+    senderEmail:      p.sender_email,
+    senderName:       p.sender_name,
+    subject:          p.subject,
+    bodySnippet:      p.body_snippet,
+    vendor:           p.vendor,
+    amount:           p.amount,
+    expenseDate:      p.expense_date,
+    category:         p.category,
+    suggestedNotes:   p.suggested_notes,
+    aiConfidence:     p.ai_confidence,
+    receiptUrl:       p.receipt_url,
+    receiptFilename:  p.receipt_filename,
+    status:           p.status,
+    reviewedBy:       p.reviewed_by,
+    reviewedAt:       p.reviewed_at,
+    rejectReason:     p.reject_reason,
   };
 }
 
