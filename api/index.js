@@ -157,6 +157,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
     const [
       teamRes, dealsRes, projectsRes, tasksRes,
       expensesRes, payStatusRes, psStatusRes, payLogRes,
+      clientsRes, delivTypesRes, delivsRes, taskDelivsRes,
     ] = await Promise.all([
       supabase.from('team_members').select('id,name,role,color,profit_share_pct,active,auth_role').order('name'),
       supabase.from('deals').select('*').order('created_at', { ascending: false }),
@@ -166,9 +167,13 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       supabase.from('pay_status').select('*'),
       supabase.from('profit_share_status').select('*'),
       supabase.from('pay_log').select('*').order('paid_at', { ascending: false }).limit(500),
+      supabase.from('clients').select('*').eq('active', true).order('name'),
+      supabase.from('deliverable_types').select('*').eq('active', true).order('name'),
+      supabase.from('deliverables').select('*').order('sort_order'),
+      supabase.from('task_deliverables').select('*'),
     ]);
 
-    for (const r of [teamRes, dealsRes, projectsRes, tasksRes, expensesRes, payStatusRes, psStatusRes, payLogRes]) {
+    for (const r of [teamRes, dealsRes, projectsRes, tasksRes, expensesRes, payStatusRes, psStatusRes, payLogRes, clientsRes, delivTypesRes, delivsRes, taskDelivsRes]) {
       if (r.error) throw r.error;
     }
 
@@ -199,6 +204,10 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       payStatus,
       profitSharePaidStatus,
       payLog:               payLogRes.data || [],
+      clients:              clientsRes.data.map(mapClient),
+      deliverableTypes:     delivTypesRes.data.map(mapDeliverableType),
+      deliverables:         delivsRes.data.map(mapDeliverable),
+      taskDeliverables:     taskDelivsRes.data.map(r => ({ taskId: r.task_id, deliverableId: r.deliverable_id })),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -363,14 +372,26 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
   try {
-    const { title, projectId, assigneeId, dueDate, priority, status, estHours, tag } = req.body;
+    const { title, projectId, assigneeId, dueDate, publishDate, priority, status, estHours, tag, notes, deliverableId } = req.body;
     const { data, error } = await supabase.from('tasks').insert({
       title, project_id: projectId, assignee_id: assigneeId || null,
-      due_date: dueDate || null, priority: priority || 'med',
+      due_date: dueDate || null,
+      publish_date: publishDate || null,
+      priority: priority || 'med',
       status: status || 'todo', est_hours: estHours || 0,
       tag: tag || null,
+      notes: notes || null,
     }).select().single();
     if (error) throw error;
+
+    // Optionally link to a deliverable on create
+    if (deliverableId) {
+      await supabase.from('task_deliverables').insert({
+        task_id: data.id, deliverable_id: deliverableId,
+      });
+      await _recomputeDeliverableStatus(deliverableId);
+    }
+
     res.status(201).json(mapTask(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -388,16 +409,28 @@ app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
       }
     }
     const updates = {};
-    if (req.body.title      !== undefined) updates.title       = req.body.title;
-    if (req.body.projectId  !== undefined) updates.project_id  = req.body.projectId;
-    if (req.body.assigneeId !== undefined) updates.assignee_id = req.body.assigneeId;
-    if (req.body.dueDate    !== undefined) updates.due_date    = req.body.dueDate;
-    if (req.body.priority   !== undefined) updates.priority    = req.body.priority;
-    if (req.body.status     !== undefined) updates.status      = req.body.status;
-    if (req.body.estHours   !== undefined) updates.est_hours   = req.body.estHours;
-    if (req.body.tag        !== undefined) updates.tag         = req.body.tag || null;
+    if (req.body.title       !== undefined) updates.title        = req.body.title;
+    if (req.body.projectId   !== undefined) updates.project_id   = req.body.projectId;
+    if (req.body.assigneeId  !== undefined) updates.assignee_id  = req.body.assigneeId;
+    if (req.body.dueDate     !== undefined) updates.due_date     = req.body.dueDate;
+    if (req.body.publishDate !== undefined) updates.publish_date = req.body.publishDate || null;
+    if (req.body.priority    !== undefined) updates.priority     = req.body.priority;
+    if (req.body.status      !== undefined) updates.status       = req.body.status;
+    if (req.body.estHours    !== undefined) updates.est_hours    = req.body.estHours;
+    if (req.body.tag         !== undefined) updates.tag          = req.body.tag || null;
+    if (req.body.notes       !== undefined) updates.notes        = req.body.notes || null;
     const { data, error } = await supabase.from('tasks').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // If status changed, recompute any linked deliverables
+    if (req.body.status !== undefined) {
+      const { data: links } = await supabase.from('task_deliverables').select('deliverable_id').eq('task_id', req.params.id);
+      for (const l of links || []) {
+        // eslint-disable-next-line no-await-in-loop
+        await _recomputeDeliverableStatus(l.deliverable_id);
+      }
+    }
+
     res.json(mapTask(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1289,7 +1322,473 @@ app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, re
   }
 });
 
-// ─── DATA MAPPERS — DB row → frontend object ──────────────────────────────────
+// ─── CLIENTS ─────────────────────────────────────────────────────────────────
+
+// Levenshtein distance for fuzzy-match safeguard
+function _levenshtein(a, b) {
+  if (!a || !b) return Math.max((a||'').length, (b||'').length);
+  a = a.toLowerCase(); b = b.toLowerCase();
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m+1}, () => new Array(n+1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i-1] === b[j-1]) dp[i][j] = dp[i-1][j-1];
+      else dp[i][j] = 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+
+app.get('/api/clients', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('clients')
+      .select('*')
+      .eq('active', true)
+      .order('name');
+    if (error) throw error;
+    res.json(data.map(mapClient));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Validate a new client name against existing ones.
+ * Returns { exact: {id,name}|null, similar: [{id,name,distance}] }
+ */
+app.post('/api/clients/validate-name', requireAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
+    const { data: existing } = await supabase.from('clients').select('id,name').eq('active', true);
+    const n = name.trim();
+    const exact = existing.find(c => c.name.toLowerCase() === n.toLowerCase());
+    if (exact) return res.json({ exact, similar: [] });
+    const similar = existing
+      .map(c => ({ ...c, distance: _levenshtein(n, c.name) }))
+      .filter(c => c.distance > 0 && c.distance <= 2)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 5);
+    res.json({ exact: null, similar });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/clients', requireAuth, async (req, res) => {
+  try {
+    const { name, notes } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
+    const { data, error } = await supabase.from('clients').insert({
+      name: name.trim(), notes: notes || null, active: true,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Client with this name already exists' });
+      throw error;
+    }
+    await auditLog(req.user, 'CREATE_CLIENT', 'clients', data.id, { name });
+    res.status(201).json(mapClient(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/clients/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name         !== undefined) updates.name          = req.body.name;
+    if (req.body.notes        !== undefined) updates.notes         = req.body.notes;
+    if (req.body.active       !== undefined) updates.active        = req.body.active;
+    if (req.body.portalActive !== undefined) updates.portal_active = req.body.portalActive;
+    if (req.body.pin !== undefined) {
+      if (req.body.pin === null || req.body.pin === '') {
+        updates.pin_hash = null;
+        updates.portal_active = false;
+      } else {
+        const pinStr = String(req.body.pin);
+        if (pinStr.length < 6) return res.status(400).json({ error: 'PIN must be at least 6 digits' });
+        updates.pin_hash = await bcrypt.hash(pinStr, 10);
+      }
+    }
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('clients').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    await auditLog(req.user, 'UPDATE_CLIENT', 'clients', req.params.id, { fields: Object.keys(updates) });
+    res.json(mapClient(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/clients/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    // Soft delete: mark inactive rather than remove
+    const { error } = await supabase.from('clients').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    await auditLog(req.user, 'DELETE_CLIENT', 'clients', req.params.id, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DELIVERABLE TYPES ───────────────────────────────────────────────────────
+
+app.get('/api/deliverable-types', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('deliverable_types').select('*').eq('active', true).order('name');
+    if (error) throw error;
+    res.json(data.map(mapDeliverableType));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/deliverable-types', requireAuth, async (req, res) => {
+  try {
+    const { name, projectId } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
+    const { data, error } = await supabase.from('deliverable_types').insert({
+      name: name.trim(),
+      project_id: projectId || null,
+      active: true,
+    }).select().single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
+      throw error;
+    }
+    res.status(201).json(mapDeliverableType(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name   !== undefined) updates.name   = req.body.name;
+    if (req.body.active !== undefined) updates.active = req.body.active;
+    const { data, error } = await supabase.from('deliverable_types').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapDeliverableType(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/deliverable-types/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    // Soft-delete so historical deliverables still reference a name
+    const { error } = await supabase.from('deliverable_types').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── DELIVERABLES ────────────────────────────────────────────────────────────
+
+app.get('/api/deliverables', requireAuth, async (req, res) => {
+  try {
+    const q = supabase.from('deliverables').select('*').order('sort_order', { ascending: true }).order('created_at');
+    const { projectId } = req.query;
+    if (projectId) q.eq('project_id', projectId);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data.map(mapDeliverable));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/deliverables', requireAuth, async (req, res) => {
+  try {
+    const { projectId, typeId, name, description, publishDate, sortOrder } = req.body;
+    if (!projectId) return res.status(400).json({ error: 'projectId required' });
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
+    // Project lock check
+    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized').eq('id', projectId).single();
+    if (proj?.payouts_finalized) return res.status(403).json({ error: `Project "${proj.name}" is finalized.` });
+    const { data, error } = await supabase.from('deliverables').insert({
+      project_id: projectId,
+      type_id: typeId || null,
+      name: name.trim(),
+      description: description || null,
+      publish_date: publishDate || null,
+      sort_order: sortOrder || 0,
+      status: 'planned',
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(mapDeliverable(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/deliverables/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name        !== undefined) updates.name         = req.body.name;
+    if (req.body.description !== undefined) updates.description  = req.body.description;
+    if (req.body.typeId      !== undefined) updates.type_id      = req.body.typeId || null;
+    if (req.body.publishDate !== undefined) updates.publish_date = req.body.publishDate || null;
+    if (req.body.status      !== undefined) updates.status       = req.body.status;
+    if (req.body.sortOrder   !== undefined) updates.sort_order   = req.body.sortOrder;
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('deliverables').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapDeliverable(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/deliverables/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    const { error } = await supabase.from('deliverables').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── TASK ↔ DELIVERABLE LINKS ────────────────────────────────────────────────
+
+app.get('/api/task-deliverables', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_deliverables').select('*');
+    if (error) throw error;
+    res.json(data.map(r => ({ taskId: r.task_id, deliverableId: r.deliverable_id })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tasks/:taskId/deliverables', requireAuth, async (req, res) => {
+  try {
+    const { deliverableId } = req.body;
+    if (!deliverableId) return res.status(400).json({ error: 'deliverableId required' });
+    // Upsert — ignore duplicate
+    const { error } = await supabase.from('task_deliverables').upsert({
+      task_id: req.params.taskId,
+      deliverable_id: deliverableId,
+    }, { onConflict: 'task_id,deliverable_id' });
+    if (error) throw error;
+    // Recompute deliverable status
+    await _recomputeDeliverableStatus(deliverableId);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/tasks/:taskId/deliverables/:deliverableId', requireAuth, async (req, res) => {
+  try {
+    const { error } = await supabase.from('task_deliverables').delete()
+      .eq('task_id', req.params.taskId).eq('deliverable_id', req.params.deliverableId);
+    if (error) throw error;
+    await _recomputeDeliverableStatus(req.params.deliverableId);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Recompute a deliverable's status based on linked tasks.
+ * Rules:
+ *   - 0 tasks linked → planned
+ *   - Any task 'progress' or 'review' → in_progress
+ *   - All tasks 'done' + no publish_date → published
+ *   - All tasks 'done' + publish_date in past → published
+ *   - All tasks 'done' + publish_date in future → in_review
+ *   - If manually set to 'cancelled', preserve that
+ */
+async function _recomputeDeliverableStatus(deliverableId) {
+  const { data: deliv } = await supabase.from('deliverables').select('*').eq('id', deliverableId).single();
+  if (!deliv || deliv.status === 'cancelled') return;
+  const { data: links } = await supabase.from('task_deliverables').select('task_id').eq('deliverable_id', deliverableId);
+  if (!links || links.length === 0) {
+    if (deliv.status !== 'planned') {
+      await supabase.from('deliverables').update({ status: 'planned', updated_at: new Date().toISOString() }).eq('id', deliverableId);
+    }
+    return;
+  }
+  const ids = links.map(l => l.task_id);
+  const { data: tasks } = await supabase.from('tasks').select('id,status').in('id', ids);
+  const allDone = tasks.every(t => t.status === 'done');
+  const anyActive = tasks.some(t => t.status === 'progress' || t.status === 'review');
+  let newStatus = deliv.status;
+  if (allDone) {
+    if (!deliv.publish_date) newStatus = 'published';
+    else {
+      const today = new Date().toISOString().split('T')[0];
+      newStatus = deliv.publish_date <= today ? 'published' : 'in_review';
+    }
+  } else if (anyActive || tasks.some(t => t.status === 'todo')) {
+    newStatus = tasks.some(t => t.status === 'todo' && !tasks.some(x => x.status !== 'todo')) ? 'planned' : 'in_progress';
+    // Simpler: if any task has moved past todo, it's in_progress
+    newStatus = tasks.some(t => t.status !== 'todo') ? 'in_progress' : 'planned';
+  }
+  if (newStatus !== deliv.status) {
+    await supabase.from('deliverables').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', deliverableId);
+  }
+}
+
+// ─── TASK COMMENTS ───────────────────────────────────────────────────────────
+
+app.get('/api/tasks/:taskId/comments', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('task_comments')
+      .select('*').eq('task_id', req.params.taskId).order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data.map(mapTaskComment));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/tasks/:taskId/comments', requireAuth, async (req, res) => {
+  try {
+    const { body } = req.body;
+    if (!body || !body.trim()) return res.status(400).json({ error: 'body required' });
+    const { data, error } = await supabase.from('task_comments').insert({
+      task_id: req.params.taskId,
+      author_id: req.user.sub,
+      author_name: req.user.name || 'Team',
+      body: body.trim(),
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(mapTaskComment(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/api/comments/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: existing } = await supabase.from('task_comments').select('author_id').eq('id', req.params.id).single();
+    if (!existing) return res.status(404).json({ error: 'Comment not found' });
+    if (existing.author_id !== req.user.sub && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Can only edit your own comments' });
+    }
+    const { body } = req.body;
+    if (!body || !body.trim()) return res.status(400).json({ error: 'body required' });
+    const { data, error } = await supabase.from('task_comments').update({
+      body: body.trim(),
+      edited_at: new Date().toISOString(),
+    }).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapTaskComment(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/comments/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: existing } = await supabase.from('task_comments').select('author_id').eq('id', req.params.id).single();
+    if (!existing) return res.status(404).json({ error: 'Comment not found' });
+    if (existing.author_id !== req.user.sub && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Can only delete your own comments' });
+    }
+    const { error } = await supabase.from('task_comments').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── CLIENT PORTAL ───────────────────────────────────────────────────────────
+
+const PORTAL_JWT_SECRET = process.env.JWT_SECRET; // reuse same secret
+const PORTAL_TOKEN_TTL = '7d';
+
+// Rate limit: 5 failed attempts per IP per 15 min for portal login
+const portalLoginAttempts = new Map();
+function portalLoginRateLimit(req, res, next) {
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = portalLoginAttempts.get(ip) || { count: 0, reset: now + 15*60*1000 };
+  if (now > entry.reset) { entry.count = 0; entry.reset = now + 15*60*1000; }
+  if (entry.count >= 5) {
+    return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  }
+  entry.count++;
+  portalLoginAttempts.set(ip, entry);
+  next();
+}
+
+app.post('/api/portal/login', portalLoginRateLimit, async (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin || String(pin).length < 6) return res.status(400).json({ error: 'PIN required (6+ digits)' });
+    const pinStr = String(pin);
+
+    // Find client with matching PIN — must check all active clients with portal enabled
+    const { data: candidates } = await supabase.from('clients')
+      .select('id,name,pin_hash,portal_active,active').eq('portal_active', true).eq('active', true);
+
+    let matchedClient = null;
+    for (const c of candidates || []) {
+      if (!c.pin_hash) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await bcrypt.compare(pinStr, c.pin_hash);
+      if (ok) { matchedClient = c; break; }
+    }
+    if (!matchedClient) return res.status(401).json({ error: 'Invalid PIN' });
+
+    const token = jwt.sign({
+      scope: 'portal',
+      clientId: matchedClient.id,
+      clientName: matchedClient.name,
+    }, PORTAL_JWT_SECRET, { expiresIn: PORTAL_TOKEN_TTL });
+
+    res.json({ token, client: { id: matchedClient.id, name: matchedClient.name } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Middleware: verify portal token
+function requirePortalAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const payload = jwt.verify(token, PORTAL_JWT_SECRET);
+    if (payload.scope !== 'portal') return res.status(403).json({ error: 'Invalid token scope' });
+    req.portalClient = payload;
+    next();
+  } catch (e) { return res.status(401).json({ error: 'Invalid token' }); }
+}
+
+/**
+ * Get all data this client is allowed to see.
+ * Returns: projects (stripped), deliverables, task_deliverables, tasks (minimal), deliverable_types
+ * Explicitly excludes: assignees, hours, amounts, comments, expenses, audit, team, deals, pay info.
+ */
+app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
+  try {
+    const clientId = req.portalClient.clientId;
+
+    // Find all deals for this client → then projects for those deals
+    const { data: deals } = await supabase.from('deals').select('id,name').eq('client_id', clientId);
+    const dealIds = (deals || []).map(d => d.id);
+    if (!dealIds.length) {
+      return res.json({ client: { id: clientId, name: req.portalClient.clientName }, projects: [], deliverables: [], deliverable_types: [] });
+    }
+
+    const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id')
+      .in('deal_id', dealIds).eq('archived', false);
+    const projectIds = (projects || []).map(p => p.id);
+
+    const [ { data: deliverables }, { data: taskLinks }, { data: tasks }, { data: dTypes } ] = await Promise.all([
+      projectIds.length ? supabase.from('deliverables').select('*').in('project_id', projectIds) : Promise.resolve({ data: [] }),
+      Promise.resolve({ data: [] }), // populated below
+      Promise.resolve({ data: [] }), // populated below
+      supabase.from('deliverable_types').select('id,name,project_id').eq('active', true),
+    ]);
+
+    // For task-derived data we only need task_deliverable links + minimal task info (id, status, publish_date, due, title)
+    let tLinks = [], tRows = [];
+    if (projectIds.length) {
+      const [linksResp, tasksResp] = await Promise.all([
+        supabase.from('task_deliverables').select('*'),
+        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id').in('project_id', projectIds),
+      ]);
+      tLinks = linksResp.data || [];
+      tRows = tasksResp.data || [];
+      // Filter links to only those referring to tasks in our projects
+      const taskIdSet = new Set(tRows.map(t => t.id));
+      tLinks = tLinks.filter(l => taskIdSet.has(l.task_id));
+    }
+
+    res.json({
+      client: { id: clientId, name: req.portalClient.clientName },
+      projects: (projects || []).map(p => ({
+        id: p.id, name: p.name,
+        startDate: p.start_date, endDate: p.end_date,
+        status: p.status,
+      })),
+      deliverables: (deliverables || []).map(mapDeliverable),
+      deliverableTypes: (dTypes || []).filter(t => t.project_id === null || projectIds.includes(t.project_id))
+        .map(t => ({ id: t.id, name: t.name, projectId: t.project_id })),
+      taskDeliverables: tLinks.map(l => ({ taskId: l.task_id, deliverableId: l.deliverable_id })),
+      // Minimal task info — NO assignee, hours, pay, notes, tag
+      tasks: tRows.map(t => ({
+        id: t.id, title: t.title, status: t.status,
+        due: t.due_date, publishDate: t.publish_date, projectId: t.project_id,
+      })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
 
 function mapTeamMember(m) {
   return {
@@ -1308,6 +1807,7 @@ function mapDeal(d) {
     id:            d.id,
     name:          d.name,
     client:        d.client,
+    clientId:      d.client_id || null,
     value:         d.value,
     expenses:      0,  // always computed client-side from expenses table via syncDealExpenses()
     stage:         d.stage,
@@ -1335,15 +1835,64 @@ function mapProject(p) {
 
 function mapTask(t) {
   return {
-    id:         t.id,
-    title:      t.title,
-    projectId:  t.project_id,
-    assigneeId: t.assignee_id,
-    due:        t.due_date,
-    priority:   t.priority,
-    status:     t.status,
-    estHours:   t.est_hours || 0,
-    tag:        t.tag || null,
+    id:          t.id,
+    title:       t.title,
+    projectId:   t.project_id,
+    assigneeId:  t.assignee_id,
+    due:         t.due_date,
+    publishDate: t.publish_date || null,
+    priority:    t.priority,
+    status:      t.status,
+    estHours:    t.est_hours || 0,
+    tag:         t.tag || null,
+    notes:       t.notes || null,
+  };
+}
+
+function mapClient(c) {
+  return {
+    id:           c.id,
+    name:         c.name,
+    active:       c.active,
+    notes:        c.notes,
+    portalActive: c.portal_active || false,
+    hasPin:       !!c.pin_hash,
+    createdAt:    c.created_at,
+  };
+}
+
+function mapDeliverableType(t) {
+  return {
+    id:        t.id,
+    name:      t.name,
+    projectId: t.project_id,
+    active:    t.active,
+  };
+}
+
+function mapDeliverable(d) {
+  return {
+    id:          d.id,
+    projectId:   d.project_id,
+    typeId:      d.type_id,
+    name:        d.name,
+    description: d.description,
+    publishDate: d.publish_date,
+    status:      d.status,
+    sortOrder:   d.sort_order || 0,
+    createdAt:   d.created_at,
+  };
+}
+
+function mapTaskComment(c) {
+  return {
+    id:         c.id,
+    taskId:     c.task_id,
+    authorId:   c.author_id,
+    authorName: c.author_name,
+    body:       c.body,
+    createdAt:  c.created_at,
+    editedAt:   c.edited_at,
   };
 }
 
@@ -1392,6 +1941,7 @@ function dealToRow(body, partial = false) {
   const row = {};
   if (!partial || body.name          !== undefined) row.name           = body.name;
   if (!partial || body.client        !== undefined) row.client         = body.client;
+  if (!partial || body.clientId      !== undefined) row.client_id      = body.clientId || null;
   if (!partial || body.value         !== undefined) row.value          = body.value;
   if (!partial || body.expenses      !== undefined) row.expenses       = body.expenses || 0;
   if (!partial || body.stage         !== undefined) row.stage          = body.stage;
