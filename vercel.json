@@ -19,9 +19,7 @@
       "src": "/(.*)",
       "dest": "public/$1"
     }
-  ]
-}
-{
+    {
   "rewrites": [
     { "source": "/portal", "destination": "/portal.html" }
   ]
