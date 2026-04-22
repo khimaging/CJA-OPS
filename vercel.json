@@ -16,11 +16,12 @@
       "dest": "api/index.js"
     },
     {
+      "src": "/portal/?",
+      "dest": "public/portal.html"
+    },
+    {
       "src": "/(.*)",
       "dest": "public/$1"
     }
-    {
-  "rewrites": [
-    { "source": "/portal", "destination": "/portal.html" }
   ]
 }
