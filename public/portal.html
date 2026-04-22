@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Client Portal · Creative Juice Agency</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e0e0f;--bg2:#161617;--bg3:#1e1e20;--bg4:#2a2a2c;
+  --text:#e8e4d9;--text2:#b8b3a6;--text3:#8a8478;
+  --gold:#c9a84c;--gold-dim:rgba(201,168,76,0.15);--gold-dim2:rgba(201,168,76,0.25);
+  --green:#4caf7a;--green-dim:rgba(76,175,122,0.12);
+  --blue:#667eea;--purple:#9561e2;--red:#e05a5a;--red-dim:rgba(224,90,90,0.12);
+  --border:rgba(232,228,217,0.08);--border2:rgba(232,228,217,0.14);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-height:100vh;font-size:14px;line-height:1.5}
+
+/* Login screen */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:40px;max-width:420px;width:100%}
+.login-logo{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:600;color:var(--gold);text-align:center;margin-bottom:6px;letter-spacing:.02em}
+.login-sub{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--text3);text-align:center;margin-bottom:32px}
+.login-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:8px}
+.login-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:14px 16px;font-family:'DM Mono',monospace;font-size:16px;letter-spacing:.14em;text-align:center;outline:none;transition:border-color .15s}
+.login-input:focus{border-color:var(--gold)}
+.login-btn{width:100%;margin-top:16px;background:var(--gold);color:#0e0e0f;border:none;border-radius:10px;padding:14px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;font-weight:700;cursor:pointer;transition:opacity .15s}
+.login-btn:hover{opacity:0.9}
+.login-btn:disabled{opacity:0.5;cursor:not-allowed}
+.login-error{color:var(--red);font-size:11px;text-align:center;margin-top:12px;font-family:'DM Mono',monospace}
+
+/* Portal shell */
+.portal-header{background:var(--bg2);border-bottom:1px solid var(--border);padding:18px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
+.portal-brand{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--gold)}
+.portal-brand-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--text3);margin-top:1px}
+.portal-user{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text2)}
+.portal-logout{background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:7px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:color .15s}
+.portal-logout:hover{color:var(--gold);border-color:var(--gold)}
+
+.portal-content{max-width:1400px;margin:0 auto;padding:28px}
+.portal-section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);margin-bottom:16px}
+
+/* Project cards on home */
+.proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px;margin-bottom:36px}
+.proj-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;cursor:pointer;transition:all .15s}
+.proj-card:hover{border-color:var(--gold);background:var(--bg3)}
+.proj-card-title{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--text);margin-bottom:4px}
+.proj-card-dates{font-size:11px;color:var(--text3);margin-bottom:16px;font-family:'DM Mono',monospace}
+.proj-card-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:14px}
+.proj-stat{background:var(--bg);border-radius:8px;padding:10px 12px}
+.proj-stat-label{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:2px}
+.proj-stat-val{font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:var(--text)}
+.proj-progress{height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px}
+.proj-progress-fill{height:100%;background:var(--gold);border-radius:3px;transition:width .3s}
+.proj-progress-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:right}
+
+/* Back link */
+.back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;margin-bottom:18px;background:none;border:none}
+.back-link:hover{color:var(--gold)}
+
+/* Project detail header */
+.pd-header{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:26px 28px;margin-bottom:22px}
+.pd-title{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:600;color:var(--text);margin-bottom:4px}
+.pd-dates{font-family:'DM Mono',monospace;font-size:12px;color:var(--text3);margin-bottom:20px}
+.pd-progress-bar{height:10px;background:var(--bg4);border-radius:5px;overflow:hidden;margin-bottom:6px}
+.pd-progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--green));border-radius:5px;transition:width .3s}
+
+/* View tabs */
+.view-tabs{display:flex;gap:4px;background:var(--bg2);padding:4px;border-radius:10px;margin-bottom:20px;width:fit-content}
+.view-tab{background:transparent;border:none;color:var(--text3);padding:8px 16px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:7px;display:flex;align-items:center;gap:6px;transition:all .15s}
+.view-tab.active{background:var(--bg4);color:var(--gold)}
+.view-tab:not(.active):hover{color:var(--text2)}
+
+/* Deliverable list */
+.deliv-list{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.deliv-row{display:grid;grid-template-columns:1fr 140px 120px 150px;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center}
+.deliv-row:last-child{border-bottom:none}
+.deliv-name{font-size:14px;font-weight:500;color:var(--text)}
+.deliv-type{font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:2px}
+.status-chip{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.06em;padding:4px 9px;border-radius:4px;display:inline-block}
+.status-planned{background:rgba(232,228,217,0.08);color:var(--text3)}
+.status-in_progress{background:rgba(201,168,76,0.14);color:var(--gold)}
+.status-in_review{background:rgba(102,126,234,0.14);color:var(--blue)}
+.status-published{background:rgba(76,175,122,0.14);color:var(--green)}
+.status-cancelled{background:rgba(224,90,90,0.1);color:var(--red)}
+
+/* Kanban */
+.kanban-board{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;min-height:400px}
+.kanban-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;min-width:0}
+.kanban-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.kanban-title{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)}
+.kanban-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);font-weight:600}
+.kanban-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;transition:border-color .15s}
+.kanban-card:hover{border-color:var(--border2)}
+
+/* Calendar */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.cal-head{background:var(--bg);padding:10px 12px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);text-align:center}
+.cal-cell{background:var(--bg2);min-height:100px;padding:8px;border-top:1px solid var(--border)}
+.cal-cell.today{background:var(--bg3);box-shadow:inset 0 0 0 1px var(--gold)}
+.cal-cell.other{opacity:0.3}
+.cal-daynum{font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-bottom:6px}
+.cal-daynum.today{color:var(--gold);font-weight:700}
+
+/* Empty state */
+.empty{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty-title{font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--text2);margin-bottom:6px}
+.empty-sub{font-size:12px}
+
+/* Mobile */
+@media (max-width:720px){
+  .portal-content{padding:18px}
+  .portal-header{padding:14px 18px}
+  .deliv-row{grid-template-columns:1fr;gap:6px}
+  .kanban-board{grid-template-columns:1fr;gap:10px}
+  .cal-cell{min-height:60px;padding:4px}
+  .pd-header{padding:18px 20px}
+}
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-logo">Creative Juice Agency</div>
+    <div class="login-sub">Client Portal</div>
+    <label class="login-label">Portal PIN</label>
+    <input id="pin-input" class="login-input" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="• • • • • •" maxlength="20">
+    <button id="login-btn" class="login-btn" onclick="doLogin()">Sign In</button>
+    <div id="login-error" class="login-error" style="display:none"></div>
+    <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--border);text-align:center;font-size:11px;color:var(--text3);font-family:'DM Mono',monospace">
+      Need access? Contact your Creative Juice team.
+    </div>
+  </div>
+</div>
+
+<!-- Portal shell -->
+<div id="portal-shell" style="display:none">
+  <div class="portal-header">
+    <div>
+      <div class="portal-brand">Creative Juice Agency</div>
+      <div class="portal-brand-sub" id="client-name-hdr">Client Portal</div>
+    </div>
+    <div class="portal-user">
+      <span id="client-welcome"></span>
+      <button class="portal-logout" onclick="doLogout()">Sign out</button>
+    </div>
+  </div>
+  <div class="portal-content" id="portal-content"></div>
+</div>
+
+<script>
+const API_BASE='/api';
+let state={token:null,client:null,data:null,activeProjectId:null,view:'list'};
+
+// ── Auth ──
+function getToken(){return localStorage.getItem('cja_portal_token');}
+function setToken(t){if(t) localStorage.setItem('cja_portal_token',t); else localStorage.removeItem('cja_portal_token');}
+
+async function api(method,path,body){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  const t=getToken();
+  if(t) opts.headers.Authorization='Bearer '+t;
+  if(body!==undefined) opts.body=JSON.stringify(body);
+  const r=await fetch(API_BASE+path,opts);
+  if(!r.ok){
+    const err=await r.json().catch(()=>({error:'Request failed'}));
+    throw new Error(err.error||'Request failed');
+  }
+  return r.json();
+}
+
+async function doLogin(){
+  const pin=document.getElementById('pin-input').value.trim();
+  const err=document.getElementById('login-error');
+  const btn=document.getElementById('login-btn');
+  err.style.display='none';
+  if(!pin||pin.length<6){
+    err.textContent='Enter your 6+ digit PIN';
+    err.style.display='';
+    return;
+  }
+  btn.disabled=true; btn.textContent='Signing in...';
+  try{
+    const r=await fetch(API_BASE+'/portal/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+    if(!r.ok){
+      const e=await r.json().catch(()=>({error:'Invalid PIN'}));
+      throw new Error(e.error||'Invalid PIN');
+    }
+    const data=await r.json();
+    setToken(data.token);
+    state.token=data.token;
+    state.client=data.client;
+    await initPortal();
+  } catch(e){
+    err.textContent=e.message;
+    err.style.display='';
+  } finally {
+    btn.disabled=false; btn.textContent='Sign In';
+  }
+}
+
+function doLogout(){
+  setToken(null);
+  location.reload();
+}
+
+async function initPortal(){
+  try{
+    state.data=await api('GET','/portal/data');
+    state.client=state.data.client;
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('portal-shell').style.display='';
+    document.getElementById('client-name-hdr').textContent=state.client.name+' · Projects';
+    document.getElementById('client-welcome').textContent='Welcome, '+state.client.name;
+    renderHome();
+  } catch(e){
+    // Token invalid/expired — force re-login
+    if(e.message.includes('token')||e.message.includes('auth')){
+      setToken(null);
+      location.reload();
+    } else {
+      alert('Failed to load portal: '+e.message);
+    }
+  }
+}
+
+// ── Views ──
+
+function calcProjectProgress(projectId){
+  const delivs=(state.data.deliverables||[]).filter(d=>d.projectId===projectId);
+  if(delivs.length===0) return{total:0,completed:0,pct:0};
+  const completed=delivs.filter(d=>d.status==='published').length;
+  return{total:delivs.length,completed,pct:Math.round(completed/delivs.length*100)};
+}
+
+function fmtDate(ds){
+  if(!ds) return null;
+  return new Date(ds+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
+function renderHome(){
+  state.activeProjectId=null;
+  const projs=state.data.projects||[];
+  const active=projs.filter(p=>p.status!=='complete');
+  const completed=projs.filter(p=>p.status==='complete');
+  const el=document.getElementById('portal-content');
+
+  if(projs.length===0){
+    el.innerHTML=`<div class="empty">
+      <div class="empty-title">No projects yet</div>
+      <div class="empty-sub">Once your team kicks off a project, it'll appear here.</div>
+    </div>`;
+    return;
+  }
+
+  const renderCards=(list)=>list.map(p=>{
+    const prog=calcProjectProgress(p.id);
+    const upcoming=(state.data.deliverables||[]).filter(d=>d.projectId===p.id&&d.publishDate).length;
+    return`<div class="proj-card" onclick="openProject('${p.id}')">
+      <div class="proj-card-title">${escapeHtml(p.name)}</div>
+      <div class="proj-card-dates">${p.startDate?fmtDate(p.startDate):'—'} → ${p.endDate?fmtDate(p.endDate):'ongoing'}</div>
+      <div class="proj-card-stats">
+        <div class="proj-stat"><div class="proj-stat-label">Deliverables</div><div class="proj-stat-val">${prog.total}</div></div>
+        <div class="proj-stat"><div class="proj-stat-label">Upcoming</div><div class="proj-stat-val">${upcoming}</div></div>
+      </div>
+      <div class="proj-progress"><div class="proj-progress-fill" style="width:${prog.pct}%"></div></div>
+      <div class="proj-progress-label">${prog.completed} of ${prog.total} published · ${prog.pct}%</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML=`
+    ${active.length>0?`<div class="portal-section-label">Active Projects (${active.length})</div>
+      <div class="proj-grid">${renderCards(active)}</div>`:''}
+    ${completed.length>0?`<div class="portal-section-label">Completed (${completed.length})</div>
+      <div class="proj-grid">${renderCards(completed)}</div>`:''}
+  `;
+}
+
+function openProject(projectId){
+  state.activeProjectId=projectId;
+  state.view='list';
+  renderProject();
+}
+
+function renderProject(){
+  const p=state.data.projects.find(x=>x.id===state.activeProjectId);
+  if(!p){renderHome();return;}
+  const delivs=(state.data.deliverables||[]).filter(d=>d.projectId===p.id);
+  const prog=calcProjectProgress(p.id);
+
+  const el=document.getElementById('portal-content');
+  el.innerHTML=`
+    <button class="back-link" onclick="renderHome()">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+      All Projects
+    </button>
+
+    <div class="pd-header">
+      <div class="pd-title">${escapeHtml(p.name)}</div>
+      <div class="pd-dates">${p.startDate?fmtDate(p.startDate):'—'} → ${p.endDate?fmtDate(p.endDate):'ongoing'} · ${p.status==='complete'?'Completed':'Active'}</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Overall Progress</span>
+        <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${prog.completed} / ${prog.total} · ${prog.pct}%</span>
+      </div>
+      <div class="pd-progress-bar"><div class="pd-progress-fill" style="width:${prog.pct}%"></div></div>
+    </div>
+
+    <div class="view-tabs">
+      <button class="view-tab ${state.view==='list'?'active':''}" onclick="setView('list')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        List
+      </button>
+      <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="setView('kanban')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>
+        Kanban
+      </button>
+      <button class="view-tab ${state.view==='calendar'?'active':''}" onclick="setView('calendar')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Calendar
+      </button>
+    </div>
+
+    <div id="portal-view-body"></div>
+  `;
+  renderProjectView(delivs);
+}
+
+function setView(v){state.view=v;renderProjectView();}
+
+function renderProjectView(delivs){
+  const p=state.data.projects.find(x=>x.id===state.activeProjectId);
+  if(!p) return;
+  if(!delivs) delivs=(state.data.deliverables||[]).filter(d=>d.projectId===p.id);
+  const body=document.getElementById('portal-view-body');
+
+  if(delivs.length===0){
+    body.innerHTML=`<div class="empty">
+      <div class="empty-title">No deliverables defined yet</div>
+      <div class="empty-sub">Your team will add deliverables as the project progresses.</div>
+    </div>`;
+    return;
+  }
+
+  const types=state.data.deliverableTypes||[];
+  const statusLabels={planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'};
+
+  if(state.view==='list'){
+    body.innerHTML=`<div class="deliv-list">
+      <div style="display:grid;grid-template-columns:1fr 140px 120px 150px;gap:14px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+        ${['Deliverable','Status','Type','Publish Date'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+      </div>
+      ${delivs.map(d=>{
+        const type=types.find(t=>t.id===d.typeId);
+        return`<div class="deliv-row">
+          <div><div class="deliv-name">${escapeHtml(d.name)}</div></div>
+          <div><span class="status-chip status-${d.status}">${statusLabels[d.status]}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">${type?.name||'—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:${d.publishDate?'var(--gold)':'var(--text3)'}">${d.publishDate?fmtDate(d.publishDate):'—'}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+    return;
+  }
+
+  if(state.view==='kanban'){
+    const cols=[
+      {id:'planned',label:'Planned'},
+      {id:'in_progress',label:'In Progress'},
+      {id:'in_review',label:'In Review'},
+      {id:'published',label:'Published'},
+    ];
+    body.innerHTML=`<div class="kanban-board">
+      ${cols.map(col=>{
+        const items=delivs.filter(d=>d.status===col.id);
+        return`<div class="kanban-col">
+          <div class="kanban-header">
+            <span class="kanban-title">${col.label}</span>
+            <span class="kanban-count">${items.length}</span>
+          </div>
+          ${items.map(d=>{
+            const type=types.find(t=>t.id===d.typeId);
+            return`<div class="kanban-card">
+              <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px">${escapeHtml(d.name)}</div>
+              <div style="display:flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
+                ${type?`<span>${type.name}</span>`:''}
+                ${d.publishDate?`<span style="color:var(--gold)">${fmtDate(d.publishDate)}</span>`:''}
+              </div>
+            </div>`;
+          }).join('')||'<div style="color:var(--text3);font-size:11px;text-align:center;padding:16px 0;font-style:italic">—</div>'}
+        </div>`;
+      }).join('')}
+    </div>`;
+    return;
+  }
+
+  if(state.view==='calendar'){
+    const now=new Date();
+    state.calOffset=state.calOffset||0;
+    const base=new Date(now.getFullYear(),now.getMonth()+state.calOffset,1);
+    const yr=base.getFullYear(),mo=base.getMonth();
+    const dim=new Date(yr,mo+1,0).getDate();
+    const fd=new Date(yr,mo,1).getDay();
+    const ts=now.toISOString().split('T')[0];
+    const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthPrefix=`${yr}-${String(mo+1).padStart(2,'0')}`;
+    const delivsThisMonth=delivs.filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix));
+    const byDate={};
+    delivsThisMonth.forEach(d=>{
+      if(!byDate[d.publishDate]) byDate[d.publishDate]=[];
+      byDate[d.publishDate].push(d);
+    });
+
+    let cells='';
+    const prevDim=new Date(yr,mo,0).getDate();
+    for(let i=0;i<fd;i++) cells+=`<div class="cal-cell other"><div class="cal-daynum">${prevDim-fd+i+1}</div></div>`;
+    for(let d=1;d<=dim;d++){
+      const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const isToday=ds===ts;
+      const items=byDate[ds]||[];
+      cells+=`<div class="cal-cell${isToday?' today':''}">
+        <div class="cal-daynum${isToday?' today':''}">${d}</div>
+        ${items.map(x=>{
+          const type=types.find(t=>t.id===x.typeId);
+          return`<div style="background:rgba(149,97,226,0.18);border-left:2px solid var(--purple);border-radius:4px;padding:4px 6px;margin-bottom:3px">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(x.name)}</div>
+            ${type?`<div style="font-size:8px;color:var(--text3)">${type.name}</div>`:''}
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+    const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
+    for(let i=1;i<=rem;i++) cells+=`<div class="cal-cell other"><div class="cal-daynum">${i}</div></div>`;
+
+    body.innerHTML=`
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <button class="back-link" onclick="state.calOffset=(state.calOffset||0)-1;renderProjectView()" style="margin:0">‹ Prev</button>
+        <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
+        <button class="back-link" onclick="state.calOffset=(state.calOffset||0)+1;renderProjectView()" style="margin:0">Next ›</button>
+        ${state.calOffset!==0?`<button class="back-link" onclick="state.calOffset=0;renderProjectView()" style="margin:0">Today</button>`:''}
+      </div>
+      <div class="cal-grid">
+        ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}
+        ${cells}
+      </div>
+    `;
+    return;
+  }
+}
+
+function escapeHtml(str){
+  return String(str||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ── Auto-login if token exists ──
+(async()=>{
+  const t=getToken();
+  if(t){
+    state.token=t;
+    try{ await initPortal(); } catch(e){ setToken(null); }
+  }
+  // Enter-to-submit
+  const pinInput=document.getElementById('pin-input');
+  if(pinInput){
+    pinInput.addEventListener('keypress',e=>{if(e.key==='Enter') doLogin();});
+    pinInput.focus();
+  }
+})();
+</script>
+
+</body>
+</html>
