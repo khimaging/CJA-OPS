@@ -2,6 +2,7 @@ require('dotenv').config();
 const express   = require('express');
 const cors      = require('cors');
 const bcrypt    = require('bcryptjs');
+const jwt       = require('jsonwebtoken');
 const supabase  = require('../lib/supabase');
 const { signToken, requireAuth, requireAdmin, requireCanDelete } = require('../lib/auth');
 
