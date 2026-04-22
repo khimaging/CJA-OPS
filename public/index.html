@@ -723,12 +723,24 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
         Production Calendar
       </div>
+      <div class="nav-item" onclick="switchView('pubcal')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 10H3M16 2v4M8 2v4M3 4h18v16H3z"/><circle cx="8" cy="14" r="1.5" fill="currentColor"/><circle cx="16" cy="14" r="1.5" fill="currentColor"/></svg>
+        Publishing Calendar
+      </div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Team</div>
       <div class="nav-item" id="nav-team" onclick="switchView('team')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
         Team Members
+      </div>
+      <div class="nav-item" onclick="switchView('clients')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M8 7a4 4 0 118 0 4 4 0 01-8 0zM17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/></svg>
+        Clients
+      </div>
+      <div class="nav-item" onclick="switchView('deliv-types')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2h-4M9 11V7a3 3 0 013-3v0a3 3 0 013 3v4M9 11h6"/></svg>
+        Deliverable Types
       </div>
     </div>
   </div>
@@ -826,6 +838,36 @@
       <div><div class="page-title">Production Calendar</div><div class="page-sub">Workload distribution over time</div></div>
     </div>
     <div class="content"><div id="prodcal-board"></div></div>
+  </div>
+
+  <!-- PUBLISHING CALENDAR -->
+  <div id="view-pubcal" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Publishing Calendar</div><div class="page-sub">Tasks and deliverables grouped by publish date</div></div>
+    </div>
+    <div class="content"><div id="pubcal-board"></div></div>
+  </div>
+
+  <!-- CLIENTS -->
+  <div id="view-clients" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Clients</div><div class="page-sub">Client roster + portal access</div></div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" onclick="openClientModal()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Client</button>
+      </div>
+    </div>
+    <div class="content"><div id="clients-content"></div></div>
+  </div>
+
+  <!-- DELIVERABLE TYPES -->
+  <div id="view-deliv-types" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Deliverable Types</div><div class="page-sub">Master catalog of deliverable types — reusable across projects</div></div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" onclick="_openAddDelivType()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Type</button>
+      </div>
+    </div>
+    <div class="content"><div id="deliv-types-content"></div></div>
   </div>
 
   <!-- TASKS -->
@@ -1002,7 +1044,13 @@
     <div class="modal-title">New Deal<button class="modal-close" onclick="closeModal('deal-modal')">✕</button></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Deal Name</label><input class="form-input" id="d-name" placeholder="Campaign Rebrand 2025"></div>
-      <div class="form-group"><label class="form-label">Client</label><input class="form-input" id="d-client" placeholder="Acme Corp"></div>
+      <div class="form-group">
+        <label class="form-label">Client</label>
+        <input class="form-input" id="d-client" list="d-client-list" autocomplete="off" placeholder="Start typing — or add new">
+        <datalist id="d-client-list"></datalist>
+        <input type="hidden" id="d-client-id">
+        <div id="d-client-hint" style="font-size:10px;color:var(--text3);margin-top:4px"></div>
+      </div>
     </div>
     <!-- Revenue fields -->
     <div id="d-financial-lock-banner" style="display:none;background:rgba(224,90,90,0.08);border:1px solid rgba(224,90,90,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--red);letter-spacing:.04em">
@@ -1098,22 +1146,23 @@
 
 <!-- TASK MODAL -->
 <div class="modal-overlay" id="task-modal">
-  <div class="modal">
+  <div class="modal" style="max-width:680px">
     <div class="modal-title">New Task<button class="modal-close" onclick="closeModal('task-modal')">✕</button></div>
     <div class="form-group"><label class="form-label">Task Title</label><input class="form-input" id="t-title" placeholder="Design homepage mockup"></div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Project</label><select class="form-select" id="t-project" onchange="updateTaskPayPreview()"></select></div>
+      <div class="form-group"><label class="form-label">Project</label><select class="form-select" id="t-project" onchange="updateTaskPayPreview();_onTaskProjectChange()"></select></div>
       <div class="form-group"><label class="form-label">Assigned To</label><select class="form-select" id="t-assignee"></select></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" id="t-due" type="date"></div>
+      <div class="form-group"><label class="form-label" style="display:flex;align-items:center;gap:6px">Publish Date <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span></label><input class="form-input" id="t-publish" type="date"></div>
+    </div>
+    <div class="form-row">
       <div class="form-group"><label class="form-label">Priority</label>
         <select class="form-select" id="t-priority">
           <option value="low">Low</option><option value="med" selected>Medium</option><option value="high">High</option>
         </select>
       </div>
-    </div>
-    <div class="form-row">
       <div class="form-group"><label class="form-label">Total Hours Allocated</label><input class="form-input" id="t-est" type="number" placeholder="8" step="0.5" min="0" oninput="updateTaskPayPreview()"></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="t-status">
@@ -1131,6 +1180,23 @@
       </div>
       <input type="hidden" id="t-tag">
     </div>
+    <!-- Deliverable link -->
+    <div class="form-group" id="t-deliverable-wrap">
+      <label class="form-label" style="display:flex;align-items:center;gap:6px">
+        Linked Deliverable
+        <span id="t-deliverable-required" style="font-family:'DM Mono',monospace;font-size:8px;color:var(--red);background:rgba(224,90,90,0.1);padding:1px 6px;border-radius:3px;letter-spacing:.06em;display:none">REQUIRED</span>
+        <span id="t-deliverable-hint" style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span>
+      </label>
+      <select class="form-select" id="t-deliverable">
+        <option value="">— none —</option>
+      </select>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px" id="t-deliverable-help">Select a deliverable this task contributes to.</div>
+    </div>
+    <!-- Notes -->
+    <div class="form-group">
+      <label class="form-label" style="display:flex;align-items:center;gap:6px">Notes <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">reference info, links, context</span></label>
+      <textarea class="form-input" id="t-notes" placeholder="Brand guidelines link, raw files, client requirements..." style="min-height:80px;resize:vertical;font-family:inherit"></textarea>
+    </div>
     <!-- Pay preview -->
     <div id="t-pay-preview" style="display:none;align-items:center;justify-content:space-between;background:var(--green-dim);border:1px solid rgba(76,175,122,0.25);border-radius:8px;padding:12px 16px;margin-top:4px">
       <div>
@@ -1138,6 +1204,18 @@
         <div id="t-pay-detail" style="font-size:11px;color:var(--text3)"></div>
       </div>
       <div id="t-pay-amount" style="font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;color:var(--green);line-height:1"></div>
+    </div>
+    <!-- Comments section (only shown on edit) -->
+    <div id="t-comments-section" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Comments</div>
+        <div id="t-comments-count" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)"></div>
+      </div>
+      <div id="t-comments-list" style="max-height:220px;overflow-y:auto;margin-bottom:10px"></div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <textarea id="t-comment-body" class="form-input" placeholder="Add a comment — updates, blockers, context..." style="flex:1;min-height:40px;resize:vertical;font-family:inherit;font-size:12px"></textarea>
+        <button class="btn btn-primary btn-sm" onclick="_addTaskComment()" style="padding:9px 14px;white-space:nowrap">Post</button>
+      </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
       <div id="t-delete-wrap" style="display:none;margin-right:auto">
@@ -1392,6 +1470,89 @@
 @keyframes bi-spin { to { transform: rotate(360deg); } }
 </style>
 
+<!-- DELIVERABLE MODAL -->
+<div class="modal-overlay" id="deliverable-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-title" id="deliv-modal-title">Add Deliverable<button class="modal-close" onclick="closeModal('deliverable-modal')">✕</button></div>
+    <input type="hidden" id="deliv-edit-id">
+    <input type="hidden" id="deliv-project-id">
+    <div class="form-group"><label class="form-label">Deliverable Name</label><input class="form-input" id="deliv-name" placeholder="Reel #1, Homepage Design, etc."></div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Type</label>
+        <select class="form-select" id="deliv-type"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px">Publish Date <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span></label>
+        <input class="form-input" id="deliv-publish" type="date">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Description <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional — visible internally</span></label>
+      <textarea class="form-input" id="deliv-desc" placeholder="Notes for the team..." style="min-height:60px;font-family:inherit"></textarea>
+    </div>
+    <div class="form-group" id="deliv-status-wrap" style="display:none">
+      <label class="form-label">Status</label>
+      <select class="form-select" id="deliv-status">
+        <option value="planned">Planned</option>
+        <option value="in_progress">In Progress</option>
+        <option value="in_review">In Review</option>
+        <option value="published">Published</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px">Status is auto-managed based on linked tasks — override only if needed.</div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
+      <div id="deliv-delete-wrap" style="display:none;margin-right:auto">
+        <button class="btn" style="color:var(--red);border-color:rgba(224,90,90,0.35)" onclick="deleteDeliverable()">Delete</button>
+      </div>
+      <button class="btn" onclick="closeModal('deliverable-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDeliverable()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLIENT MODAL -->
+<div class="modal-overlay" id="client-modal">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-title" id="cli-modal-title">New Client<button class="modal-close" onclick="closeModal('client-modal')">✕</button></div>
+    <input type="hidden" id="cli-edit-id">
+    <div class="form-group"><label class="form-label">Client Name</label><input class="form-input" id="cli-name" placeholder="Company or person name"></div>
+    <div id="cli-fuzzy-warning" style="display:none;padding:10px 14px;background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:8px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--gold);margin-bottom:6px">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Similar client exists</span>
+      </div>
+      <div id="cli-fuzzy-suggestions" style="font-size:12px;color:var(--text2)"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Internal Notes <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">not visible to clients</span></label>
+      <textarea class="form-input" id="cli-notes" placeholder="Contact info, preferences, context..." style="min-height:60px;font-family:inherit"></textarea>
+    </div>
+    <div class="form-group" id="cli-portal-wrap">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" id="cli-portal-active" onchange="document.getElementById('cli-pin-wrap').style.display=this.checked?'':'none'">
+        <div>
+          <div style="font-size:12px;font-weight:500;color:var(--text)">Enable Client Portal Access</div>
+          <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">Client can log in at /portal with their PIN</div>
+        </div>
+      </label>
+    </div>
+    <div class="form-group" id="cli-pin-wrap" style="display:none">
+      <label class="form-label">Portal PIN <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">6+ digits</span></label>
+      <input class="form-input" id="cli-pin" type="text" autocomplete="off" placeholder="Leave blank to keep existing PIN">
+      <button type="button" class="btn btn-sm" style="margin-top:6px" onclick="_generateClientPin()">Generate random PIN</button>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
+      <div id="cli-delete-wrap" style="display:none;margin-right:auto">
+        <button class="btn" style="color:var(--red);border-color:rgba(224,90,90,0.35)" onclick="deleteClient()">Deactivate</button>
+      </div>
+      <button class="btn" onclick="closeModal('client-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClient()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="notification" id="notif"></div>
 
 <script>
@@ -1638,6 +1799,10 @@ async function bootstrapState() {
   state.payStatus             = data.payStatus || {};
   state.profitSharePaidStatus = data.profitSharePaidStatus || {};
   state.payLog = data.payLog || [];
+  state.clients               = data.clients || [];
+  state.deliverableTypes      = data.deliverableTypes || [];
+  state.deliverables          = data.deliverables || [];
+  state.taskDeliverables      = data.taskDeliverables || []; // [{taskId, deliverableId}]
   // archivedProjects derived from projects.archived flag
   state.archivedProjects = {};
   state.projects.forEach(p => { if (p.archived) state.archivedProjects[p.id] = true; });
@@ -1868,6 +2033,7 @@ async function saveDeal() {
   }
   const name         = document.getElementById('d-name').value.trim();
   const client       = document.getElementById('d-client').value.trim();
+  let   clientId     = document.getElementById('d-client-id').value || null;
   const value        = parseFloat(document.getElementById('d-value').value);
   const stage        = document.getElementById('d-stage').value;
   const owner        = document.getElementById('d-owner').value;
@@ -1876,6 +2042,33 @@ async function saveDeal() {
   const invoiceStatus = stage === 'Closed Won' ? document.getElementById('d-invoice').value : 'none';
   const amountCollected = 0; // field removed — no longer tracked
   if (!name || !client || isNaN(value)) { notify('Please fill in all required fields'); return; }
+
+  // If no clientId matched, this is either new client or misspelling → fuzzy check
+  if (!clientId) {
+    try {
+      const r = await api('POST', '/clients/validate-name', { name: client });
+      if (r.exact) {
+        clientId = r.exact.id;
+      } else if (r.similar && r.similar.length) {
+        const msg = `No exact match for "${client}". Did you mean one of these?\n\n${r.similar.map(s => `• ${s.name}`).join('\n')}\n\nClick OK to create "${client}" as a new client anyway, or Cancel to go back and fix the spelling.`;
+        if (!confirm(msg)) return;
+        const created = await api('POST', '/clients', { name: client });
+        state.clients = state.clients || [];
+        state.clients.push(created);
+        clientId = created.id;
+      } else {
+        // Genuinely new client — one-tap confirm
+        if (!confirm(`Create new client "${client}"?`)) return;
+        const created = await api('POST', '/clients', { name: client });
+        state.clients = state.clients || [];
+        state.clients.push(created);
+        clientId = created.id;
+      }
+    } catch(e) {
+      notify('Client lookup failed: ' + e.message);
+      return;
+    }
+  }
   const buckets = DEFAULT_BUCKETS.map((b, i) => ({
     ...b,
     pct:        parseFloat(document.getElementById('bpct-' + i)?.value || b.pct),
@@ -1890,9 +2083,9 @@ async function saveDeal() {
   // If deal is paid, strip financial fields from payload so admin can still edit non-financial fields
   let payload;
   if (editId && isDealModalLocked()) {
-    payload = { name, client, stage, owner, closeDate, invoiceStatus, amountCollected };
+    payload = { name, client, clientId, stage, owner, closeDate, invoiceStatus, amountCollected };
   } else {
-    payload = { name, client, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
+    payload = { name, client, clientId, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
   }
 
   closeModal('deal-modal');
@@ -2048,26 +2241,59 @@ async function saveTask() {
     notify('🔒 Project is complete and paid — tasks are locked');
     return;
   }
+  const deliverableId = document.getElementById('t-deliverable').value || null;
+  // Enforce: if project has deliverables and this is a NEW task, deliverable link required
+  if (!editId) {
+    const projHasDelivs = (state.deliverables||[]).some(d => d.projectId === projectId && d.status !== 'cancelled');
+    if (projHasDelivs && !deliverableId) {
+      notify('This project has deliverables defined — please link this task to one.');
+      return;
+    }
+  }
   const payload = {
     title, projectId,
-    assigneeId: document.getElementById('t-assignee').value,
-    dueDate:    document.getElementById('t-due').value || null,
-    priority:   document.getElementById('t-priority').value,
-    status:     document.getElementById('t-status').value,
-    estHours:   parseFloat(document.getElementById('t-est').value) || 0,
-    tag:        document.getElementById('t-tag').value || null,
+    assigneeId:  document.getElementById('t-assignee').value,
+    dueDate:     document.getElementById('t-due').value || null,
+    publishDate: document.getElementById('t-publish').value || null,
+    priority:    document.getElementById('t-priority').value,
+    status:      document.getElementById('t-status').value,
+    estHours:    parseFloat(document.getElementById('t-est').value) || 0,
+    tag:         document.getElementById('t-tag').value || null,
+    notes:       document.getElementById('t-notes').value || null,
   };
   closeModal('task-modal');
   try {
+    let taskId;
     if (editId) {
       const updated = await api('PATCH', '/tasks/' + editId, payload);
       const idx = state.tasks.findIndex(t => t.id === editId);
       if (idx >= 0) state.tasks[idx] = updated;
+      taskId = editId;
       notify('Task updated ✓');
     } else {
-      const created = await api('POST', '/tasks', payload);
+      const created = await api('POST', '/tasks', { ...payload, deliverableId });
       state.tasks.push(created);
+      taskId = created.id;
+      if (deliverableId) {
+        state.taskDeliverables = state.taskDeliverables || [];
+        state.taskDeliverables.push({ taskId, deliverableId });
+      }
       notify('Task added ✓');
+    }
+    // Sync deliverable link on edit — remove old, add new if changed
+    if (editId) {
+      const existing = (state.taskDeliverables||[]).find(l => l.taskId === taskId);
+      if (existing && existing.deliverableId !== deliverableId) {
+        await api('DELETE', `/tasks/${taskId}/deliverables/${existing.deliverableId}`);
+        state.taskDeliverables = state.taskDeliverables.filter(l => !(l.taskId === taskId && l.deliverableId === existing.deliverableId));
+      }
+      if (deliverableId && (!existing || existing.deliverableId !== deliverableId)) {
+        await api('POST', `/tasks/${taskId}/deliverables`, { deliverableId });
+        state.taskDeliverables.push({ taskId, deliverableId });
+      }
+      // Refetch deliverables to pick up any status changes from the auto-recompute
+      const freshDelivs = await api('GET', `/deliverables?projectId=${projectId}`);
+      state.deliverables = state.deliverables.filter(d => d.projectId !== projectId).concat(freshDelivs);
     }
     renderTaskView(); updateBadges();
   } catch(e) { notify('Save failed: ' + e.message); }
@@ -2446,6 +2672,9 @@ function renderPage(name){
   if(name==='health'){state.healthTab=state.healthTab||'active';renderHealthDashboard();}
   if(name==='workload')renderStandaloneWorkload();
   if(name==='prodcal')renderProdCal();
+  if(name==='pubcal')renderPubCal();
+  if(name==='clients')renderClientsView();
+  if(name==='deliv-types')renderDeliverableTypesView();
   updateBadges();
 }
 function updateBadges(){
@@ -4159,6 +4388,80 @@ function renderProjectDetail(pid){
       })()}
     </div>
 
+    <!-- Deliverables section -->
+    ${(()=>{
+      const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid);
+      const delivCount=projDelivs.length;
+      const statusCounts={planned:0,in_progress:0,in_review:0,published:0,cancelled:0};
+      projDelivs.forEach(d=>{statusCounts[d.status]=(statusCounts[d.status]||0)+1;});
+      const completedCount=statusCounts.published;
+      const overallPct=delivCount>0?Math.round(completedCount/delivCount*100):0;
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:22px">
+        <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Deliverables</div>
+            <div style="display:flex;align-items:baseline;gap:10px">
+              <span style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--gold)':'var(--text3)'}">${overallPct}% published</span>
+            </div>
+          </div>
+          ${can.createProject()?`<button class="btn btn-sm btn-primary" onclick="openDeliverableModal(null,'${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Deliverable</button>`:''}
+        </div>
+        ${delivCount===0?`<div style="padding:26px 20px;text-align:center;color:var(--text3);font-size:12px;font-style:italic">No deliverables defined yet. Add ones to track progress by output.</div>`:`
+          <!-- Status strip -->
+          <div style="display:flex;padding:10px 20px;gap:14px;background:var(--bg);border-bottom:1px solid var(--border2);flex-wrap:wrap">
+            ${[
+              {key:'planned',label:'Planned',color:'var(--text3)'},
+              {key:'in_progress',label:'In Progress',color:'var(--gold)'},
+              {key:'in_review',label:'In Review',color:'var(--blue)'},
+              {key:'published',label:'Published',color:'var(--green)'},
+            ].map(s=>`<div style="display:flex;align-items:center;gap:6px">
+              <div style="width:7px;height:7px;border-radius:50%;background:${s.color}"></div>
+              <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${s.label}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${s.color};font-weight:600">${statusCounts[s.key]||0}</span>
+            </div>`).join('')}
+          </div>
+          <!-- Deliverables list -->
+          <div>
+          ${projDelivs.map(d=>{
+            const type=state.deliverableTypes?.find(t=>t.id===d.typeId);
+            const linkedTaskIds=(state.taskDeliverables||[]).filter(l=>l.deliverableId===d.id).map(l=>l.taskId);
+            const linkedTasks=state.tasks.filter(t=>linkedTaskIds.includes(t.id));
+            const doneTasks=linkedTasks.filter(t=>t.status==='done').length;
+            const taskPct=linkedTasks.length>0?Math.round(doneTasks/linkedTasks.length*100):0;
+            const statusColors={
+              planned:['var(--text3)','var(--bg4)'],
+              in_progress:['var(--gold)','rgba(201,168,76,0.12)'],
+              in_review:['var(--blue)','rgba(102,126,234,0.12)'],
+              published:['var(--green)','rgba(76,175,122,0.12)'],
+              cancelled:['var(--red)','rgba(224,90,90,0.08)'],
+            };
+            const [sc,sb]=statusColors[d.status]||statusColors.planned;
+            const statusLabel={planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'}[d.status];
+            const pubStr=d.publishDate?new Date(d.publishDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
+            return`<div style="display:grid;grid-template-columns:1fr 140px 120px 120px auto;gap:14px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')">
+              <div style="min-width:0">
+                <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
+                <div style="font-size:10px;color:var(--text3);margin-top:2px">${type?.name||'untyped'} · ${linkedTasks.length} task${linkedTasks.length===1?'':'s'}</div>
+              </div>
+              <div>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.06em;padding:3px 8px;border-radius:4px;background:${sb};color:${sc}">${statusLabel}</span>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:11px;color:${pubStr?'var(--text2)':'var(--text3)'}">${pubStr||'no publish date'}</div>
+              <div>
+                <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
+                  <div style="height:100%;width:${taskPct}%;background:${sc};border-radius:2px"></div>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${doneTasks}/${linkedTasks.length} tasks done</div>
+              </div>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>`;
+          }).join('')}
+          </div>
+        `}
+      </div>`;
+    })()}
+
     <!-- Task view -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Tasks (${tasks.length})</div>
@@ -4498,8 +4801,439 @@ function _renderWorkloadInto(el){
 //  PRODUCTION CALENDAR
 // ============================================================
 // ============================================================
-//  PRODUCTION CALENDAR — DRAG & DROP
+//  DELIVERABLES
 // ============================================================
+
+function openDeliverableModal(delivId, projectId){
+  const d=delivId?state.deliverables.find(x=>x.id===delivId):null;
+  document.getElementById('deliv-modal-title').childNodes[0].nodeValue=d?'Edit Deliverable ':'Add Deliverable ';
+  document.getElementById('deliv-edit-id').value=delivId||'';
+  document.getElementById('deliv-project-id').value=d?d.projectId:projectId;
+  document.getElementById('deliv-name').value=d?d.name:'';
+  document.getElementById('deliv-desc').value=d?(d.description||''):'';
+  document.getElementById('deliv-publish').value=d?(d.publishDate||''):'';
+  // Types — master + this project's custom
+  const usablePid=d?d.projectId:projectId;
+  const types=(state.deliverableTypes||[]).filter(t=>t.active&&(t.projectId===null||t.projectId===usablePid));
+  document.getElementById('deliv-type').innerHTML='<option value="">— no type —</option>'+
+    types.map(t=>`<option value="${t.id}" ${d&&d.typeId===t.id?'selected':''}>${t.name}${t.projectId?' (custom)':''}</option>`).join('')+
+    '<option value="__new__">＋ Create new type…</option>';
+  document.getElementById('deliv-status-wrap').style.display=delivId?'':'none';
+  if(delivId){
+    document.getElementById('deliv-status').value=d.status||'planned';
+    document.getElementById('deliv-delete-wrap').style.display=can.createProject()?'':'none';
+  } else {
+    document.getElementById('deliv-delete-wrap').style.display='none';
+  }
+  document.getElementById('deliverable-modal').classList.add('open');
+  // Listen for "Create new type" selection
+  document.getElementById('deliv-type').onchange=_handleDelivTypeChange;
+}
+
+async function _handleDelivTypeChange(){
+  const sel=document.getElementById('deliv-type');
+  if(sel.value!=='__new__') return;
+  const name=prompt('Name for the new deliverable type:');
+  if(!name||!name.trim()){sel.value='';return;}
+  const projectId=document.getElementById('deliv-project-id').value;
+  const scope=confirm('Make this type available to ALL projects (master catalog)?\n\n• OK = Master (reusable)\n• Cancel = Custom to this project only');
+  try{
+    const t=await api('POST','/deliverable-types',{
+      name:name.trim(),
+      projectId:scope?null:projectId,
+    });
+    state.deliverableTypes=state.deliverableTypes||[];
+    state.deliverableTypes.push(t);
+    // Re-render the dropdown with the new type selected
+    const types=state.deliverableTypes.filter(x=>x.active&&(x.projectId===null||x.projectId===projectId));
+    sel.innerHTML='<option value="">— no type —</option>'+
+      types.map(x=>`<option value="${x.id}" ${x.id===t.id?'selected':''}>${x.name}${x.projectId?' (custom)':''}</option>`).join('')+
+      '<option value="__new__">＋ Create new type…</option>';
+    notify('Type added ✓');
+  } catch(e){
+    notify('Failed: '+e.message);
+    sel.value='';
+  }
+}
+
+async function saveDeliverable(){
+  const editId=document.getElementById('deliv-edit-id').value;
+  const projectId=document.getElementById('deliv-project-id').value;
+  const name=document.getElementById('deliv-name').value.trim();
+  if(!name){notify('Please enter a deliverable name');return;}
+  const typeVal=document.getElementById('deliv-type').value;
+  if(typeVal==='__new__'){notify('Finish creating the new type first');return;}
+  const payload={
+    projectId,
+    name,
+    typeId: typeVal||null,
+    description: document.getElementById('deliv-desc').value||null,
+    publishDate: document.getElementById('deliv-publish').value||null,
+  };
+  if(editId){
+    payload.status=document.getElementById('deliv-status').value;
+  }
+  closeModal('deliverable-modal');
+  try{
+    if(editId){
+      const updated=await api('PATCH','/deliverables/'+editId,payload);
+      const idx=state.deliverables.findIndex(d=>d.id===editId);
+      if(idx>=0) state.deliverables[idx]=updated;
+      notify('Deliverable updated ✓');
+    } else {
+      const created=await api('POST','/deliverables',payload);
+      state.deliverables=state.deliverables||[];
+      state.deliverables.push(created);
+      notify('Deliverable added ✓');
+    }
+    if(state.currentPage==='projects'&&state.activeProjectId) renderProjectDetail(state.activeProjectId);
+    else if(state.currentPage==='pubcal') renderPubCal();
+  } catch(e){notify('Save failed: '+e.message);}
+}
+
+async function deleteDeliverable(){
+  const editId=document.getElementById('deliv-edit-id').value;
+  if(!editId) return;
+  const linked=(state.taskDeliverables||[]).filter(l=>l.deliverableId===editId);
+  const warn=linked.length>0
+    ? `This deliverable has ${linked.length} task${linked.length===1?'':'s'} linked to it. Deleting the deliverable will unlink them but keep the tasks. Continue?`
+    : 'Delete this deliverable? This cannot be undone.';
+  if(!confirm(warn)) return;
+  closeModal('deliverable-modal');
+  try{
+    await api('DELETE','/deliverables/'+editId);
+    state.deliverables=state.deliverables.filter(d=>d.id!==editId);
+    state.taskDeliverables=(state.taskDeliverables||[]).filter(l=>l.deliverableId!==editId);
+    notify('Deliverable deleted');
+    if(state.currentPage==='projects'&&state.activeProjectId) renderProjectDetail(state.activeProjectId);
+  } catch(e){notify('Delete failed: '+e.message);}
+}
+
+// ============================================================
+//  CLIENTS
+// ============================================================
+
+function renderClientsView(){
+  const el=document.getElementById('clients-content');
+  if(!el) return;
+  const clients=state.clients||[];
+  if(clients.length===0){
+    el.innerHTML=`<div class="empty-state"><div class="empty-title">No clients yet</div><div class="empty-sub">Add a client to link deals and enable portal access.</div></div>`;
+    return;
+  }
+  const clientStats=clients.map(c=>{
+    const deals=state.deals.filter(d=>d.clientId===c.id);
+    const projects=state.projects.filter(p=>{
+      const deal=state.deals.find(d=>d.id===p.dealId);
+      return deal&&deal.clientId===c.id;
+    });
+    const active=projects.filter(p=>p.status==='active'&&!p.archived).length;
+    return{...c,dealsCount:deals.length,projectsCount:projects.length,activeProjects:active};
+  });
+  el.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 140px 100px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+        ${['Client','Deals','Projects','Portal','Actions'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+      </div>
+      ${clientStats.map(c=>`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 140px 100px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${c.name}</div>
+          ${c.notes?`<div style="font-size:10px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:400px">${_escapeHtml(c.notes)}</div>`:''}
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text2)">${c.dealsCount}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--text2)">${c.projectsCount} <span style="color:var(--text3);font-size:10px">(${c.activeProjects} active)</span></div>
+        <div>
+          ${c.portalActive
+            ? `<span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;padding:3px 8px;border-radius:4px;background:rgba(76,175,122,0.12);color:var(--green)">✓ Enabled</span>`
+            : `<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Disabled</span>`
+          }
+        </div>
+        <div>
+          <button class="btn btn-sm" onclick="openClientModal('${c.id}')">Edit</button>
+        </div>
+      </div>`).join('')}
+    </div>
+  `;
+}
+
+function openClientModal(editId){
+  const c=editId?(state.clients||[]).find(x=>x.id===editId):null;
+  document.getElementById('cli-modal-title').childNodes[0].nodeValue=c?'Edit Client ':'New Client ';
+  document.getElementById('cli-edit-id').value=editId||'';
+  document.getElementById('cli-name').value=c?c.name:'';
+  document.getElementById('cli-notes').value=c?(c.notes||''):'';
+  document.getElementById('cli-portal-active').checked=c?!!c.portalActive:false;
+  document.getElementById('cli-pin').value='';
+  document.getElementById('cli-pin-wrap').style.display=(c&&c.portalActive)?'':'none';
+  document.getElementById('cli-fuzzy-warning').style.display='none';
+  document.getElementById('cli-delete-wrap').style.display=(editId&&can.delete())?'':'none';
+  // Hot-check fuzzy match on blur
+  document.getElementById('cli-name').onblur=_checkClientNameFuzzy;
+  document.getElementById('client-modal').classList.add('open');
+}
+
+async function _checkClientNameFuzzy(){
+  const name=document.getElementById('cli-name').value.trim();
+  const editId=document.getElementById('cli-edit-id').value;
+  const warnEl=document.getElementById('cli-fuzzy-warning');
+  const sugEl=document.getElementById('cli-fuzzy-suggestions');
+  if(!name||editId){warnEl.style.display='none';return;}
+  try{
+    const r=await api('POST','/clients/validate-name',{name});
+    if(r.exact){
+      warnEl.style.display='';
+      sugEl.innerHTML=`An active client named <strong>"${r.exact.name}"</strong> already exists. Click Cancel to use the existing client instead.`;
+    } else if(r.similar&&r.similar.length){
+      warnEl.style.display='';
+      sugEl.innerHTML=`Did you mean one of these?<ul style="margin:6px 0 0;padding-left:18px">${r.similar.map(s=>`<li style="font-size:12px"><strong>${s.name}</strong></li>`).join('')}</ul><div style="margin-top:6px;font-size:11px;color:var(--text3)">If this is a genuinely new client, continue. Otherwise cancel and edit the existing one.</div>`;
+    } else {
+      warnEl.style.display='none';
+    }
+  } catch(e){/* silent */}
+}
+
+function _generateClientPin(){
+  const pin=Array.from({length:8},()=>Math.floor(Math.random()*10)).join('');
+  document.getElementById('cli-pin').value=pin;
+  notify('Generated: '+pin+' · copy before saving');
+}
+
+async function saveClient(){
+  const editId=document.getElementById('cli-edit-id').value;
+  const name=document.getElementById('cli-name').value.trim();
+  if(!name){notify('Please enter a client name');return;}
+  const payload={
+    name,
+    notes: document.getElementById('cli-notes').value||null,
+    portalActive: document.getElementById('cli-portal-active').checked,
+  };
+  const pinVal=document.getElementById('cli-pin').value.trim();
+  if(pinVal){
+    if(pinVal.length<6){notify('PIN must be at least 6 digits');return;}
+    payload.pin=pinVal;
+  }
+  // If enabling portal but no PIN set and no existing PIN, require one
+  if(payload.portalActive&&!pinVal){
+    const existing=editId?(state.clients||[]).find(c=>c.id===editId):null;
+    if(!existing||!existing.hasPin){
+      notify('Set a PIN before enabling portal access');
+      return;
+    }
+  }
+  closeModal('client-modal');
+  try{
+    if(editId){
+      const updated=await api('PATCH','/clients/'+editId,payload);
+      const idx=state.clients.findIndex(c=>c.id===editId);
+      if(idx>=0) state.clients[idx]=updated;
+      notify('Client updated ✓');
+    } else {
+      const created=await api('POST','/clients',payload);
+      state.clients=state.clients||[];
+      state.clients.push(created);
+      notify('Client created ✓');
+    }
+    renderClientsView();
+  } catch(e){notify('Save failed: '+e.message);}
+}
+
+async function deleteClient(){
+  const editId=document.getElementById('cli-edit-id').value;
+  if(!editId) return;
+  if(!confirm('Deactivate this client? They will no longer appear in lists but historical deals remain linked.')) return;
+  closeModal('client-modal');
+  try{
+    await api('DELETE','/clients/'+editId);
+    state.clients=state.clients.filter(c=>c.id!==editId);
+    notify('Client deactivated');
+    renderClientsView();
+  } catch(e){notify('Delete failed: '+e.message);}
+}
+
+// ============================================================
+//  DELIVERABLE TYPES MANAGEMENT
+// ============================================================
+
+function renderDeliverableTypesView(){
+  const el=document.getElementById('deliv-types-content');
+  if(!el) return;
+  const types=(state.deliverableTypes||[]).filter(t=>t.active);
+  const master=types.filter(t=>!t.projectId);
+  const custom=types.filter(t=>t.projectId);
+  el.innerHTML=`
+    <div style="margin-bottom:24px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Master Catalog (${master.length})</div>
+      ${master.length===0?`<div style="padding:18px;color:var(--text3);font-size:12px;font-style:italic">No master types yet.</div>`:`
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+          ${master.map(t=>{
+            const usedCount=(state.deliverables||[]).filter(d=>d.typeId===t.id).length;
+            return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+              <div style="min-width:0">
+                <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.name}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${usedCount} in use</div>
+              </div>
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                <button class="btn btn-sm" onclick="_renameDelivType('${t.id}')" title="Rename" style="padding:4px 8px">✎</button>
+                <button class="btn btn-sm" onclick="_deleteDelivType('${t.id}')" title="Delete" style="padding:4px 8px;color:var(--red)">✕</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+    </div>
+    ${custom.length>0?`<div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Project-Specific (${custom.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+        ${custom.map(t=>{
+          const proj=state.projects.find(p=>p.id===t.projectId);
+          return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:500;color:var(--text)">${t.name}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${proj?.name||'unknown project'}</div>
+            </div>
+            <button class="btn btn-sm" onclick="_deleteDelivType('${t.id}')" title="Delete" style="padding:4px 8px;color:var(--red)">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+  `;
+}
+
+async function _openAddDelivType(){
+  const name=prompt('Name for the new deliverable type:');
+  if(!name||!name.trim()) return;
+  try{
+    const t=await api('POST','/deliverable-types',{name:name.trim(),projectId:null});
+    state.deliverableTypes=state.deliverableTypes||[];
+    state.deliverableTypes.push(t);
+    notify('Type added ✓');
+    renderDeliverableTypesView();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+async function _renameDelivType(id){
+  const t=state.deliverableTypes.find(x=>x.id===id);
+  if(!t) return;
+  const newName=prompt('New name:',t.name);
+  if(!newName||!newName.trim()||newName===t.name) return;
+  try{
+    const updated=await api('PATCH','/deliverable-types/'+id,{name:newName.trim()});
+    Object.assign(t,updated);
+    notify('Renamed ✓');
+    renderDeliverableTypesView();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+async function _deleteDelivType(id){
+  const usedCount=(state.deliverables||[]).filter(d=>d.typeId===id).length;
+  const warn=usedCount>0?`This type is used on ${usedCount} deliverable${usedCount===1?'':'s'}. Delete anyway? Existing deliverables will keep their name but lose the type link.`:'Delete this type?';
+  if(!confirm(warn)) return;
+  try{
+    await api('DELETE','/deliverable-types/'+id);
+    state.deliverableTypes=state.deliverableTypes.filter(t=>t.id!==id);
+    notify('Deleted');
+    renderDeliverableTypesView();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+// ============================================================
+//  PUBLISHING CALENDAR
+// ============================================================
+
+function renderPubCal(){
+  const el=document.getElementById('pubcal-board');
+  if(!el) return;
+  const now=new Date();
+  const offset=state.pubCalOffset||0;
+  const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  const yr=base.getFullYear(),mo=base.getMonth();
+  const dim=new Date(yr,mo+1,0).getDate();
+  const fd=new Date(yr,mo,1).getDay();
+  const ts=now.toISOString().split('T')[0];
+
+  // Collect tasks + deliverables with publish_date in this month
+  const monthPrefix=`${yr}-${String(mo+1).padStart(2,'0')}`;
+  const pubTasks=state.tasks.filter(t=>t.publishDate&&t.publishDate.startsWith(monthPrefix));
+  const pubDelivs=(state.deliverables||[]).filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix));
+
+  const byDate={};
+  pubTasks.forEach(t=>{
+    if(!byDate[t.publishDate]) byDate[t.publishDate]={tasks:[],delivs:[]};
+    byDate[t.publishDate].tasks.push(t);
+  });
+  pubDelivs.forEach(d=>{
+    if(!byDate[d.publishDate]) byDate[d.publishDate]={tasks:[],delivs:[]};
+    byDate[d.publishDate].delivs.push(d);
+  });
+
+  const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let cells='';
+  const prevDim=new Date(yr,mo,0).getDate();
+  for(let i=0;i<fd;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${prevDim-fd+i+1}</div></div>`;
+
+  for(let d=1;d<=dim;d++){
+    const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday=ds===ts;
+    const bucket=byDate[ds]||{tasks:[],delivs:[]};
+    const totalCount=bucket.tasks.length+bucket.delivs.length;
+    const chips=[];
+    bucket.delivs.slice(0,3).forEach(x=>{
+      const proj=state.projects.find(p=>p.id===x.projectId);
+      const type=state.deliverableTypes?.find(t=>t.id===x.typeId);
+      chips.push(`<div onclick="event.stopPropagation();openDeliverableModal('${x.id}','${x.projectId}')"
+        title="${x.name}${type?' · '+type.name:''}${proj?' · '+proj.name:''}"
+        style="background:rgba(149,97,226,0.18);border-left:2px solid var(--purple);border-radius:3px;padding:3px 6px;margin-bottom:3px;cursor:pointer">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">◆ ${x.name}</div>
+        <div style="font-size:8px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+      </div>`);
+    });
+    bucket.tasks.slice(0,Math.max(0,3-bucket.delivs.length)).forEach(t=>{
+      const proj=state.projects.find(p=>p.id===t.projectId);
+      const a=state.team.find(m=>m.id===t.assigneeId);
+      chips.push(`<div onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
+        title="${t.title}${proj?' · '+proj.name:''}"
+        style="background:${a?.color||'var(--bg4)'};border-radius:3px;padding:3px 6px;margin-bottom:3px;cursor:pointer">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
+        <div style="font-size:8px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
+      </div>`);
+    });
+    cells+=`<div class="cal-day${isToday?' today':''}" style="min-height:110px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
+        <div class="cal-day-num">${d}</div>
+        ${totalCount>0?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">${totalCount} publishing</div>`:''}
+      </div>
+      ${chips.join('')}
+      ${totalCount>3?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:2px">+${totalCount-3} more</div>`:''}
+    </div>`;
+  }
+  const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
+  for(let i=1;i<=rem;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${i}</div></div>`;
+
+  const totalMonth=pubTasks.length+pubDelivs.length;
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)-1;renderPubCal()">‹</button>
+      <span style="font-family:'Cormorant Garamond',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
+      <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)+1;renderPubCal()">›</button>
+      ${offset!==0?`<button class="btn btn-sm" onclick="state.pubCalOffset=0;renderPubCal()">Today</button>`:''}
+      <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">
+          <div style="width:9px;height:9px;border-left:3px solid var(--purple);background:rgba(149,97,226,0.18)"></div>Deliverables
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">
+          <div style="width:9px;height:9px;background:var(--gold);border-radius:2px"></div>Tasks
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${totalMonth} items publishing this month</div>
+      </div>
+    </div>
+    <div class="calendar-grid">
+      ${dn.map(d=>`<div class="cal-header">${d}</div>`).join('')}
+      ${cells}
+    </div>
+  `;
+}
+
+
 let _prodCalDragId=null;
 
 function _pcDragStart(e,taskId){
@@ -6756,6 +7490,29 @@ function openDealModal(editId){
   document.getElementById('d-owner').innerHTML=state.team.map(m=>`<option value="${m.id}" ${d&&d.owner===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('d-name').value=d?d.name:'';
   document.getElementById('d-client').value=d?d.client:'';
+  document.getElementById('d-client-id').value=d?(d.clientId||''):'';
+  // Populate client datalist from existing clients
+  const dl=document.getElementById('d-client-list');
+  if(dl){
+    dl.innerHTML=(state.clients||[]).map(c=>`<option value="${c.name.replace(/"/g,'&quot;')}">`).join('');
+  }
+  // Wire auto-resolve client_id on input
+  const cliInp=document.getElementById('d-client');
+  const hint=document.getElementById('d-client-hint');
+  cliInp.oninput=()=>{
+    const v=cliInp.value.trim();
+    const exact=(state.clients||[]).find(c=>c.name.toLowerCase()===v.toLowerCase());
+    if(exact){
+      document.getElementById('d-client-id').value=exact.id;
+      hint.textContent='✓ Using existing client';
+      hint.style.color='var(--green)';
+    } else {
+      document.getElementById('d-client-id').value='';
+      hint.textContent=v?'New client — will confirm before creating':'';
+      hint.style.color='var(--gold)';
+    }
+  };
+  cliInp.oninput(); // fire once to set initial hint
   document.getElementById('d-value').value=d?d.value:'';
   // Show/hide financial lock banner — only locks when project payouts are finalized
   const lockBanner=document.getElementById('d-financial-lock-banner');
@@ -6844,17 +7601,146 @@ function openTaskModal(editId){
   document.getElementById('t-assignee').innerHTML=state.team.map(m=>`<option value="${m.id}" ${t&&t.assigneeId===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('t-title').value=t?t.title:'';
   document.getElementById('t-due').value=t?(t.due||''):'';
+  document.getElementById('t-publish').value=t?(t.publishDate||''):'';
   document.getElementById('t-priority').value=t?t.priority:'med';
   document.getElementById('t-status').value=t?t.status:'todo';
   document.getElementById('t-est').value=t?(t.estHours||''):'';
+  document.getElementById('t-notes').value=t?(t.notes||''):'';
   document.getElementById('task-modal').dataset.editId=editId||'';
   _selectTag(t?t.tag||'':'');
+  _onTaskProjectChange(t?_getTaskDeliverableId(t.id):'');
   // Show delete button only for admins editing an existing task
   const delWrap=document.getElementById('t-delete-wrap');
   if(delWrap) delWrap.style.display=(auth.role==='admin'&&editId)?'block':'none';
+  // Comments section only on edit
+  const commentsSection=document.getElementById('t-comments-section');
+  if(commentsSection){
+    commentsSection.style.display=editId?'block':'none';
+    if(editId) _loadTaskComments(editId);
+  }
   updateTaskPayPreview();
   document.getElementById('task-modal').classList.add('open');
 }
+
+// Re-populate deliverable dropdown when project changes; enforces required-if-project-has-deliverables rule
+function _onTaskProjectChange(preselectedDeliverableId){
+  const pid=document.getElementById('t-project').value;
+  const sel=document.getElementById('t-deliverable');
+  const required=document.getElementById('t-deliverable-required');
+  const hint=document.getElementById('t-deliverable-hint');
+  const help=document.getElementById('t-deliverable-help');
+  if(!sel) return;
+  const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid&&d.status!=='cancelled');
+  sel.innerHTML='<option value="">— none —</option>'+projDelivs.map(d=>{
+    const type=state.deliverableTypes?.find(t=>t.id===d.typeId);
+    const label=type?`${d.name} · ${type.name}`:d.name;
+    return`<option value="${d.id}" ${d.id===preselectedDeliverableId?'selected':''}>${label}</option>`;
+  }).join('');
+  // Required indicator — only required for NEW tasks on projects that have deliverables
+  const editId=document.getElementById('task-modal').dataset.editId;
+  const hasDelivs=projDelivs.length>0;
+  if(required&&hint){
+    const isRequired=hasDelivs&&!editId;
+    required.style.display=isRequired?'':'none';
+    hint.style.display=isRequired?'none':'';
+  }
+  if(help){
+    if(!hasDelivs) help.textContent='This project has no deliverables defined yet — add some from the project page to organize tasks by deliverable.';
+    else help.textContent='Select the deliverable this task contributes to.';
+  }
+}
+
+function _getTaskDeliverableId(taskId){
+  const link=(state.taskDeliverables||[]).find(l=>l.taskId===taskId);
+  return link?link.deliverableId:'';
+}
+
+async function _loadTaskComments(taskId){
+  const listEl=document.getElementById('t-comments-list');
+  const countEl=document.getElementById('t-comments-count');
+  if(!listEl) return;
+  listEl.innerHTML=`<div style="color:var(--text3);font-size:11px;padding:8px">Loading…</div>`;
+  try{
+    const comments=await api('GET',`/tasks/${taskId}/comments`);
+    _taskComments=comments||[];
+    _renderTaskComments();
+  } catch(e){
+    listEl.innerHTML=`<div style="color:var(--red);font-size:11px;padding:8px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+let _taskComments=[];
+function _renderTaskComments(){
+  const listEl=document.getElementById('t-comments-list');
+  const countEl=document.getElementById('t-comments-count');
+  if(!listEl) return;
+  countEl.textContent=_taskComments.length===0?'no comments yet':`${_taskComments.length} comment${_taskComments.length===1?'':'s'}`;
+  if(_taskComments.length===0){
+    listEl.innerHTML=`<div style="color:var(--text3);font-size:11px;padding:12px;text-align:center;font-style:italic">No comments yet — start the thread below.</div>`;
+    return;
+  }
+  listEl.innerHTML=_taskComments.map(c=>{
+    const mem=state.team.find(m=>m.id===c.authorId);
+    const color=mem?.color||'#555';
+    const initials=c.authorName.split(' ').map(n=>n[0]).join('').substring(0,2);
+    const when=new Date(c.createdAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    const canEdit=c.authorId===auth.userId||auth.role==='admin';
+    return`<div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div class="user-avatar" style="background:${color};width:26px;height:26px;font-size:10px;flex-shrink:0">${initials}</div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">${c.authorName}</span>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${when}${c.editedAt?' · edited':''}</span>
+          ${canEdit?`<span style="margin-left:auto;display:flex;gap:4px">
+            <button onclick="_editComment('${c.id}')" title="Edit" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:10px;padding:2px">edit</button>
+            <button onclick="_deleteComment('${c.id}')" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:10px;padding:2px">delete</button>
+          </span>`:''}
+        </div>
+        <div id="comment-body-${c.id}" style="font-size:12px;color:var(--text2);white-space:pre-wrap;line-height:1.5">${_escapeHtml(c.body)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _escapeHtml(str){
+  return String(str||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function _addTaskComment(){
+  const editId=document.getElementById('task-modal').dataset.editId;
+  if(!editId){notify('Save the task first before adding comments');return;}
+  const body=document.getElementById('t-comment-body').value.trim();
+  if(!body) return;
+  try{
+    const c=await api('POST',`/tasks/${editId}/comments`,{body});
+    _taskComments.push(c);
+    document.getElementById('t-comment-body').value='';
+    _renderTaskComments();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+async function _editComment(id){
+  const c=_taskComments.find(x=>x.id===id);
+  if(!c) return;
+  const bodyEl=document.getElementById('comment-body-'+id);
+  const newBody=prompt('Edit comment:',c.body);
+  if(newBody===null||newBody.trim()===c.body) return;
+  try{
+    const updated=await api('PATCH','/comments/'+id,{body:newBody.trim()});
+    Object.assign(c,updated);
+    _renderTaskComments();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+async function _deleteComment(id){
+  if(!confirm('Delete this comment? This cannot be undone.')) return;
+  try{
+    await api('DELETE','/comments/'+id);
+    _taskComments=_taskComments.filter(c=>c.id!==id);
+    _renderTaskComments();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
 function openEditTaskModal(id){openTaskModal(id);}
 
 function _selectTag(tag){
