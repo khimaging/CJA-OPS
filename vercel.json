@@ -21,3 +21,8 @@
     }
   ]
 }
+{
+  "rewrites": [
+    { "source": "/portal", "destination": "/portal.html" }
+  ]
+}
