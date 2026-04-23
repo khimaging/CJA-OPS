@@ -1917,6 +1917,26 @@ function requirePortalAuth(req, res, next) {
  * Returns: projects (stripped), deliverables, task_deliverables, tasks (minimal), deliverable_types
  * Explicitly excludes: assignees, hours, amounts, comments, expenses, audit, team, deals, pay info.
  */
+app.get('/api/portal/debug', requirePortalAuth, async (req, res) => {
+  try {
+    const clientId = req.portalClient.clientId;
+    const { data: deals } = await supabase.from('deals').select('id,name').eq('client_id', clientId);
+    const dealIds = (deals || []).map(d => d.id);
+    const { data: projects } = await supabase.from('projects').select('id,name,status').in('deal_id', dealIds).eq('archived', false);
+    const projectIds = (projects || []).map(p => p.id);
+    const tasksResp = await supabase.from('tasks').select('id,title,project_id,tag').in('project_id', projectIds);
+    const linksResp = await supabase.from('task_deliverables').select('task_id,deliverable_id');
+    res.json({
+      clientId, dealIds, projectIds,
+      tasksCount: tasksResp.data?.length,
+      tasksError: tasksResp.error,
+      linksCount: linksResp.data?.length,
+      linksError: linksResp.error,
+      sampleTask: tasksResp.data?.[0],
+    });
+  } catch(e) { res.status(500).json({error: e.message}); }
+});
+
 app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
   try {
     const clientId = req.portalClient.clientId;
@@ -1941,10 +1961,11 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     let tLinks = [], tRows = [], allTasksForBudget = [];
     if (projectIds.length) {
       const [linksResp, tasksResp] = await Promise.all([
-        supabase.from('task_deliverables').select('*'),
-        // Include est_hours in the raw fetch so we can compute per-project budget usage server-side
+        supabase.from('task_deliverables').select('task_id,deliverable_id'),
         supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,updated_at,est_hours').in('project_id', projectIds),
       ]);
+      if (tasksResp.error) console.error('[portal/data] tasks error:', tasksResp.error);
+      if (linksResp.error) console.error('[portal/data] links error:', linksResp.error);
       allTasksForBudget = tasksResp.data || [];
       // Strip admin-tagged tasks from client view — clients don't need to see internal admin work
       tRows = allTasksForBudget.filter(t => t.tag !== 'admin');
