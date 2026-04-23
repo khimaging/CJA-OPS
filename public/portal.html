@@ -164,15 +164,15 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
   <!-- Top-level nav -->
   <div id="portal-nav" style="background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;display:flex;gap:4px">
     <button id="nav-dashboard" onclick="setPage('dashboard')" class="portal-nav-item">Dashboard</button>
-    <button id="nav-deliverables" onclick="setPage('deliverables')" class="portal-nav-item">Deliverables</button>
     <button id="nav-tasks" onclick="setPage('tasks')" class="portal-nav-item">Tasks</button>
+    <button id="nav-calendar" onclick="setPage('calendar')" class="portal-nav-item">Calendar</button>
   </div>
   <div class="portal-content" id="portal-content"></div>
 </div>
 
 <script>
 const API_BASE='/api';
-let state={token:null,client:null,data:null,page:'dashboard',view:'kanban',calMode:'publishing',projectFilter:'',showCompleted:false,calOffset:0,activeDelivId:null};
+let state={token:null,client:null,data:null,page:'dashboard',view:'kanban',calMode:'publishing',projectFilter:'',calOffset:0,activeDelivId:null};
 
 // ── Auth ──
 function getToken(){return localStorage.getItem('cja_portal_token');}
@@ -289,12 +289,15 @@ function deliverableProductionDate(deliverable){
   return tasks.reduce((min,t)=>!min||t.due<min?t.due:min,null);
 }
 
-// Filter helpers — used by dashboard, deliverables, tasks views
+// Filter helpers
 function getVisibleProjects(){
   const projs=state.data.projects||[];
-  return projs
-    .filter(p=>state.showCompleted?true:p.status!=='complete')
-    .filter(p=>state.projectFilter?p.id===state.projectFilter:true);
+  return projs.filter(p=>state.projectFilter?p.id===state.projectFilter:true);
+}
+
+function getAllProjects(){
+  // All projects regardless of status or filter — used for calendar historical view
+  return state.data.projects||[];
 }
 
 function getFilteredDeliverables(){
@@ -308,7 +311,14 @@ function getFilteredTasks(){
   const visibleIds=new Set(getVisibleProjects().map(p=>p.id));
   return (state.data.tasks||[])
     .filter(t=>visibleIds.has(t.projectId))
-    // Already filtered out admin-tagged tasks server-side, but double-check
+    .filter(t=>t.tag!=='admin');
+}
+
+function getAllTasks(){
+  // All tasks across all projects including completed — used for calendar
+  const allProjIds=new Set((state.data.projects||[]).map(p=>p.id));
+  return (state.data.tasks||[])
+    .filter(t=>allProjIds.has(t.projectId))
     .filter(t=>t.tag!=='admin');
 }
 
@@ -316,13 +326,13 @@ function getFilteredTasks(){
 
 function setPage(page){
   state.page=page;
-  state.activeDelivId=null; // clear any deliverable drill-in when switching pages
+  state.activeDelivId=null;
+  if(page==='calendar') state.calOffset=0; // reset calendar to current month on tab switch
   renderPortal();
 }
 
 function renderPortal(){
-  // Update nav active states
-  ['dashboard','deliverables','tasks'].forEach(p=>{
+  ['dashboard','tasks','calendar'].forEach(p=>{
     const el=document.getElementById('nav-'+p);
     if(el) el.classList.toggle('active',state.page===p);
   });
@@ -337,19 +347,24 @@ function renderPortal(){
   }
 
   if(state.page==='dashboard') renderDashboard();
-  else if(state.page==='deliverables') renderDeliverablesPage();
   else if(state.page==='tasks') renderTasksPage();
+  else if(state.page==='calendar') renderCalendarPage();
 }
 
 // ── Shared filter bar (project + active/complete) ──
 
 function renderFilterBar(extraContent=''){
   const projs=state.data.projects||[];
-  const activeCount=projs.filter(p=>p.status!=='complete').length;
-  const completeCount=projs.filter(p=>p.status==='complete').length;
-  const filteredProjects=projs.filter(p=>state.showCompleted?true:p.status!=='complete');
-  const projectOptions=`<option value="">All Projects (${filteredProjects.length})</option>`+
-    filteredProjects.map(p=>`<option value="${p.id}" ${state.projectFilter===p.id?'selected':''}>${escapeHtml(p.name)}${p.status==='complete'?' · completed':''}</option>`).join('');
+  // Sort projects: most recent first (by name desc is often month-based — use creation order)
+  const sorted=[...projs].sort((a,b)=>{
+    // Prefer projects with a start date, sort descending (newest first)
+    if(a.startDate&&b.startDate) return b.startDate.localeCompare(a.startDate);
+    if(a.startDate) return -1;
+    if(b.startDate) return 1;
+    return (b.name||'').localeCompare(a.name||'');
+  });
+  const projectOptions=`<option value="">All Projects</option>`+
+    sorted.map(p=>`<option value="${p.id}" ${state.projectFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
   return`<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px">
     <div style="display:flex;align-items:center;gap:8px">
       <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Project</span>
@@ -357,23 +372,46 @@ function renderFilterBar(extraContent=''){
         ${projectOptions}
       </select>
     </div>
-    <div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
-      <button onclick="state.showCompleted=false;if(state.projectFilter&&state.data.projects.find(p=>p.id===state.projectFilter)?.status==='complete')state.projectFilter='';renderPortal()"
-        style="background:${!state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${!state.showCompleted?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
-        Active (${activeCount})
-      </button>
-      <button onclick="state.showCompleted=true;renderPortal()"
-        style="background:${state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${state.showCompleted?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
-        All (${activeCount+completeCount})
-      </button>
-    </div>
     ${extraContent}
   </div>`;
+}
+
+// Pick the project that best matches the current calendar month
+function defaultProjectForCurrentMonth(){
+  const projs=state.data.projects||[];
+  if(!projs.length) return '';
+  const now=new Date();
+  const yr=now.getFullYear();
+  const mo=now.getMonth(); // 0-indexed
+  // Look for a project whose startDate falls in the current month
+  const match=projs.find(p=>{
+    if(!p.startDate) return false;
+    const d=new Date(p.startDate+'T12:00:00');
+    return d.getFullYear()===yr && d.getMonth()===mo;
+  });
+  if(match) return match.id;
+  // Fallback: project whose endDate is in current month
+  const endMatch=projs.find(p=>{
+    if(!p.endDate) return false;
+    const d=new Date(p.endDate+'T12:00:00');
+    return d.getFullYear()===yr && d.getMonth()===mo;
+  });
+  if(endMatch) return endMatch.id;
+  // Fallback: most recently started active project
+  const active=[...projs].filter(p=>p.status!=='complete').sort((a,b)=>{
+    if(a.startDate&&b.startDate) return b.startDate.localeCompare(a.startDate);
+    return 0;
+  });
+  return active.length?active[0].id:'';
 }
 
 // ── DASHBOARD ──
 
 function renderDashboard(){
+  // Auto-select the current month's project on first dashboard load
+  if(!state.projectFilter){
+    state.projectFilter=defaultProjectForCurrentMonth();
+  }
   const delivs=getFilteredDeliverables();
   const tasks=getFilteredTasks();
   const projs=getVisibleProjects();
@@ -691,22 +729,19 @@ function renderDelivsCalendar(delivs,body){
 // ── TASKS PAGE ──
 
 function renderTasksPage(){
-  const calLabel=state.calMode==='publishing'?'Publishing':'Production';
-  const modeToggle=`<div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
-    <button onclick="state.calMode='production';renderPortal()" style="background:${state.calMode==='production'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='production'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Production</button>
-    <button onclick="state.calMode='publishing';renderPortal()" style="background:${state.calMode==='publishing'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='publishing'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Publishing</button>
-  </div>`;
-
   const viewTabs=`<div class="view-tabs" style="margin-bottom:0;margin-left:auto">
-    <button class="view-tab ${state.view==='list'?'active':''}" onclick="state.view='list';renderPortal()">List</button>
-    <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderPortal()">Kanban</button>
-    <button class="view-tab ${state.view==='calendar'?'active':''}" onclick="state.view='calendar';renderPortal()">Calendar</button>
+    <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderPortal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>
+      Kanban
+    </button>
+    <button class="view-tab ${state.view==='list'?'active':''}" onclick="state.view='list';renderPortal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      List
+    </button>
   </div>`;
-
-  const extraBar=state.view==='calendar'?modeToggle:'';
 
   document.getElementById('portal-content').innerHTML=`
-    ${renderFilterBar(extraBar+viewTabs)}
+    ${renderFilterBar(viewTabs)}
     <div id="view-body"></div>
   `;
   renderTasksViewBody();
@@ -724,8 +759,7 @@ function renderTasksViewBody(){
     return;
   }
   if(state.view==='list') renderTasksList(tasks,body);
-  else if(state.view==='kanban') renderTasksKanban(tasks,body);
-  else if(state.view==='calendar') renderTasksCalendar(tasks,body);
+  else renderTasksKanban(tasks,body);
 }
 
 function renderTasksList(tasks,body){
@@ -778,22 +812,54 @@ function renderTasksKanban(tasks,body){
   </div>`;
 }
 
-function renderTasksCalendar(tasks,body){
+// ── CALENDAR PAGE (standalone tab — production + publishing, all projects including completed) ──
+
+function renderCalendarPage(){
+  const modeToggle=`<div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
+    <button onclick="state.calMode='production';renderPortal()" style="background:${state.calMode==='production'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='production'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Production</button>
+    <button onclick="state.calMode='publishing';renderPortal()" style="background:${state.calMode==='publishing'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='publishing'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Publishing</button>
+  </div>`;
+
+  // Calendar uses ALL tasks — ignore project completion status so clients can see historical data
+  // Still respect the project filter dropdown if a specific project is chosen
+  const allTasks=getAllTasks();
+  const tasks=state.projectFilter
+    ? allTasks.filter(t=>t.projectId===state.projectFilter)
+    : allTasks;
+
+  // Build project options from ALL projects (not just active)
+  const allProjs=getAllProjects();
+  const sorted=[...allProjs].sort((a,b)=>{
+    if(a.startDate&&b.startDate) return b.startDate.localeCompare(a.startDate);
+    return (b.name||'').localeCompare(a.name||'');
+  });
+  const projectOptions=`<option value="">All Projects</option>`+
+    sorted.map(p=>`<option value="${p.id}" ${state.projectFilter===p.id?'selected':''}>${escapeHtml(p.name)}${p.status==='complete'?' · completed':''}</option>`).join('');
+  const filterBar=`<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Project</span>
+      <select onchange="state.projectFilter=this.value;renderPortal()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:12px;font-family:inherit;cursor:pointer;min-width:220px">
+        ${projectOptions}
+      </select>
+    </div>
+    ${modeToggle}
+  </div>`;
+
+  document.getElementById('portal-content').innerHTML=`
+    ${filterBar}
+    <div id="cal-body"></div>
+  `;
+
+  const body=document.getElementById('cal-body');
   const color=state.calMode==='publishing'?'var(--amber)':'var(--blue)';
   let decorated;
   if(state.calMode==='publishing'){
-    // Publishing mode: explicit publish date OR fall back to due date
     decorated=tasks.map(t=>({...t,__calDate:effectivePublishDate(t)})).filter(t=>t.__calDate);
   } else {
-    // Production mode: task due dates. Admin-tagged tasks already stripped server-side.
-    // Shows production + post-production + untagged tasks (clients see what team is working on, minus admin noise).
-    decorated=tasks
-      .filter(t=>t.tag!=='admin')
-      .map(t=>({...t,__calDate:t.due}))
-      .filter(t=>t.__calDate);
+    decorated=tasks.filter(t=>t.tag!=='admin').map(t=>({...t,__calDate:t.due})).filter(t=>t.__calDate);
   }
   renderPortalCalendar(decorated,body,'__calDate',color,t=>{
-    const proj=state.data.projects.find(p=>p.id===t.projectId);
+    const proj=(state.data.projects||[]).find(p=>p.id===t.projectId);
     return{title:t.title,subtitle:proj?.name||'',onClick:null};
   });
 }
@@ -937,7 +1003,7 @@ function _openDelivDrillIn(delivId){
   document.body.appendChild(modal);
 }
 
-// Backwards-compat shims (kept so older render paths don't break)
+// Backwards-compat shims
 function renderHome(){renderPortal();}
 function openProject(pid){state.projectFilter=pid;renderPortal();}
 function setView(v){state.view=v;renderPortal();}
