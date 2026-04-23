@@ -421,9 +421,34 @@ function renderDashboard(){
     .sort((a,b)=>a.due.localeCompare(b.due))
     .slice(0,5);
 
+  // Edit hours budget usage — show per project that has a budget set
+  const projsWithBudget=projs.filter(p=>p.editHoursBudget!=null&&p.editHoursBudget>0);
+
   const el=document.getElementById('portal-content');
   el.innerHTML=`
     ${renderFilterBar()}
+
+    ${projsWithBudget.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px 22px;margin-bottom:18px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Hours Budget</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${projsWithBudget.map(p=>{
+          const used=p.editHoursUsed||0;
+          const budget=p.editHoursBudget;
+          const pct=budget>0?Math.min(100,Math.round(used/budget*100)):0;
+          const over=used>budget;
+          const barColor=over?'var(--red)':pct>=85?'var(--amber)':'var(--green)';
+          return`<div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:5px;gap:10px">
+              <span style="font-size:12px;color:var(--text);font-weight:500">${escapeHtml(p.name)}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${over?'var(--red)':'var(--text2)'};font-weight:600">${used.toFixed(1)} / ${budget}h <span style="color:var(--text3);font-weight:400">· ${pct}%${over?' over':''}</span></span>
+            </div>
+            <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:${Math.min(pct,100)}%;background:${barColor};border-radius:3px;transition:width .3s"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
 
     <!-- Metrics strip -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:26px">

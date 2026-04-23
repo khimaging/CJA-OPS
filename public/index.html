@@ -1149,6 +1149,14 @@
         </div>
       </label>
     </div>
+    <div class="form-group">
+      <label class="form-label" style="display:flex;align-items:center;gap:6px">
+        Edit Hours Budget
+        <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional — for hourly retainer projects</span>
+      </label>
+      <input class="form-input" id="p-edit-hours-budget" type="number" step="0.5" min="0" placeholder="e.g. 30">
+      <div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.5">Sets a monthly budget for post-production hours. Usage is calculated automatically from task hour estimates on post-production tagged tasks. Leave blank for fixed-scope projects.</div>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
       <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveProject()">Save Project</button>
@@ -2209,6 +2217,8 @@ async function saveProject() {
   const startDate = document.getElementById('p-start').value;
   const endDate   = document.getElementById('p-end').value;
   const publishesContent = document.getElementById('p-publishes').checked;
+  const budgetRaw = document.getElementById('p-edit-hours-budget').value;
+  const editHoursBudget = budgetRaw === '' ? null : parseFloat(budgetRaw);
   closeModal('project-modal');
   try {
     if (editId) {
@@ -2217,17 +2227,17 @@ async function saveProject() {
       if (existing?.payoutsFinalized) { notify('🔒 Project payouts are finalized — cannot edit'); return; }
       const updated = await api('PATCH', '/projects/' + editId, {
         name, dealId: dealId || null, client: deal?.client || existing?.client || '',
-        startDate, endDate, status, publishesContent,
+        startDate, endDate, status, publishesContent, editHoursBudget,
       });
       const idx = state.projects.findIndex(p => p.id === editId);
-      if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...updated, startDate, endDate, name, status, publishesContent };
+      if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...updated, startDate, endDate, name, status, publishesContent, editHoursBudget };
       notify('Project updated ✓');
       if (state.activeProjectId === editId) renderProjectDetail(editId);
     } else {
       // Create new project
       const proj = await api('POST', '/projects', {
         name, dealId: dealId || null, client: deal?.client || '',
-        startDate, endDate, status, publishesContent,
+        startDate, endDate, status, publishesContent, editHoursBudget,
       });
       state.projects.push(proj);
       notify('Project created ✓');
@@ -4442,6 +4452,38 @@ function renderProjectDetail(pid){
       })()}
     </div>
 
+    <!-- Edit Hours Budget bucket -->
+    ${(()=>{
+      const proj=state.projects.find(pp=>pp.id===pid);
+      if(!proj||proj.editHoursBudget==null||proj.editHoursBudget<=0) return '';
+      const postProdTasks=state.tasks.filter(t=>t.projectId===pid&&t.tag==='post-production');
+      const hoursUsed=postProdTasks.reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
+      const budget=proj.editHoursBudget;
+      const pct=budget>0?Math.min(100,Math.round(hoursUsed/budget*100)):0;
+      const overBudget=hoursUsed>budget;
+      const barColor=overBudget?'var(--red)':pct>=85?'var(--amber)':'var(--green)';
+      const remaining=budget-hoursUsed;
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          <div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Edit Hours Budget</div>
+            <div style="display:flex;align-items:baseline;gap:10px">
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--text);letter-spacing:-0.025em">${hoursUsed.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500"> of ${budget}h</span></span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${barColor};font-weight:600">${pct}%${overBudget?' · OVER':''}</span>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:2px">${overBudget?'Over by':'Remaining'}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:${overBudget?'var(--red)':'var(--text2)'};letter-spacing:-0.02em">${Math.abs(remaining).toFixed(1)}h</div>
+          </div>
+        </div>
+        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width .3s"></div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px">From ${postProdTasks.length} post-production task${postProdTasks.length===1?'':'s'}</div>
+      </div>`;
+    })()}
+
     <!-- Unlinked tasks tray -->
     ${(()=>{
       const projTasks=state.tasks.filter(t=>t.projectId===pid);
@@ -4847,11 +4889,18 @@ function renderHealthDashboard(){
     const overdueCount=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
     const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
     const rag=calcProjectRag(p);
+    // Edit hours budget usage
+    let budgetInfo=null;
+    if(p.editHoursBudget!=null&&p.editHoursBudget>0){
+      const used=tasks.filter(t=>t.tag==='post-production').reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
+      const budgetPct=Math.min(100,Math.round(used/p.editHoursBudget*100));
+      budgetInfo={used,budget:p.editHoursBudget,pct:budgetPct,over:used>p.editHoursBudget};
+    }
     const client=state.clients?.find(c=>{
       const deal=state.deals.find(d=>d.id===p.dealId);
       return deal&&c.id===deal.clientId;
     });
-    return{p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName:client?.name||p.client||''};
+    return{p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName:client?.name||p.client||'',budgetInfo};
   });
 
   // ── RENDER ──
@@ -4945,14 +4994,15 @@ function renderHealthDashboard(){
       <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
         <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Active Projects (${activeProjects.length})</div>
       </div>
-      <div style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
-        ${['Project','Health','Progress','In Review','Overdue','Team'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+      <div style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+        ${['Project','Health','Progress','In Review','Overdue','Hours Budget','Team'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
       </div>
       ${projRows.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No active projects</div>`:
-        projRows.map(({p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName})=>{
+        projRows.map(({p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName,budgetInfo})=>{
           const ragColor={'green':'var(--green)','amber':'var(--amber)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
           const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(212,166,90,0.12)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
-          return`<div onclick="goToProjectTasks('${p.id}')" style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer"
+          const budgetBarColor=budgetInfo?(budgetInfo.over?'var(--red)':budgetInfo.pct>=85?'var(--amber)':'var(--green)'):null;
+          return`<div onclick="goToProjectTasks('${p.id}')" style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer"
             onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
             <div style="min-width:0">
               <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
@@ -4969,6 +5019,14 @@ function renderHealthDashboard(){
             </div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;color:${inReview>0?'var(--blue)':'var(--text3)'};font-weight:${inReview>0?'600':'400'}">${inReview}</div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;color:${overdueCount>0?'var(--red)':'var(--text3)'};font-weight:${overdueCount>0?'600':'400'}">${overdueCount}</div>
+            <div>
+              ${budgetInfo?`
+                <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+                  <div style="height:100%;width:${Math.min(budgetInfo.pct,100)}%;background:${budgetBarColor};border-radius:3px"></div>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:${budgetInfo.over?'var(--red)':'var(--text3)'};font-weight:${budgetInfo.over?'600':'400'}">${budgetInfo.used.toFixed(1)} / ${budgetInfo.budget}h${budgetInfo.over?' ⚠':''}</div>
+              `:`<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">—</span>`}
+            </div>
             <div style="display:flex;align-items:center">
               ${memberIds.slice(0,4).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
               ${memberIds.length>4?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:10px">+${memberIds.length-4}</span>`:''}
@@ -8258,6 +8316,7 @@ function openProjectModal(editId){
   document.getElementById('p-end').value=p?(p.endDate||p.end||''):'';
   document.getElementById('p-status').value=p?(p.status||'active'):'active';
   document.getElementById('p-publishes').checked=p?!!p.publishesContent:false;
+  document.getElementById('p-edit-hours-budget').value=p&&p.editHoursBudget!=null?p.editHoursBudget:'';
   document.getElementById('project-modal').classList.add('open');
 }
 function openTaskModal(editId){
