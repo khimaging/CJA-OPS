@@ -1478,8 +1478,14 @@ app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
     if (req.body.defaultAssigneeId !== undefined) updates.default_assignee_id = req.body.defaultAssigneeId || null;
     if (req.body.defaultEstHours   !== undefined) updates.default_est_hours  = req.body.defaultEstHours != null && req.body.defaultEstHours !== '' ? parseFloat(req.body.defaultEstHours) : null;
     if (req.body.defaultTag        !== undefined) updates.default_tag        = req.body.defaultTag || null;
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'No valid fields to update' });
     const { data, error } = await supabase.from('deliverable_types').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Type not found' });
+    // If new columns are missing from response, the migration likely hasn't been run
+    if ('default_tag' in updates && !('default_tag' in data)) {
+      return res.status(500).json({ error: 'Schema migration not yet applied — run deliverable_type_defaults_migration.sql in Supabase first' });
+    }
     res.json(mapDeliverableType(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
