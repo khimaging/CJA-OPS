@@ -5602,9 +5602,24 @@ async function saveQuotaWizard(){
   }
   closeModal('quota-modal');
   try{
-    const created=await api('POST','/deliverables/bulk',{projectId,quotas});
-    state.deliverables=(state.deliverables||[]).concat(created);
-    notify(`${created.length} deliverable${created.length===1?'':'s'} created ✓`);
+    const resp=await api('POST','/deliverables/bulk',{projectId,quotas,autoCreateTasks:true});
+    // Response shape: { deliverables, tasks, links }. Fall back to flat array for backwards compat.
+    const newDelivs=Array.isArray(resp)?resp:(resp.deliverables||[]);
+    const newTasks=Array.isArray(resp)?[]:(resp.tasks||[]);
+    const newLinks=Array.isArray(resp)?[]:(resp.links||[]);
+    state.deliverables=(state.deliverables||[]).concat(newDelivs);
+    if(newTasks.length){
+      state.tasks=(state.tasks||[]).concat(newTasks);
+    }
+    if(newLinks.length){
+      state.taskDeliverables=(state.taskDeliverables||[]).concat(newLinks);
+    }
+    const delivCount=newDelivs.length;
+    const taskCount=newTasks.length;
+    let msg=`${delivCount} deliverable${delivCount===1?'':'s'} created`;
+    if(taskCount>0) msg+=` · ${taskCount} task${taskCount===1?'':'s'} auto-created`;
+    msg+=' ✓';
+    notify(msg);
     if(state.activeProjectId===projectId) renderProjectDetail(projectId);
   } catch(e){notify('Failed: '+e.message);}
 }
