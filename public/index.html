@@ -1137,6 +1137,15 @@
         <option value="complete">Complete</option>
       </select>
     </div>
+    <div class="form-group" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+        <input type="checkbox" id="p-publishes" style="margin-top:3px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">This project publishes content</div>
+          <div style="font-size:10px;color:var(--text3);line-height:1.5">Enable for social media management projects. Unlocks publish date fields on tasks and deliverables, and adds this project to the Publishing Calendar.</div>
+        </div>
+      </label>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
       <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveProject()">Save Project</button>
@@ -1155,7 +1164,7 @@
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" id="t-due" type="date"></div>
-      <div class="form-group"><label class="form-label" style="display:flex;align-items:center;gap:6px">Publish Date <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span></label><input class="form-input" id="t-publish" type="date"></div>
+      <div class="form-group" id="t-publish-wrap"><label class="form-label" style="display:flex;align-items:center;gap:6px">Publish Date <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span></label><input class="form-input" id="t-publish" type="date"></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Priority</label>
@@ -1470,6 +1479,38 @@
 @keyframes bi-spin { to { transform: rotate(360deg); } }
 </style>
 
+<!-- QUOTA WIZARD MODAL — bulk-define deliverables -->
+<div class="modal-overlay" id="quota-modal">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-title">Define Deliverables<button class="modal-close" onclick="closeModal('quota-modal')">✕</button></div>
+    <input type="hidden" id="quota-project-id">
+    <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">
+      Enter the quantity of each deliverable type for this project. Each row will auto-generate individually-tracked units (e.g., <em>Sizzle 1, Sizzle 2, Sizzle 3, Sizzle 4</em>). You can rename them and adjust publish dates per unit after they're created.
+    </div>
+    <div id="quota-publish-banner" style="display:none;padding:10px 14px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);border-radius:8px;margin-bottom:12px;font-size:11px;color:var(--text2)">
+      <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:3px">Publish-enabled project</span>
+      Publish dates shown only for types marked as publishable. Dates apply to all units of that type and can be staggered per-unit later.
+    </div>
+    <div id="quota-rows" style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">
+      <div id="quota-rows-header" style="display:grid;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--border);gap:12px;align-items:center">
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Type</span>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Qty</span>
+        <span id="quota-publish-hdr" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:none">Default Publish Date</span>
+        <span></span>
+      </div>
+      <div id="quota-rows-body"></div>
+    </div>
+    <button class="btn btn-sm" onclick="_addQuotaRow()" style="margin-bottom:14px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Row</button>
+    <div id="quota-preview" style="padding:10px 14px;background:var(--bg3);border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);margin-bottom:14px">
+      Will create <span id="quota-count" style="color:var(--gold);font-weight:700">0</span> deliverables.
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('quota-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveQuotaWizard()">Create Deliverables</button>
+    </div>
+  </div>
+</div>
+
 <!-- DELIVERABLE MODAL -->
 <div class="modal-overlay" id="deliverable-modal">
   <div class="modal" style="max-width:560px">
@@ -1482,7 +1523,7 @@
         <label class="form-label">Type</label>
         <select class="form-select" id="deliv-type"></select>
       </div>
-      <div class="form-group">
+      <div class="form-group" id="deliv-publish-wrap">
         <label class="form-label" style="display:flex;align-items:center;gap:6px">Publish Date <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">optional</span></label>
         <input class="form-input" id="deliv-publish" type="date">
       </div>
@@ -2163,6 +2204,7 @@ async function saveProject() {
   const status = document.getElementById('p-status').value || 'active';
   const startDate = document.getElementById('p-start').value;
   const endDate   = document.getElementById('p-end').value;
+  const publishesContent = document.getElementById('p-publishes').checked;
   closeModal('project-modal');
   try {
     if (editId) {
@@ -2171,17 +2213,17 @@ async function saveProject() {
       if (existing?.payoutsFinalized) { notify('🔒 Project payouts are finalized — cannot edit'); return; }
       const updated = await api('PATCH', '/projects/' + editId, {
         name, dealId: dealId || null, client: deal?.client || existing?.client || '',
-        startDate, endDate, status,
+        startDate, endDate, status, publishesContent,
       });
       const idx = state.projects.findIndex(p => p.id === editId);
-      if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...updated, startDate, endDate, name, status };
+      if (idx >= 0) state.projects[idx] = { ...state.projects[idx], ...updated, startDate, endDate, name, status, publishesContent };
       notify('Project updated ✓');
       if (state.activeProjectId === editId) renderProjectDetail(editId);
     } else {
       // Create new project
       const proj = await api('POST', '/projects', {
         name, dealId: dealId || null, client: deal?.client || '',
-        startDate, endDate, status,
+        startDate, endDate, status, publishesContent,
       });
       state.projects.push(proj);
       notify('Project created ✓');
@@ -2250,11 +2292,14 @@ async function saveTask() {
       return;
     }
   }
+  // Only include publishDate if the project publishes content
+  const proj = state.projects.find(p => p.id === projectId);
+  const projectPublishes = !!(proj && proj.publishesContent);
   const payload = {
     title, projectId,
     assigneeId:  document.getElementById('t-assignee').value,
     dueDate:     document.getElementById('t-due').value || null,
-    publishDate: document.getElementById('t-publish').value || null,
+    publishDate: projectPublishes ? (document.getElementById('t-publish').value || null) : null,
     priority:    document.getElementById('t-priority').value,
     status:      document.getElementById('t-status').value,
     estHours:    parseFloat(document.getElementById('t-est').value) || 0,
@@ -4396,18 +4441,52 @@ function renderProjectDetail(pid){
       projDelivs.forEach(d=>{statusCounts[d.status]=(statusCounts[d.status]||0)+1;});
       const completedCount=statusCounts.published;
       const overallPct=delivCount>0?Math.round(completedCount/delivCount*100):0;
+      const projObj=state.projects.find(pp=>pp.id===pid);
+      const projectPublishes=!!(projObj&&projObj.publishesContent);
+
+      // Group by type
+      const groups={};
+      const types=state.deliverableTypes||[];
+      projDelivs.forEach(d=>{
+        const key=d.typeId||'__untyped__';
+        if(!groups[key]){
+          const t=types.find(x=>x.id===d.typeId);
+          groups[key]={typeName:t?t.name:'Untyped',publishable:!!(t&&t.publishable),items:[]};
+        }
+        groups[key].items.push(d);
+      });
+      const groupKeys=Object.keys(groups).sort((a,b)=>groups[a].typeName.localeCompare(groups[b].typeName));
+
+      const statusColors={
+        planned:['var(--text3)','var(--bg4)'],
+        in_progress:['var(--gold)','rgba(201,168,76,0.12)'],
+        in_review:['var(--blue)','rgba(102,126,234,0.12)'],
+        published:['var(--green)','rgba(76,175,122,0.12)'],
+        cancelled:['var(--red)','rgba(224,90,90,0.08)'],
+      };
+      const statusLabels={planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'};
+
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:22px">
         <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
-            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Deliverables</div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:8px">
+              Deliverables
+              ${projectPublishes?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 6px;border-radius:3px;background:rgba(201,168,76,0.12);color:var(--gold)">PUBLISHING ENABLED</span>`:''}
+            </div>
             <div style="display:flex;align-items:baseline;gap:10px">
               <span style="font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
-              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--gold)':'var(--text3)'}">${overallPct}% published</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--gold)':'var(--text3)'}">${overallPct}% complete</span>
             </div>
           </div>
-          ${can.createProject()?`<button class="btn btn-sm btn-primary" onclick="openDeliverableModal(null,'${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Deliverable</button>`:''}
+          ${can.createProject()?`<div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" onclick="openQuotaWizard('${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11H5a2 2 0 00-2 2v7a2 2 0 002 2h14a2 2 0 002-2v-7a2 2 0 00-2-2h-4M9 11V7a3 3 0 013-3v0a3 3 0 013 3v4M9 11h6"/></svg> Define Deliverables</button>
+            <button class="btn btn-sm" onclick="openDeliverableModal(null,'${pid}')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg> Add Single</button>
+          </div>`:''}
         </div>
-        ${delivCount===0?`<div style="padding:26px 20px;text-align:center;color:var(--text3);font-size:12px;font-style:italic">No deliverables defined yet. Add ones to track progress by output.</div>`:`
+        ${delivCount===0?`<div style="padding:32px 20px;text-align:center;color:var(--text3);font-size:12px">
+          <div style="font-size:14px;color:var(--text2);margin-bottom:6px;font-family:'Cormorant Garamond',serif;font-style:italic">No deliverables defined yet</div>
+          <div style="margin-bottom:14px">Click <strong style="color:var(--gold)">Define Deliverables</strong> to bulk-create by quantity (e.g., 4 Sizzles, 5 Carousels).</div>
+        </div>`:`
           <!-- Status strip -->
           <div style="display:flex;padding:10px 20px;gap:14px;background:var(--bg);border-bottom:1px solid var(--border2);flex-wrap:wrap">
             ${[
@@ -4421,41 +4500,56 @@ function renderProjectDetail(pid){
               <span style="font-family:'DM Mono',monospace;font-size:11px;color:${s.color};font-weight:600">${statusCounts[s.key]||0}</span>
             </div>`).join('')}
           </div>
-          <!-- Deliverables list -->
+          <!-- Deliverables grouped by type -->
           <div>
-          ${projDelivs.map(d=>{
-            const type=state.deliverableTypes?.find(t=>t.id===d.typeId);
-            const linkedTaskIds=(state.taskDeliverables||[]).filter(l=>l.deliverableId===d.id).map(l=>l.taskId);
-            const linkedTasks=state.tasks.filter(t=>linkedTaskIds.includes(t.id));
-            const doneTasks=linkedTasks.filter(t=>t.status==='done').length;
-            const taskPct=linkedTasks.length>0?Math.round(doneTasks/linkedTasks.length*100):0;
-            const statusColors={
-              planned:['var(--text3)','var(--bg4)'],
-              in_progress:['var(--gold)','rgba(201,168,76,0.12)'],
-              in_review:['var(--blue)','rgba(102,126,234,0.12)'],
-              published:['var(--green)','rgba(76,175,122,0.12)'],
-              cancelled:['var(--red)','rgba(224,90,90,0.08)'],
-            };
-            const [sc,sb]=statusColors[d.status]||statusColors.planned;
-            const statusLabel={planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'}[d.status];
-            const pubStr=d.publishDate?new Date(d.publishDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
-            return`<div style="display:grid;grid-template-columns:1fr 140px 120px 120px auto;gap:14px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')">
-              <div style="min-width:0">
-                <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
-                <div style="font-size:10px;color:var(--text3);margin-top:2px">${type?.name||'untyped'} · ${linkedTasks.length} task${linkedTasks.length===1?'':'s'}</div>
-              </div>
-              <div>
-                <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.06em;padding:3px 8px;border-radius:4px;background:${sb};color:${sc}">${statusLabel}</span>
-              </div>
-              <div style="font-family:'DM Mono',monospace;font-size:11px;color:${pubStr?'var(--text2)':'var(--text3)'}">${pubStr||'no publish date'}</div>
-              <div>
-                <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
-                  <div style="height:100%;width:${taskPct}%;background:${sc};border-radius:2px"></div>
+          ${groupKeys.map(gk=>{
+            const g=groups[gk];
+            const total=g.items.length;
+            const doneCount=g.items.filter(x=>x.status==='published').length;
+            const groupPct=total>0?Math.round(doneCount/total*100):0;
+            const showPublish=projectPublishes&&g.publishable;
+            const gridCols=showPublish?'1fr 140px 120px 120px auto':'1fr 140px 120px auto';
+            // Sort items: by sort_order then by name
+            const sorted=[...g.items].sort((a,b)=>(a.sortOrder||0)-(b.sortOrder||0)||(a.name||'').localeCompare(b.name||''));
+            return`
+              <div style="padding:10px 20px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;color:var(--text)">${g.typeName}</span>
+                  ${g.publishable?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;color:var(--gold)">◆ PUBLISHABLE</span>`:''}
                 </div>
-                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${doneTasks}/${linkedTasks.length} tasks done</div>
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div style="width:90px;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+                    <div style="height:100%;width:${groupPct}%;background:${groupPct>=100?'var(--green)':'var(--gold)'};border-radius:3px"></div>
+                  </div>
+                  <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);font-weight:600">${doneCount} / ${total}</span>
+                </div>
               </div>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-            </div>`;
+              ${sorted.map(d=>{
+                const linkedTaskIds=(state.taskDeliverables||[]).filter(l=>l.deliverableId===d.id).map(l=>l.taskId);
+                const linkedTasks=state.tasks.filter(t=>linkedTaskIds.includes(t.id));
+                const doneTasks=linkedTasks.filter(t=>t.status==='done').length;
+                const taskPct=linkedTasks.length>0?Math.round(doneTasks/linkedTasks.length*100):0;
+                const [sc,sb]=statusColors[d.status]||statusColors.planned;
+                const pubStr=d.publishDate?new Date(d.publishDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
+                return`<div style="display:grid;grid-template-columns:${gridCols};gap:14px;padding:10px 20px 10px 34px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')">
+                  <div style="min-width:0">
+                    <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
+                    <div style="font-size:10px;color:var(--text3);margin-top:2px">${linkedTasks.length} task${linkedTasks.length===1?'':'s'}</div>
+                  </div>
+                  <div>
+                    <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.06em;padding:3px 8px;border-radius:4px;background:${sb};color:${sc}">${statusLabels[d.status]}</span>
+                  </div>
+                  ${showPublish?`<div style="font-family:'DM Mono',monospace;font-size:11px;color:${pubStr?'var(--text2)':'var(--text3)'}">${pubStr||'no publish date'}</div>`:''}
+                  <div>
+                    <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
+                      <div style="height:100%;width:${taskPct}%;background:${sc};border-radius:2px"></div>
+                    </div>
+                    <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${doneTasks}/${linkedTasks.length} tasks done</div>
+                  </div>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </div>`;
+              }).join('')}
+            `;
           }).join('')}
           </div>
         `}
@@ -4816,7 +4910,7 @@ function openDeliverableModal(delivId, projectId){
   const usablePid=d?d.projectId:projectId;
   const types=(state.deliverableTypes||[]).filter(t=>t.active&&(t.projectId===null||t.projectId===usablePid));
   document.getElementById('deliv-type').innerHTML='<option value="">— no type —</option>'+
-    types.map(t=>`<option value="${t.id}" ${d&&d.typeId===t.id?'selected':''}>${t.name}${t.projectId?' (custom)':''}</option>`).join('')+
+    types.map(t=>`<option value="${t.id}" ${d&&d.typeId===t.id?'selected':''}>${t.name}${t.publishable?' ▸ publishable':''}${t.projectId?' (custom)':''}</option>`).join('')+
     '<option value="__new__">＋ Create new type…</option>';
   document.getElementById('deliv-status-wrap').style.display=delivId?'':'none';
   if(delivId){
@@ -4825,34 +4919,57 @@ function openDeliverableModal(delivId, projectId){
   } else {
     document.getElementById('deliv-delete-wrap').style.display='none';
   }
-  document.getElementById('deliverable-modal').classList.add('open');
-  // Listen for "Create new type" selection
+  // Wire the change handler, then fire it once to apply the publish-date visibility
   document.getElementById('deliv-type').onchange=_handleDelivTypeChange;
+  _updateDelivPublishVisibility();
+  document.getElementById('deliverable-modal').classList.add('open');
+}
+
+// Show publish date field only if project publishes content AND selected type is publishable
+function _updateDelivPublishVisibility(){
+  const pid=document.getElementById('deliv-project-id').value;
+  const typeId=document.getElementById('deliv-type').value;
+  const wrap=document.getElementById('deliv-publish-wrap');
+  if(!wrap) return;
+  const proj=state.projects.find(p=>p.id===pid);
+  const type=(state.deliverableTypes||[]).find(t=>t.id===typeId);
+  const show=proj&&proj.publishesContent&&type&&type.publishable;
+  wrap.style.display=show?'':'none';
+  if(!show){
+    const inp=document.getElementById('deliv-publish');
+    if(inp) inp.value='';
+  }
 }
 
 async function _handleDelivTypeChange(){
   const sel=document.getElementById('deliv-type');
+  // Re-evaluate publish visibility on any type change (not just "create new")
+  _updateDelivPublishVisibility();
   if(sel.value!=='__new__') return;
   const name=prompt('Name for the new deliverable type:');
-  if(!name||!name.trim()){sel.value='';return;}
+  if(!name||!name.trim()){sel.value='';_updateDelivPublishVisibility();return;}
   const projectId=document.getElementById('deliv-project-id').value;
   const scope=confirm('Make this type available to ALL projects (master catalog)?\n\n• OK = Master (reusable)\n• Cancel = Custom to this project only');
+  const publishable=confirm('Does this type have publish dates?\n\n• OK = Publishable (content that goes live on a date)\n• Cancel = Not publishable (internal milestone / production deliverable)');
   try{
     const t=await api('POST','/deliverable-types',{
       name:name.trim(),
       projectId:scope?null:projectId,
+      publishable,
     });
     state.deliverableTypes=state.deliverableTypes||[];
     state.deliverableTypes.push(t);
     // Re-render the dropdown with the new type selected
     const types=state.deliverableTypes.filter(x=>x.active&&(x.projectId===null||x.projectId===projectId));
     sel.innerHTML='<option value="">— no type —</option>'+
-      types.map(x=>`<option value="${x.id}" ${x.id===t.id?'selected':''}>${x.name}${x.projectId?' (custom)':''}</option>`).join('')+
+      types.map(x=>`<option value="${x.id}" ${x.id===t.id?'selected':''}>${x.name}${x.publishable?' ▸ publishable':''}${x.projectId?' (custom)':''}</option>`).join('')+
       '<option value="__new__">＋ Create new type…</option>';
+    _updateDelivPublishVisibility();
     notify('Type added ✓');
   } catch(e){
     notify('Failed: '+e.message);
     sel.value='';
+    _updateDelivPublishVisibility();
   }
 }
 
@@ -4863,12 +4980,16 @@ async function saveDeliverable(){
   if(!name){notify('Please enter a deliverable name');return;}
   const typeVal=document.getElementById('deliv-type').value;
   if(typeVal==='__new__'){notify('Finish creating the new type first');return;}
+  // Enforce intersection rule: publish date only saved when project publishes AND type is publishable
+  const proj=state.projects.find(p=>p.id===projectId);
+  const type=(state.deliverableTypes||[]).find(t=>t.id===typeVal);
+  const canPublish=!!(proj&&proj.publishesContent&&type&&type.publishable);
   const payload={
     projectId,
     name,
     typeId: typeVal||null,
     description: document.getElementById('deliv-desc').value||null,
-    publishDate: document.getElementById('deliv-publish').value||null,
+    publishDate: canPublish?(document.getElementById('deliv-publish').value||null):null,
   };
   if(editId){
     payload.status=document.getElementById('deliv-status').value;
@@ -4910,8 +5031,141 @@ async function deleteDeliverable(){
 }
 
 // ============================================================
-//  CLIENTS
+//  QUOTA WIZARD — bulk define deliverables for a project
 // ============================================================
+
+function openQuotaWizard(projectId){
+  const proj=state.projects.find(p=>p.id===projectId);
+  if(!proj) return;
+  document.getElementById('quota-project-id').value=projectId;
+
+  // Show banner only if project publishes content
+  document.getElementById('quota-publish-banner').style.display=proj.publishesContent?'':'none';
+
+  // Configure grid layout — show publish column only if project publishes content
+  const header=document.getElementById('quota-rows-header');
+  const pubHdr=document.getElementById('quota-publish-hdr');
+  if(proj.publishesContent){
+    header.style.gridTemplateColumns='2fr 90px 170px 36px';
+    pubHdr.style.display='';
+  } else {
+    header.style.gridTemplateColumns='2fr 90px 36px';
+    pubHdr.style.display='none';
+  }
+
+  // Start with 3 empty rows for convenience
+  document.getElementById('quota-rows-body').innerHTML='';
+  _addQuotaRow();
+  _addQuotaRow();
+  _addQuotaRow();
+  _updateQuotaCount();
+  document.getElementById('quota-modal').classList.add('open');
+}
+
+let _quotaRowId=0;
+
+function _addQuotaRow(){
+  const pid=document.getElementById('quota-project-id').value;
+  const proj=state.projects.find(p=>p.id===pid);
+  const publishesContent=!!(proj&&proj.publishesContent);
+  const rowId='qr-'+(++_quotaRowId);
+  const types=(state.deliverableTypes||[]).filter(t=>t.active&&(t.projectId===null||t.projectId===pid));
+  const typeOptions='<option value="">— pick a type —</option>'+
+    types.map(t=>`<option value="${t.id}" data-publishable="${t.publishable?1:0}">${t.name}${t.publishable?' ▸ publishable':''}${t.projectId?' (custom)':''}</option>`).join('')+
+    '<option value="__new__">＋ Create new type…</option>';
+  const gridCols=publishesContent?'2fr 90px 170px 36px':'2fr 90px 36px';
+  const row=document.createElement('div');
+  row.id=rowId;
+  row.style.cssText=`display:grid;grid-template-columns:${gridCols};gap:12px;padding:10px 16px;border-top:1px solid var(--border);align-items:center`;
+  row.innerHTML=`
+    <select class="form-select" data-role="type" onchange="_onQuotaTypeChange('${rowId}')" style="padding:7px 10px;font-size:12px">${typeOptions}</select>
+    <input class="form-input" data-role="qty" type="number" min="1" max="100" placeholder="0" style="padding:7px 10px;font-size:12px;text-align:center" oninput="_updateQuotaCount()">
+    ${publishesContent?`<input class="form-input" data-role="publish" type="date" style="padding:7px 10px;font-size:11px;display:none">`:''}
+    <button class="btn btn-sm" onclick="document.getElementById('${rowId}').remove();_updateQuotaCount()" title="Remove row" style="padding:5px 9px;color:var(--red)">✕</button>
+  `;
+  document.getElementById('quota-rows-body').appendChild(row);
+}
+
+async function _onQuotaTypeChange(rowId){
+  const row=document.getElementById(rowId);
+  if(!row) return;
+  const typeSel=row.querySelector('[data-role="type"]');
+  const publishInp=row.querySelector('[data-role="publish"]');
+  if(typeSel.value==='__new__'){
+    const name=prompt('Name for the new deliverable type:');
+    if(!name||!name.trim()){typeSel.value='';return;}
+    const projectId=document.getElementById('quota-project-id').value;
+    const scope=confirm('Make this type available to ALL projects (master catalog)?\n\n• OK = Master (reusable)\n• Cancel = Custom to this project only');
+    const publishable=confirm('Does this type have publish dates?\n\n• OK = Publishable\n• Cancel = Not publishable');
+    try{
+      const t=await api('POST','/deliverable-types',{name:name.trim(),projectId:scope?null:projectId,publishable});
+      state.deliverableTypes=state.deliverableTypes||[];
+      state.deliverableTypes.push(t);
+      // Rebuild ALL quota row type dropdowns so new type appears everywhere
+      const types=state.deliverableTypes.filter(x=>x.active&&(x.projectId===null||x.projectId===projectId));
+      const newOptions='<option value="">— pick a type —</option>'+
+        types.map(x=>`<option value="${x.id}" data-publishable="${x.publishable?1:0}">${x.name}${x.publishable?' ▸ publishable':''}${x.projectId?' (custom)':''}</option>`).join('')+
+        '<option value="__new__">＋ Create new type…</option>';
+      document.querySelectorAll('#quota-rows-body [data-role="type"]').forEach(sel=>{
+        const prev=sel.value;
+        sel.innerHTML=newOptions;
+        if(prev&&prev!=='__new__') sel.value=prev;
+      });
+      // Select the new type in the row that triggered
+      typeSel.value=t.id;
+      notify('Type added ✓');
+    } catch(e){
+      notify('Failed: '+e.message);
+      typeSel.value='';
+      return;
+    }
+  }
+  // Show/hide publish date input based on type.publishable
+  if(publishInp){
+    const opt=typeSel.options[typeSel.selectedIndex];
+    const publishable=opt?opt.dataset.publishable==='1':false;
+    publishInp.style.display=publishable?'':'none';
+    if(!publishable) publishInp.value='';
+  }
+  _updateQuotaCount();
+}
+
+function _updateQuotaCount(){
+  const rows=document.querySelectorAll('#quota-rows-body > div');
+  let total=0;
+  rows.forEach(r=>{
+    const typeId=r.querySelector('[data-role="type"]').value;
+    const qty=parseInt(r.querySelector('[data-role="qty"]').value,10)||0;
+    if(typeId&&typeId!=='__new__'&&qty>0) total+=qty;
+  });
+  document.getElementById('quota-count').textContent=total;
+}
+
+async function saveQuotaWizard(){
+  const projectId=document.getElementById('quota-project-id').value;
+  const rows=document.querySelectorAll('#quota-rows-body > div');
+  const quotas=[];
+  rows.forEach(r=>{
+    const typeId=r.querySelector('[data-role="type"]').value;
+    const qty=parseInt(r.querySelector('[data-role="qty"]').value,10);
+    const publishInp=r.querySelector('[data-role="publish"]');
+    const publishDate=publishInp?publishInp.value||null:null;
+    if(typeId&&typeId!=='__new__'&&qty>0&&qty<=100){
+      quotas.push({typeId,quantity:qty,publishDate});
+    }
+  });
+  if(!quotas.length){
+    notify('Add at least one row with a type and quantity');
+    return;
+  }
+  closeModal('quota-modal');
+  try{
+    const created=await api('POST','/deliverables/bulk',{projectId,quotas});
+    state.deliverables=(state.deliverables||[]).concat(created);
+    notify(`${created.length} deliverable${created.length===1?'':'s'} created ✓`);
+    if(state.activeProjectId===projectId) renderProjectDetail(projectId);
+  } catch(e){notify('Failed: '+e.message);}
+}
 
 function renderClientsView(){
   const el=document.getElementById('clients-content');
@@ -5060,40 +5314,45 @@ function renderDeliverableTypesView(){
   const types=(state.deliverableTypes||[]).filter(t=>t.active);
   const master=types.filter(t=>!t.projectId);
   const custom=types.filter(t=>t.projectId);
+
+  const renderTypeCard=(t,isCustom)=>{
+    const usedCount=(state.deliverables||[]).filter(d=>d.typeId===t.id).length;
+    const proj=isCustom?state.projects.find(p=>p.id===t.projectId):null;
+    return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="min-width:0;flex:1">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+          <span style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.name}</span>
+          ${t.publishable?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 5px;border-radius:3px;background:rgba(201,168,76,0.12);color:var(--gold);flex-shrink:0">◆ PUBLISHABLE</span>`:''}
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${isCustom?(proj?.name||'unknown project'):`${usedCount} in use`}</div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button class="btn btn-sm" onclick="_togglePublishable('${t.id}')" title="${t.publishable?'Mark as not publishable':'Mark as publishable'}" style="padding:4px 8px;color:${t.publishable?'var(--gold)':'var(--text3)'}">◆</button>
+        <button class="btn btn-sm" onclick="_renameDelivType('${t.id}')" title="Rename" style="padding:4px 8px">✎</button>
+        <button class="btn btn-sm" onclick="_deleteDelivType('${t.id}')" title="Delete" style="padding:4px 8px;color:var(--red)">✕</button>
+      </div>
+    </div>`;
+  };
+
   el.innerHTML=`
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:12px;color:var(--text2);line-height:1.6">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">About Deliverable Types</div>
+      <div><strong style="color:var(--text)">Master types</strong> are shared across all projects (e.g., Instagram Reel, Blog Post). <strong style="color:var(--text)">Custom types</strong> are specific to one project.</div>
+      <div style="margin-top:6px">Types marked <span style="color:var(--gold)">◆ publishable</span> can have publish dates on deliverables — only when the project itself has publishing enabled. Production milestones (shoots, revisions, internal deliverables) should stay not publishable.</div>
+    </div>
+
     <div style="margin-bottom:24px">
       <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Master Catalog (${master.length})</div>
       ${master.length===0?`<div style="padding:18px;color:var(--text3);font-size:12px;font-style:italic">No master types yet.</div>`:`
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
-          ${master.map(t=>{
-            const usedCount=(state.deliverables||[]).filter(d=>d.typeId===t.id).length;
-            return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
-              <div style="min-width:0">
-                <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.name}</div>
-                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${usedCount} in use</div>
-              </div>
-              <div style="display:flex;gap:4px;flex-shrink:0">
-                <button class="btn btn-sm" onclick="_renameDelivType('${t.id}')" title="Rename" style="padding:4px 8px">✎</button>
-                <button class="btn btn-sm" onclick="_deleteDelivType('${t.id}')" title="Delete" style="padding:4px 8px;color:var(--red)">✕</button>
-              </div>
-            </div>`;
-          }).join('')}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+          ${master.map(t=>renderTypeCard(t,false)).join('')}
         </div>
       `}
     </div>
     ${custom.length>0?`<div>
       <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Project-Specific (${custom.length})</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
-        ${custom.map(t=>{
-          const proj=state.projects.find(p=>p.id===t.projectId);
-          return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px">
-            <div style="min-width:0">
-              <div style="font-size:13px;font-weight:500;color:var(--text)">${t.name}</div>
-              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${proj?.name||'unknown project'}</div>
-            </div>
-            <button class="btn btn-sm" onclick="_deleteDelivType('${t.id}')" title="Delete" style="padding:4px 8px;color:var(--red)">✕</button>
-          </div>`;
-        }).join('')}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">
+        ${custom.map(t=>renderTypeCard(t,true)).join('')}
       </div>
     </div>`:''}
   `;
@@ -5102,8 +5361,9 @@ function renderDeliverableTypesView(){
 async function _openAddDelivType(){
   const name=prompt('Name for the new deliverable type:');
   if(!name||!name.trim()) return;
+  const publishable=confirm('Does this type have publish dates?\n\n• OK = Publishable (social content, posts, reels)\n• Cancel = Not publishable (production milestones, revisions)');
   try{
-    const t=await api('POST','/deliverable-types',{name:name.trim(),projectId:null});
+    const t=await api('POST','/deliverable-types',{name:name.trim(),projectId:null,publishable});
     state.deliverableTypes=state.deliverableTypes||[];
     state.deliverableTypes.push(t);
     notify('Type added ✓');
@@ -5120,6 +5380,25 @@ async function _renameDelivType(id){
     const updated=await api('PATCH','/deliverable-types/'+id,{name:newName.trim()});
     Object.assign(t,updated);
     notify('Renamed ✓');
+    renderDeliverableTypesView();
+  } catch(e){notify('Failed: '+e.message);}
+}
+
+async function _togglePublishable(id){
+  const t=state.deliverableTypes.find(x=>x.id===id);
+  if(!t) return;
+  const next=!t.publishable;
+  if(!next){
+    // If turning OFF, warn if any deliverables of this type currently have publish dates set
+    const affected=(state.deliverables||[]).filter(d=>d.typeId===id&&d.publishDate).length;
+    if(affected>0){
+      if(!confirm(`Turning off "publishable" for "${t.name}".\n\n${affected} existing deliverable${affected===1?'':'s'} of this type ${affected===1?'has':'have'} publish dates set. Those dates will be preserved but no new units of this type will get publish dates going forward.\n\nContinue?`)) return;
+    }
+  }
+  try{
+    const updated=await api('PATCH','/deliverable-types/'+id,{publishable:next});
+    Object.assign(t,updated);
+    notify(next?'Marked publishable ✓':'Marked not publishable');
     renderDeliverableTypesView();
   } catch(e){notify('Failed: '+e.message);}
 }
@@ -5152,9 +5431,11 @@ function renderPubCal(){
   const ts=now.toISOString().split('T')[0];
 
   // Collect tasks + deliverables with publish_date in this month
+  // Only include items from projects where publishesContent is true
   const monthPrefix=`${yr}-${String(mo+1).padStart(2,'0')}`;
-  const pubTasks=state.tasks.filter(t=>t.publishDate&&t.publishDate.startsWith(monthPrefix));
-  const pubDelivs=(state.deliverables||[]).filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix));
+  const publishingProjectIds=new Set(state.projects.filter(p=>p.publishesContent).map(p=>p.id));
+  const pubTasks=state.tasks.filter(t=>t.publishDate&&t.publishDate.startsWith(monthPrefix)&&publishingProjectIds.has(t.projectId));
+  const pubDelivs=(state.deliverables||[]).filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix)&&publishingProjectIds.has(d.projectId));
 
   const byDate={};
   pubTasks.forEach(t=>{
@@ -7592,6 +7873,7 @@ function openProjectModal(editId){
   document.getElementById('p-start').value=p?(p.startDate||p.start||''):'';
   document.getElementById('p-end').value=p?(p.endDate||p.end||''):'';
   document.getElementById('p-status').value=p?(p.status||'active'):'active';
+  document.getElementById('p-publishes').checked=p?!!p.publishesContent:false;
   document.getElementById('project-modal').classList.add('open');
 }
 function openTaskModal(editId){
@@ -7629,6 +7911,16 @@ function _onTaskProjectChange(preselectedDeliverableId){
   const required=document.getElementById('t-deliverable-required');
   const hint=document.getElementById('t-deliverable-hint');
   const help=document.getElementById('t-deliverable-help');
+  // Hide/show the publish date wrap based on project's publishesContent flag
+  const proj=state.projects.find(p=>p.id===pid);
+  const publishWrap=document.getElementById('t-publish-wrap');
+  if(publishWrap){
+    publishWrap.style.display=proj&&proj.publishesContent?'':'none';
+    if(!proj||!proj.publishesContent){
+      const pubInp=document.getElementById('t-publish');
+      if(pubInp) pubInp.value='';
+    }
+  }
   if(!sel) return;
   const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid&&d.status!=='cancelled');
   sel.innerHTML='<option value="">— none —</option>'+projDelivs.map(d=>{
