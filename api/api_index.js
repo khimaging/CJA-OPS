@@ -169,7 +169,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       supabase.from('profit_share_status').select('*'),
       supabase.from('pay_log').select('*').order('paid_at', { ascending: false }).limit(500),
       supabase.from('clients').select('*').eq('active', true).order('name'),
-      supabase.from('deliverable_types').select('*').eq('active', true).order('name'),
+      supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').eq('active', true).order('name'),
       supabase.from('deliverables').select('*').order('sort_order'),
       supabase.from('task_deliverables').select('*'),
     ]);
@@ -1441,7 +1441,7 @@ app.delete('/api/clients/:id', requireAuth, requireCanDelete, async (req, res) =
 
 app.get('/api/deliverable-types', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase.from('deliverable_types').select('*').eq('active', true).order('name');
+    const { data, error } = await supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').eq('active', true).order('name');
     if (error) throw error;
     res.json(data.map(mapDeliverableType));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1460,11 +1460,16 @@ app.post('/api/deliverable-types', requireAuth, async (req, res) => {
       default_est_hours:   defaultEstHours != null && defaultEstHours !== '' ? parseFloat(defaultEstHours) : null,
       default_tag:         defaultTag || null,
     };
-    const { data, error } = await supabase.from('deliverable_types').insert(row).select().single();
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
-      throw error;
+    // Insert then re-fetch separately to avoid schema cache stripping new columns
+    const { data: inserted, error: insertError } = await supabase
+      .from('deliverable_types').insert(row).select('id').single();
+    if (insertError) {
+      if (insertError.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
+      throw insertError;
     }
+    const { data, error: selectError } = await supabase
+      .from('deliverable_types').select('*').eq('id', inserted.id).single();
+    if (selectError) throw selectError;
     res.status(201).json(mapDeliverableType(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1482,25 +1487,28 @@ app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
 
     console.log('[PATCH deliverable-types] id:', req.params.id, 'updates:', JSON.stringify(updates));
 
-    const { data, error } = await supabase
+    // Step 1: update (don't rely on its return — schema cache may omit new columns)
+    const { error: updateError } = await supabase
       .from('deliverable_types')
       .update(updates)
+      .eq('id', req.params.id);
+
+    if (updateError) {
+      console.error('[PATCH deliverable-types] update error:', updateError);
+      throw updateError;
+    }
+
+    // Step 2: separate select to get fresh row with all columns
+    const { data, error: selectError } = await supabase
+      .from('deliverable_types')
+      .select('*')
       .eq('id', req.params.id)
-      .select('id,name,active,publishable,project_id,default_assignee_id,default_est_hours,default_tag')
       .single();
 
-    if (error) {
-      console.error('[PATCH deliverable-types] error:', error);
-      throw error;
-    }
+    if (selectError) throw selectError;
     if (!data) return res.status(404).json({ error: 'Type not found' });
 
-    console.log('[PATCH deliverable-types] response:', JSON.stringify(data));
-
-    // If new columns are missing from response, the migration likely hasn't been run
-    if ('default_tag' in updates && data.default_tag === undefined) {
-      return res.status(500).json({ error: 'Schema migration not yet applied — run deliverable_type_defaults_migration.sql in Supabase first' });
-    }
+    console.log('[PATCH deliverable-types] fetched after update:', JSON.stringify(data));
     res.json(mapDeliverableType(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1574,7 +1582,7 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
 
     // Fetch deliverable types referenced to get names + publishable flag
     const typeIds = quotas.map(q => q.typeId).filter(Boolean);
-    const { data: types } = await supabase.from('deliverable_types').select('*').in('id', typeIds);
+    const { data: types } = await supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').in('id', typeIds);
     const typeMap = new Map((types || []).map(t => [t.id, t]));
 
     const toInsert = [];
