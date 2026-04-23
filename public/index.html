@@ -1693,6 +1693,7 @@ let state={
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',
+  lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
 };
 
 // ============================================================
@@ -2327,6 +2328,11 @@ async function saveTask() {
         state.taskDeliverables.push({ taskId, deliverableId });
       }
       notify('Task added ✓');
+    }
+    // Remember last-used deliverable for this project so the next new task pre-fills
+    if (deliverableId) {
+      state.lastUsedDeliverable = state.lastUsedDeliverable || {};
+      state.lastUsedDeliverable[projectId] = deliverableId;
     }
     // Sync deliverable link on edit — remove old, add new if changed
     if (editId) {
@@ -4436,6 +4442,49 @@ function renderProjectDetail(pid){
       })()}
     </div>
 
+    <!-- Unlinked tasks tray -->
+    ${(()=>{
+      const projTasks=state.tasks.filter(t=>t.projectId===pid);
+      if(projTasks.length===0) return '';
+      const linkedIds=new Set((state.taskDeliverables||[]).map(l=>l.taskId));
+      const unlinked=projTasks.filter(t=>!linkedIds.has(t.id));
+      const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid&&d.status!=='cancelled');
+      if(projDelivs.length===0) return ''; // no deliverables yet → no point showing tray
+      const count=unlinked.length;
+      // Auto-expand if there are unlinked tasks, collapsed otherwise
+      const expanded=count>0;
+      return`<div id="unlinked-tray" style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden">
+        <div onclick="_toggleUnlinkedTray('${pid}')" style="padding:12px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;background:var(--bg)">
+          <div style="display:flex;align-items:center;gap:10px">
+            <svg id="unlinked-tray-chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="transition:transform .15s;${expanded?'transform:rotate(90deg)':''}"><polyline points="9 18 15 12 9 6"/></svg>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Unlinked Tasks</span>
+            ${count>0?`<span style="font-family:'DM Mono',monospace;font-size:11px;color:${count>0?'var(--amber)':'var(--text3)'};font-weight:600">${count}</span>`:`<span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">none</span>`}
+          </div>
+          <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:.1em">${count>0?'DRAG TO A DELIVERABLE TO LINK':'ALL TASKS LINKED'}</span>
+        </div>
+        <div id="unlinked-tray-body" style="display:${expanded?'block':'none'}">
+          ${count===0?`<div style="padding:18px 20px;text-align:center;color:var(--text3);font-size:11px;font-style:italic">Every task is linked to a deliverable. </div>`:`
+            <div style="padding:12px 20px;display:flex;flex-wrap:wrap;gap:8px">
+              ${unlinked.map(t=>{
+                const a=state.team.find(m=>m.id===t.assigneeId);
+                const statusDot={todo:'var(--text3)',progress:'var(--amber)',review:'var(--blue)',done:'var(--green)'}[t.status]||'var(--text3)';
+                const tagStyle={production:'border-left:2px solid var(--teal)','post-production':'border-left:2px solid var(--purple)',admin:'border-left:2px solid var(--text3)'}[t.tag]||'';
+                return`<div draggable="true" ondragstart="_dragUnlinkedTask(event,'${t.id}')" ondragend="_dragUnlinkedEnd(event)"
+                  style="background:var(--bg3);border:1px solid var(--border);${tagStyle};border-radius:7px;padding:7px 10px;cursor:grab;display:flex;align-items:center;gap:8px;max-width:280px;transition:all .15s"
+                  onmouseover="this.style.borderColor='var(--border2)'"
+                  onmouseout="this.style.borderColor='var(--border)'">
+                  <div style="width:6px;height:6px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
+                  <div style="font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1">${t.title}</div>
+                  ${a?`<div class="user-avatar" style="background:${a.color};width:18px;height:18px;font-size:8px;flex-shrink:0">${a.name.split(' ').map(n=>n[0]).join('').substring(0,2)}</div>`:''}
+                </div>`;
+              }).join('')}
+            </div>
+            <div style="padding:8px 20px 12px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);letter-spacing:.08em">Tip: drag a task card onto any deliverable row below to link it.</div>
+          `}
+        </div>
+      </div>`;
+    })()}
+
     <!-- Deliverables section -->
     ${(()=>{
       const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid);
@@ -4534,7 +4583,7 @@ function renderProjectDetail(pid){
                 const taskPct=linkedTasks.length>0?Math.round(doneTasks/linkedTasks.length*100):0;
                 const [sc,sb]=statusColors[d.status]||statusColors.planned;
                 const pubStr=d.publishDate?new Date(d.publishDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
-                return`<div style="display:grid;grid-template-columns:${gridCols};gap:14px;padding:10px 20px 10px 34px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')">
+                return`<div data-deliv-row="${d.id}" style="display:grid;grid-template-columns:${gridCols};gap:14px;padding:10px 20px 10px 34px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="if(!this.dataset.dragHover)this.style.background='var(--bg3)'" onmouseout="if(!this.dataset.dragHover)this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')" ondragover="_onDelivDragOver(event,'${d.id}')" ondragleave="_onDelivDragLeave(event,'${d.id}')" ondrop="_onDelivDrop(event,'${d.id}','${pid}')">
                   <div style="min-width:0">
                     <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
                     <div style="font-size:10px;color:var(--text3);margin-top:2px">${linkedTasks.length} task${linkedTasks.length===1?'':'s'}</div>
@@ -4973,6 +5022,101 @@ async function _handleDelivTypeChange(){
     notify('Failed: '+e.message);
     sel.value='';
     _updateDelivPublishVisibility();
+  }
+}
+
+// ============================================================
+//  UNLINKED TASK TRAY — drag & drop linking
+// ============================================================
+
+function _toggleUnlinkedTray(projectId){
+  const body=document.getElementById('unlinked-tray-body');
+  const chev=document.getElementById('unlinked-tray-chevron');
+  if(!body||!chev) return;
+  const isOpen=body.style.display!=='none';
+  body.style.display=isOpen?'none':'block';
+  chev.style.transform=isOpen?'rotate(0deg)':'rotate(90deg)';
+}
+
+function _dragUnlinkedTask(event,taskId){
+  event.dataTransfer.effectAllowed='move';
+  event.dataTransfer.setData('text/plain',taskId);
+  event.dataTransfer.setData('application/x-cja-task',taskId);
+  // Visual feedback on the dragged card
+  if(event.target&&event.target.style){
+    event.target.style.opacity='0.4';
+    event.target.style.cursor='grabbing';
+  }
+}
+
+function _dragUnlinkedEnd(event){
+  if(event.target&&event.target.style){
+    event.target.style.opacity='';
+    event.target.style.cursor='grab';
+  }
+  // Clear any lingering hover highlights on drop targets
+  document.querySelectorAll('[data-deliv-row]').forEach(el=>{
+    el.style.background='';
+    el.style.boxShadow='';
+    delete el.dataset.dragHover;
+  });
+}
+
+function _onDelivDragOver(event,deliverableId){
+  // Only accept if this is one of our task drags
+  if(!event.dataTransfer.types.includes('application/x-cja-task')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect='move';
+  const row=event.currentTarget;
+  if(row){
+    row.style.background='rgba(76,175,122,0.12)';
+    row.style.boxShadow='inset 0 0 0 1px var(--green)';
+    row.dataset.dragHover='1';
+  }
+}
+
+function _onDelivDragLeave(event,deliverableId){
+  const row=event.currentTarget;
+  if(row){
+    row.style.background='';
+    row.style.boxShadow='';
+    delete row.dataset.dragHover;
+  }
+}
+
+async function _onDelivDrop(event,deliverableId,projectId){
+  event.preventDefault();
+  const taskId=event.dataTransfer.getData('application/x-cja-task');
+  const row=event.currentTarget;
+  if(row){
+    row.style.background='';
+    row.style.boxShadow='';
+    delete row.dataset.dragHover;
+  }
+  if(!taskId) return;
+  // Check if task is already linked elsewhere (shouldn't be since it came from unlinked tray)
+  const existing=(state.taskDeliverables||[]).find(l=>l.taskId===taskId);
+  try{
+    // If task was already linked to a different deliverable, unlink first
+    if(existing&&existing.deliverableId!==deliverableId){
+      await api('DELETE',`/tasks/${taskId}/deliverables/${existing.deliverableId}`);
+      state.taskDeliverables=state.taskDeliverables.filter(l=>!(l.taskId===taskId&&l.deliverableId===existing.deliverableId));
+    }
+    if(!existing||existing.deliverableId!==deliverableId){
+      await api('POST',`/tasks/${taskId}/deliverables`,{deliverableId});
+      state.taskDeliverables=state.taskDeliverables||[];
+      state.taskDeliverables.push({taskId,deliverableId});
+      // Remember this for future defaulting
+      state.lastUsedDeliverable=state.lastUsedDeliverable||{};
+      state.lastUsedDeliverable[projectId]=deliverableId;
+    }
+    // Refetch deliverables to pick up recomputed status
+    const freshDelivs=await api('GET',`/deliverables?projectId=${projectId}`);
+    state.deliverables=state.deliverables.filter(d=>d.projectId!==projectId).concat(freshDelivs);
+    notify('Task linked ✓');
+    renderProjectDetail(projectId);
+  } catch(e){
+    notify('Link failed: '+e.message);
   }
 }
 
@@ -7926,13 +8070,22 @@ function _onTaskProjectChange(preselectedDeliverableId){
   }
   if(!sel) return;
   const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===pid&&d.status!=='cancelled');
+  // Default to last-used deliverable on this project for NEW tasks (unless explicitly preselected)
+  const editId=document.getElementById('task-modal').dataset.editId;
+  let effectiveSelected=preselectedDeliverableId;
+  if(!editId&&!effectiveSelected){
+    const lastUsed=state.lastUsedDeliverable?.[pid];
+    // Only pre-fill if it still exists and isn't cancelled
+    if(lastUsed&&projDelivs.some(d=>d.id===lastUsed)){
+      effectiveSelected=lastUsed;
+    }
+  }
   sel.innerHTML='<option value="">— none —</option>'+projDelivs.map(d=>{
     const type=state.deliverableTypes?.find(t=>t.id===d.typeId);
     const label=type?`${d.name} · ${type.name}`:d.name;
-    return`<option value="${d.id}" ${d.id===preselectedDeliverableId?'selected':''}>${label}</option>`;
+    return`<option value="${d.id}" ${d.id===effectiveSelected?'selected':''}>${label}</option>`;
   }).join('');
   // Required indicator — only required for NEW tasks on projects that have deliverables
-  const editId=document.getElementById('task-modal').dataset.editId;
   const hasDelivs=projDelivs.length>0;
   if(required&&hint){
     const isRequired=hasDelivs&&!editId;
@@ -7941,6 +8094,7 @@ function _onTaskProjectChange(preselectedDeliverableId){
   }
   if(help){
     if(!hasDelivs) help.textContent='This project has no deliverables defined yet — add some from the project page to organize tasks by deliverable.';
+    else if(!editId&&effectiveSelected) help.textContent='Pre-filled from last task on this project. Change if different.';
     else help.textContent='Select the deliverable this task contributes to.';
   }
 }

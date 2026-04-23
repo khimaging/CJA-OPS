@@ -40,6 +40,17 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 .portal-logout{background:transparent;border:1px solid var(--border);color:var(--text3);border-radius:6px;padding:7px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:color .15s}
 .portal-logout:hover{color:var(--gold);border-color:var(--gold)}
 
+/* Top-level nav tabs */
+.portal-nav-item{background:transparent;border:none;color:var(--text3);padding:14px 20px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;font-weight:500}
+.portal-nav-item:hover{color:var(--text2)}
+.portal-nav-item.active{color:var(--text);border-bottom-color:var(--gold)}
+
+/* Dashboard */
+.metric-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px}
+.metric-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+.metric-value{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;color:var(--text);line-height:1;letter-spacing:-0.025em}
+.metric-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px}
+
 .portal-content{max-width:1400px;margin:0 auto;padding:28px}
 .portal-section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);margin-bottom:16px}
 
@@ -150,12 +161,18 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
       <button class="portal-logout" onclick="doLogout()">Sign out</button>
     </div>
   </div>
+  <!-- Top-level nav -->
+  <div id="portal-nav" style="background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;display:flex;gap:4px">
+    <button id="nav-dashboard" onclick="setPage('dashboard')" class="portal-nav-item">Dashboard</button>
+    <button id="nav-deliverables" onclick="setPage('deliverables')" class="portal-nav-item">Deliverables</button>
+    <button id="nav-tasks" onclick="setPage('tasks')" class="portal-nav-item">Tasks</button>
+  </div>
   <div class="portal-content" id="portal-content"></div>
 </div>
 
 <script>
 const API_BASE='/api';
-let state={token:null,client:null,data:null,activeProjectId:null,view:'list'};
+let state={token:null,client:null,data:null,page:'dashboard',view:'list',calMode:'publishing',projectFilter:'',showCompleted:false,calOffset:0,activeDelivId:null};
 
 // ── Auth ──
 function getToken(){return localStorage.getItem('cja_portal_token');}
@@ -232,9 +249,10 @@ async function initPortal(){
 // ── Views ──
 
 const STATUS_LABELS={planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'};
+const TASK_STATUS_LABELS={todo:'To Do',progress:'In Progress',review:'In Review',done:'Done'};
 
 function calcProjectProgress(projectId){
-  const delivs=(state.data.deliverables||[]).filter(d=>d.projectId===projectId);
+  const delivs=(state.data.deliverables||[]).filter(d=>d.projectId===projectId&&d.status!=='cancelled');
   if(delivs.length===0) return{total:0,completed:0,pct:0};
   const completed=delivs.filter(d=>d.status==='published').length;
   return{total:delivs.length,completed,pct:Math.round(completed/delivs.length*100)};
@@ -245,29 +263,58 @@ function fmtDate(ds){
   return new Date(ds+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
 }
 
-// Derive the filtered deliverables list based on current filters
-function getFilteredDeliverables(){
-  const projects=state.data.projects||[];
-  const showCompleted=state.showCompleted||false;
-  const projFilter=state.projectFilter||'';
-  const projectIds=new Set(
-    projects
-      .filter(p=>showCompleted?true:p.status!=='complete')
-      .filter(p=>projFilter?p.id===projFilter:true)
-      .map(p=>p.id)
-  );
-  return (state.data.deliverables||[])
-    .filter(d=>projectIds.has(d.projectId))
-    .filter(d=>d.status!=='cancelled'); // always hide cancelled from client
+function fmtRelative(iso){
+  if(!iso) return '';
+  const diff=Date.now()-new Date(iso).getTime();
+  const days=Math.floor(diff/86400000);
+  const hours=Math.floor(diff/3600000);
+  if(diff<60000) return 'just now';
+  if(diff<3600000) return `${Math.floor(diff/60000)}m ago`;
+  if(hours<24) return `${hours}h ago`;
+  if(days<7) return `${days}d ago`;
+  if(days<30) return `${Math.floor(days/7)}w ago`;
+  return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
-function renderHome(){
-  state.activeProjectId=null;
-  state.view=state.view||'list';
-  state.showCompleted=state.showCompleted||false;
-  state.projectFilter=state.projectFilter||'';
+// Filter helpers — used by dashboard, deliverables, tasks views
+function getVisibleProjects(){
   const projs=state.data.projects||[];
+  return projs
+    .filter(p=>state.showCompleted?true:p.status!=='complete')
+    .filter(p=>state.projectFilter?p.id===state.projectFilter:true);
+}
 
+function getFilteredDeliverables(){
+  const visibleIds=new Set(getVisibleProjects().map(p=>p.id));
+  return (state.data.deliverables||[])
+    .filter(d=>visibleIds.has(d.projectId))
+    .filter(d=>d.status!=='cancelled');
+}
+
+function getFilteredTasks(){
+  const visibleIds=new Set(getVisibleProjects().map(p=>p.id));
+  return (state.data.tasks||[])
+    .filter(t=>visibleIds.has(t.projectId))
+    // Already filtered out admin-tagged tasks server-side, but double-check
+    .filter(t=>t.tag!=='admin');
+}
+
+// ── Page routing ──
+
+function setPage(page){
+  state.page=page;
+  state.activeDelivId=null; // clear any deliverable drill-in when switching pages
+  renderPortal();
+}
+
+function renderPortal(){
+  // Update nav active states
+  ['dashboard','deliverables','tasks'].forEach(p=>{
+    const el=document.getElementById('nav-'+p);
+    if(el) el.classList.toggle('active',state.page===p);
+  });
+
+  const projs=state.data.projects||[];
   if(projs.length===0){
     document.getElementById('portal-content').innerHTML=`<div class="empty">
       <div class="empty-title">No projects yet</div>
@@ -276,97 +323,241 @@ function renderHome(){
     return;
   }
 
+  if(state.page==='dashboard') renderDashboard();
+  else if(state.page==='deliverables') renderDeliverablesPage();
+  else if(state.page==='tasks') renderTasksPage();
+}
+
+// ── Shared filter bar (project + active/complete) ──
+
+function renderFilterBar(extraContent=''){
+  const projs=state.data.projects||[];
   const activeCount=projs.filter(p=>p.status!=='complete').length;
   const completeCount=projs.filter(p=>p.status==='complete').length;
-
-  // Build project filter options — respects the active/complete toggle
   const filteredProjects=projs.filter(p=>state.showCompleted?true:p.status!=='complete');
   const projectOptions=`<option value="">All Projects (${filteredProjects.length})</option>`+
     filteredProjects.map(p=>`<option value="${p.id}" ${state.projectFilter===p.id?'selected':''}>${escapeHtml(p.name)}${p.status==='complete'?' · completed':''}</option>`).join('');
-
-  document.getElementById('portal-content').innerHTML=`
-    <!-- Filter bar -->
-    <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px">
-      <!-- Project filter -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Project</span>
-        <select id="proj-filter" onchange="state.projectFilter=this.value;renderHome()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:12px;font-family:inherit;cursor:pointer;min-width:220px">
-          ${projectOptions}
-        </select>
-      </div>
-
-      <!-- Active / All toggle -->
-      <div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
-        <button onclick="state.showCompleted=false;if(state.projectFilter&&state.data.projects.find(p=>p.id===state.projectFilter)?.status==='complete')state.projectFilter='';renderHome()"
-          style="background:${!state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${!state.showCompleted?'var(--gold)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
-          Active (${activeCount})
-        </button>
-        <button onclick="state.showCompleted=true;renderHome()"
-          style="background:${state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${state.showCompleted?'var(--gold)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
-          All (${activeCount+completeCount})
-        </button>
-      </div>
-
-      <!-- View tabs -->
-      <div class="view-tabs" style="margin-bottom:0;margin-left:auto">
-        <button class="view-tab ${state.view==='list'?'active':''}" onclick="state.view='list';renderHome()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-          List
-        </button>
-        <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderHome()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>
-          Kanban
-        </button>
-        <button class="view-tab ${state.view==='calendar'?'active':''}" onclick="state.view='calendar';renderHome()">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-          Calendar
-        </button>
-      </div>
+  return`<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:20px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Project</span>
+      <select onchange="state.projectFilter=this.value;renderPortal()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:12px;font-family:inherit;cursor:pointer;min-width:220px">
+        ${projectOptions}
+      </select>
     </div>
-
-    <!-- Project summary strip -->
-    ${renderProjectStrip()}
-
-    <!-- Main view body -->
-    <div id="view-body"></div>
-  `;
-  renderCurrentView();
-}
-
-function renderProjectStrip(){
-  const showCompleted=state.showCompleted||false;
-  const projFilter=state.projectFilter||'';
-  const projs=(state.data.projects||[])
-    .filter(p=>showCompleted?true:p.status!=='complete')
-    .filter(p=>projFilter?p.id===projFilter:true);
-  if(projs.length===0) return '';
-  // Build compact summary cards — name, progress bar, counts
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:22px">
-    ${projs.map(p=>{
-      const prog=calcProjectProgress(p.id);
-      const isActive=state.projectFilter===p.id;
-      return `<div onclick="state.projectFilter='${p.id}';renderHome()"
-        style="background:var(--bg2);border:1px solid ${isActive?'var(--gold)':'var(--border)'};border-radius:10px;padding:14px 16px;cursor:pointer;transition:all .15s"
-        onmouseover="if(!${isActive}) this.style.borderColor='var(--border2)'"
-        onmouseout="if(!${isActive}) this.style.borderColor='var(--border)'">
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;gap:8px">
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-0.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</div>
-          ${p.status==='complete'?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);letter-spacing:.08em;white-space:nowrap">✓ DONE</span>`:''}
-        </div>
-        <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
-          <div style="height:100%;width:${prog.pct}%;background:${prog.pct>=100?'var(--green)':'var(--amber)'};border-radius:3px"></div>
-        </div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${prog.completed}/${prog.total} deliverables · ${prog.pct}%</div>
-      </div>`;
-    }).join('')}
+    <div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
+      <button onclick="state.showCompleted=false;if(state.projectFilter&&state.data.projects.find(p=>p.id===state.projectFilter)?.status==='complete')state.projectFilter='';renderPortal()"
+        style="background:${!state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${!state.showCompleted?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
+        Active (${activeCount})
+      </button>
+      <button onclick="state.showCompleted=true;renderPortal()"
+        style="background:${state.showCompleted?'var(--bg4)':'transparent'};border:none;color:${state.showCompleted?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">
+        All (${activeCount+completeCount})
+      </button>
+    </div>
+    ${extraContent}
   </div>`;
 }
 
-function renderCurrentView(){
+// ── DASHBOARD ──
+
+function renderDashboard(){
+  const delivs=getFilteredDeliverables();
+  const tasks=getFilteredTasks();
+  const projs=getVisibleProjects();
+  const now=new Date();
+  const today=now.toISOString().split('T')[0];
+
+  // Metrics
+  const totalDelivs=delivs.length;
+  const completed=delivs.filter(d=>d.status==='published').length;
+  const overallPct=totalDelivs>0?Math.round(completed/totalDelivs*100):0;
+  const inReview=delivs.filter(d=>d.status==='in_review').length;
+  // Upcoming publishes: next 14 days
+  const in14Days=new Date(now.getTime()+14*86400000).toISOString().split('T')[0];
+  const upcomingPublish=delivs.filter(d=>d.publishDate&&d.publishDate>=today&&d.publishDate<=in14Days).length;
+  // Upcoming reviews: post-production tasks due in next 14 days, not done
+  const upcomingReview=tasks.filter(t=>t.tag==='post-production'&&t.status!=='done'&&t.due&&t.due>=today&&t.due<=in14Days).length;
+
+  // Type breakdown
+  const types=state.data.deliverableTypes||[];
+  const groups={};
+  delivs.forEach(d=>{
+    const key=d.typeId||'__untyped__';
+    if(!groups[key]){
+      const t=types.find(x=>x.id===d.typeId);
+      groups[key]={typeName:t?t.name:'Other',items:[]};
+    }
+    groups[key].items.push(d);
+  });
+  const groupKeys=Object.keys(groups).sort((a,b)=>groups[a].typeName.localeCompare(groups[b].typeName));
+
+  // Activity feed — 10 most recently-updated deliverables + task-completion events from recent days
+  const recentDelivs=[...delivs]
+    .filter(d=>d.updatedAt)
+    .sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt))
+    .slice(0,10);
+
+  // Upcoming to publish: next 5 items with future publish dates
+  const publishUpcoming=delivs
+    .filter(d=>d.publishDate&&d.publishDate>=today&&d.status!=='published')
+    .sort((a,b)=>a.publishDate.localeCompare(b.publishDate))
+    .slice(0,5);
+  // Upcoming to review: next 5 post-production tasks with future due dates, not done
+  const reviewUpcoming=tasks
+    .filter(t=>t.tag==='post-production'&&t.status!=='done'&&t.due&&t.due>=today)
+    .sort((a,b)=>a.due.localeCompare(b.due))
+    .slice(0,5);
+
+  const el=document.getElementById('portal-content');
+  el.innerHTML=`
+    ${renderFilterBar()}
+
+    <!-- Metrics strip -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:26px">
+      <div class="metric-card">
+        <div class="metric-label">Overall Progress</div>
+        <div class="metric-value">${overallPct}<span style="font-size:18px;color:var(--text3);font-weight:500">%</span></div>
+        <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:10px">
+          <div style="height:100%;width:${overallPct}%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px"></div>
+        </div>
+        <div class="metric-sub">${completed} of ${totalDelivs} deliverables published</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">In Review</div>
+        <div class="metric-value" style="color:${inReview>0?'var(--blue)':'var(--text)'}">${inReview}</div>
+        <div class="metric-sub">awaiting publish / feedback</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Coming Up to Publish</div>
+        <div class="metric-value" style="color:${upcomingPublish>0?'var(--amber)':'var(--text)'}">${upcomingPublish}</div>
+        <div class="metric-sub">in the next 14 days</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Coming Up to Review</div>
+        <div class="metric-value" style="color:${upcomingReview>0?'var(--amber)':'var(--text)'}">${upcomingReview}</div>
+        <div class="metric-sub">deliverables you will see soon</div>
+      </div>
+    </div>
+
+    <!-- Deliverables by type -->
+    ${groupKeys.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:26px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:16px">Progress by Type</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        ${groupKeys.map(gk=>{
+          const g=groups[gk];
+          const total=g.items.length;
+          const done=g.items.filter(x=>x.status==='published').length;
+          const pct=total>0?Math.round(done/total*100):0;
+          return`<div>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;gap:10px">
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;color:var(--text);letter-spacing:-0.015em">${escapeHtml(g.typeName)}</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);font-weight:600">${done} / ${total} <span style="color:var(--text3)">· ${pct}%</span></span>
+            </div>
+            <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:3px;transition:width .3s"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- Two-column: Upcoming to Review + Upcoming to Publish -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:26px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Upcoming to Review</span>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">when you will see it</span>
+        </div>
+        ${reviewUpcoming.length===0?`<div style="padding:20px 0;text-align:center;color:var(--text3);font-size:12px;font-style:italic">Nothing currently scheduled for your review</div>`:`
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${reviewUpcoming.map(t=>{
+              const proj=state.data.projects.find(p=>p.id===t.projectId);
+              const linkedDelivId=(state.data.taskDeliverables||[]).find(l=>l.taskId===t.id)?.deliverableId;
+              const linkedDeliv=linkedDelivId?(state.data.deliverables||[]).find(d=>d.id===linkedDelivId):null;
+              return`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+                <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--amber);letter-spacing:.06em;min-width:56px">${fmtDate(t.due).split(',')[0]}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${linkedDeliv?escapeHtml(linkedDeliv.name):escapeHtml(t.title)}</div>
+                  <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}</div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Upcoming to Publish</span>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">when it goes live</span>
+        </div>
+        ${publishUpcoming.length===0?`<div style="padding:20px 0;text-align:center;color:var(--text3);font-size:12px;font-style:italic">No upcoming publish dates scheduled</div>`:`
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${publishUpcoming.map(d=>{
+              const proj=state.data.projects.find(p=>p.id===d.projectId);
+              const type=types.find(t=>t.id===d.typeId);
+              return`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
+                <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--purple);letter-spacing:.06em;min-width:56px">${fmtDate(d.publishDate).split(',')[0]}</div>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(d.name)}</div>
+                  <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}${type?' · '+type.name:''}</div>
+                </div>
+                <span class="status-chip status-${d.status}">${STATUS_LABELS[d.status]}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+    </div>
+
+    <!-- Activity feed -->
+    ${recentDelivs.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Recent Activity</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${recentDelivs.map(d=>{
+          const proj=state.data.projects.find(p=>p.id===d.projectId);
+          return`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
+            <span class="status-chip status-${d.status}" style="min-width:95px;text-align:center">${STATUS_LABELS[d.status]}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(d.name)}</div>
+              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}</div>
+            </div>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${fmtRelative(d.updatedAt)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+  `;
+}
+
+// ── DELIVERABLES PAGE ──
+
+function renderDeliverablesPage(){
+  const viewTabs=`<div class="view-tabs" style="margin-bottom:0;margin-left:auto">
+    <button class="view-tab ${state.view==='list'?'active':''}" onclick="state.view='list';renderPortal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      List
+    </button>
+    <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderPortal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>
+      Kanban
+    </button>
+    <button class="view-tab ${state.view==='calendar'?'active':''}" onclick="state.view='calendar';renderPortal()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      Calendar
+    </button>
+  </div>`;
+
+  document.getElementById('portal-content').innerHTML=`
+    ${renderFilterBar(viewTabs)}
+    <div id="view-body"></div>
+  `;
+  renderDeliverablesViewBody();
+}
+
+function renderDeliverablesViewBody(){
   const body=document.getElementById('view-body');
   if(!body) return;
   const delivs=getFilteredDeliverables();
-
   if(delivs.length===0){
     body.innerHTML=`<div class="empty">
       <div class="empty-title">No deliverables to show</div>
@@ -374,26 +565,22 @@ function renderCurrentView(){
     </div>`;
     return;
   }
-
-  if(state.view==='list') renderListView(delivs,body);
-  else if(state.view==='kanban') renderKanbanView(delivs,body);
-  else if(state.view==='calendar') renderCalendarView(delivs,body);
+  if(state.view==='list') renderDelivsList(delivs,body);
+  else if(state.view==='kanban') renderDelivsKanban(delivs,body);
+  else if(state.view==='calendar') renderDelivsCalendar(delivs,body);
 }
 
-function renderListView(delivs,body){
+function renderDelivsList(delivs,body){
   const types=state.data.deliverableTypes||[];
-  const showProject=!state.projectFilter; // only show project col when viewing across all
-  // Sort: by publish_date (nearest first), then status (planned first)
+  const showProject=!state.projectFilter;
   const sorted=[...delivs].sort((a,b)=>{
     if(a.publishDate&&!b.publishDate) return -1;
     if(!a.publishDate&&b.publishDate) return 1;
     if(a.publishDate&&b.publishDate) return a.publishDate.localeCompare(b.publishDate);
     return (a.name||'').localeCompare(b.name||'');
   });
-
   const cols=showProject?'1fr 160px 140px 120px 150px':'1fr 140px 120px 150px';
   const headers=showProject?['Deliverable','Project','Status','Type','Publish Date']:['Deliverable','Status','Type','Publish Date'];
-
   body.innerHTML=`<div class="deliv-list">
     <div style="display:grid;grid-template-columns:${cols};gap:14px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
       ${headers.map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
@@ -401,42 +588,34 @@ function renderListView(delivs,body){
     ${sorted.map(d=>{
       const type=types.find(t=>t.id===d.typeId);
       const proj=state.data.projects.find(p=>p.id===d.projectId);
-      return`<div class="deliv-row" style="grid-template-columns:${cols}">
+      return`<div class="deliv-row" style="grid-template-columns:${cols};cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
         <div><div class="deliv-name">${escapeHtml(d.name)}</div></div>
         ${showProject?`<div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(proj?.name||'')}</div>`:''}
         <div><span class="status-chip status-${d.status}">${STATUS_LABELS[d.status]}</span></div>
         <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">${type?.name||'—'}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${d.publishDate?'var(--gold)':'var(--text3)'}">${d.publishDate?fmtDate(d.publishDate):'—'}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${d.publishDate?'var(--amber)':'var(--text3)'}">${d.publishDate?fmtDate(d.publishDate):'—'}</div>
       </div>`;
     }).join('')}
   </div>`;
 }
 
-function renderKanbanView(delivs,body){
+function renderDelivsKanban(delivs,body){
   const types=state.data.deliverableTypes||[];
-  const cols=[
-    {id:'planned',label:'Planned'},
-    {id:'in_progress',label:'In Progress'},
-    {id:'in_review',label:'In Review'},
-    {id:'published',label:'Published'},
-  ];
+  const cols=[{id:'planned',label:'Planned'},{id:'in_progress',label:'In Progress'},{id:'in_review',label:'In Review'},{id:'published',label:'Published'}];
   body.innerHTML=`<div class="kanban-board">
     ${cols.map(col=>{
       const items=delivs.filter(d=>d.status===col.id);
       return`<div class="kanban-col">
-        <div class="kanban-header">
-          <span class="kanban-title">${col.label}</span>
-          <span class="kanban-count">${items.length}</span>
-        </div>
+        <div class="kanban-header"><span class="kanban-title">${col.label}</span><span class="kanban-count">${items.length}</span></div>
         ${items.map(d=>{
           const type=types.find(t=>t.id===d.typeId);
           const proj=state.data.projects.find(p=>p.id===d.projectId);
-          return`<div class="kanban-card">
+          return`<div class="kanban-card" style="cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
             <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px">${escapeHtml(d.name)}</div>
             ${!state.projectFilter&&proj?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text2);margin-bottom:3px">${escapeHtml(proj.name)}</div>`:''}
             <div style="display:flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
               ${type?`<span>${type.name}</span>`:''}
-              ${d.publishDate?`<span style="color:var(--gold)">${fmtDate(d.publishDate)}</span>`:''}
+              ${d.publishDate?`<span style="color:var(--amber)">${fmtDate(d.publishDate)}</span>`:''}
             </div>
           </div>`;
         }).join('')||'<div style="color:var(--text3);font-size:11px;text-align:center;padding:16px 0;font-style:italic">—</div>'}
@@ -445,8 +624,120 @@ function renderKanbanView(delivs,body){
   </div>`;
 }
 
-function renderCalendarView(delivs,body){
-  const types=state.data.deliverableTypes||[];
+function renderDelivsCalendar(delivs,body){
+  renderPortalCalendar(delivs,body,'publishDate','var(--purple)',d=>{
+    const t=(state.data.deliverableTypes||[]).find(x=>x.id===d.typeId);
+    return{title:d.name,subtitle:t?.name||'',onClick:`_openDelivDrillIn('${d.id}')`};
+  });
+}
+
+// ── TASKS PAGE ──
+
+function renderTasksPage(){
+  const calLabel=state.calMode==='publishing'?'Publishing':'Production';
+  const modeToggle=`<div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
+    <button onclick="state.calMode='production';renderPortal()" style="background:${state.calMode==='production'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='production'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Production</button>
+    <button onclick="state.calMode='publishing';renderPortal()" style="background:${state.calMode==='publishing'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='publishing'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Publishing</button>
+  </div>`;
+
+  const viewTabs=`<div class="view-tabs" style="margin-bottom:0;margin-left:auto">
+    <button class="view-tab ${state.view==='list'?'active':''}" onclick="state.view='list';renderPortal()">List</button>
+    <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderPortal()">Kanban</button>
+    <button class="view-tab ${state.view==='calendar'?'active':''}" onclick="state.view='calendar';renderPortal()">Calendar</button>
+  </div>`;
+
+  const extraBar=state.view==='calendar'?modeToggle:'';
+
+  document.getElementById('portal-content').innerHTML=`
+    ${renderFilterBar(extraBar+viewTabs)}
+    <div id="view-body"></div>
+  `;
+  renderTasksViewBody();
+}
+
+function renderTasksViewBody(){
+  const body=document.getElementById('view-body');
+  if(!body) return;
+  const tasks=getFilteredTasks();
+  if(tasks.length===0){
+    body.innerHTML=`<div class="empty">
+      <div class="empty-title">No tasks to show</div>
+      <div class="empty-sub">Your team's pipeline will appear here.</div>
+    </div>`;
+    return;
+  }
+  if(state.view==='list') renderTasksList(tasks,body);
+  else if(state.view==='kanban') renderTasksKanban(tasks,body);
+  else if(state.view==='calendar') renderTasksCalendar(tasks,body);
+}
+
+function renderTasksList(tasks,body){
+  const showProject=!state.projectFilter;
+  const sorted=[...tasks].sort((a,b)=>{
+    if(a.due&&!b.due) return -1;
+    if(!a.due&&b.due) return 1;
+    if(a.due&&b.due) return a.due.localeCompare(b.due);
+    return (a.title||'').localeCompare(b.title||'');
+  });
+  const cols=showProject?'1fr 160px 120px 130px 130px':'1fr 120px 130px 130px';
+  const headers=showProject?['Task','Project','Status','Due Date','Publish Date']:['Task','Status','Due Date','Publish Date'];
+  body.innerHTML=`<div class="deliv-list">
+    <div style="display:grid;grid-template-columns:${cols};gap:14px;padding:10px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+      ${headers.map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+    </div>
+    ${sorted.map(t=>{
+      const proj=state.data.projects.find(p=>p.id===t.projectId);
+      const statusClass=t.status==='done'?'status-published':t.status==='review'?'status-in_review':t.status==='progress'?'status-in_progress':'status-planned';
+      return`<div class="deliv-row" style="grid-template-columns:${cols}">
+        <div><div class="deliv-name">${escapeHtml(t.title)}</div></div>
+        ${showProject?`<div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(proj?.name||'')}</div>`:''}
+        <div><span class="status-chip ${statusClass}">${TASK_STATUS_LABELS[t.status]||t.status}</span></div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${t.due?'var(--text2)':'var(--text3)'}">${t.due?fmtDate(t.due):'—'}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${t.publishDate?'var(--amber)':'var(--text3)'}">${t.publishDate?fmtDate(t.publishDate):'—'}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderTasksKanban(tasks,body){
+  const cols=[{id:'todo',label:'To Do'},{id:'progress',label:'In Progress'},{id:'review',label:'In Review'},{id:'done',label:'Done'}];
+  body.innerHTML=`<div class="kanban-board">
+    ${cols.map(col=>{
+      const items=tasks.filter(t=>t.status===col.id);
+      return`<div class="kanban-col">
+        <div class="kanban-header"><span class="kanban-title">${col.label}</span><span class="kanban-count">${items.length}</span></div>
+        ${items.map(t=>{
+          const proj=state.data.projects.find(p=>p.id===t.projectId);
+          return`<div class="kanban-card">
+            <div style="font-size:13px;font-weight:500;color:var(--text);margin-bottom:4px">${escapeHtml(t.title)}</div>
+            ${!state.projectFilter&&proj?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text2);margin-bottom:3px">${escapeHtml(proj.name)}</div>`:''}
+            <div style="display:flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
+              ${t.due?`<span>${fmtDate(t.due)}</span>`:''}
+            </div>
+          </div>`;
+        }).join('')||'<div style="color:var(--text3);font-size:11px;text-align:center;padding:16px 0;font-style:italic">—</div>'}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderTasksCalendar(tasks,body){
+  // In publishing mode, use publishDate. In production mode, use due.
+  const dateField=state.calMode==='publishing'?'publishDate':'due';
+  const color=state.calMode==='publishing'?'var(--amber)':'var(--blue)';
+  // Production calendar only shows production + post-production tagged tasks
+  const calTasks=state.calMode==='production'
+    ? tasks.filter(t=>t.tag==='production'||t.tag==='post-production')
+    : tasks;
+  renderPortalCalendar(calTasks,body,dateField,color,t=>{
+    const proj=state.data.projects.find(p=>p.id===t.projectId);
+    return{title:t.title,subtitle:proj?.name||'',onClick:null};
+  });
+}
+
+// ── Shared calendar renderer ──
+
+function renderPortalCalendar(items,body,dateField,accentColor,extractInfo){
   const now=new Date();
   state.calOffset=state.calOffset||0;
   const base=new Date(now.getFullYear(),now.getMonth()+state.calOffset,1);
@@ -456,11 +747,12 @@ function renderCalendarView(delivs,body){
   const ts=now.toISOString().split('T')[0];
   const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const monthPrefix=`${yr}-${String(mo+1).padStart(2,'0')}`;
-  const delivsThisMonth=delivs.filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix));
+  const thisMonth=items.filter(x=>x[dateField]&&x[dateField].startsWith(monthPrefix));
   const byDate={};
-  delivsThisMonth.forEach(d=>{
-    if(!byDate[d.publishDate]) byDate[d.publishDate]=[];
-    byDate[d.publishDate].push(d);
+  thisMonth.forEach(x=>{
+    const d=x[dateField];
+    if(!byDate[d]) byDate[d]=[];
+    byDate[d].push(x);
   });
 
   let cells='';
@@ -469,15 +761,15 @@ function renderCalendarView(delivs,body){
   for(let d=1;d<=dim;d++){
     const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday=ds===ts;
-    const items=byDate[ds]||[];
+    const itemsForDay=byDate[ds]||[];
     cells+=`<div class="cal-cell${isToday?' today':''}">
       <div class="cal-daynum${isToday?' today':''}">${d}</div>
-      ${items.map(x=>{
-        const type=types.find(t=>t.id===x.typeId);
-        const proj=state.data.projects.find(p=>p.id===x.projectId);
-        return`<div style="background:rgba(149,97,226,0.18);border-left:2px solid var(--purple);border-radius:4px;padding:4px 6px;margin-bottom:3px" title="${escapeHtml(x.name)}${proj?' — '+escapeHtml(proj.name):''}">
-          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(x.name)}</div>
-          ${!state.projectFilter&&proj?`<div style="font-size:8px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(proj.name)}</div>`:type?`<div style="font-size:8px;color:var(--text3)">${type.name}</div>`:''}
+      ${itemsForDay.map(x=>{
+        const info=extractInfo(x);
+        const clickAttr=info.onClick?`onclick="${info.onClick}" style="cursor:pointer"`:'';
+        return`<div ${clickAttr} style="background:${accentColor==='var(--purple)'?'rgba(149,97,226,0.18)':accentColor==='var(--amber)'?'rgba(212,166,90,0.16)':'rgba(102,126,234,0.16)'};border-left:2px solid ${accentColor};border-radius:4px;padding:4px 6px;margin-bottom:3px" title="${escapeHtml(info.title)}${info.subtitle?' — '+escapeHtml(info.subtitle):''}">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(info.title)}</div>
+          ${info.subtitle?`<div style="font-size:8px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(info.subtitle)}</div>`:''}
         </div>`;
       }).join('')}
     </div>`;
@@ -487,11 +779,11 @@ function renderCalendarView(delivs,body){
 
   body.innerHTML=`
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
-      <button class="back-link" onclick="state.calOffset=(state.calOffset||0)-1;renderCurrentView()" style="margin:0">‹ Prev</button>
-      <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
-      <button class="back-link" onclick="state.calOffset=(state.calOffset||0)+1;renderCurrentView()" style="margin:0">Next ›</button>
-      ${state.calOffset!==0?`<button class="back-link" onclick="state.calOffset=0;renderCurrentView()" style="margin:0">Today</button>`:''}
-      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${delivsThisMonth.length} publishing this month</div>
+      <button class="back-link" onclick="state.calOffset=(state.calOffset||0)-1;renderPortal()" style="margin:0">‹ Prev</button>
+      <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${MONTHS[mo]} ${yr}</span>
+      <button class="back-link" onclick="state.calOffset=(state.calOffset||0)+1;renderPortal()" style="margin:0">Next ›</button>
+      ${state.calOffset!==0?`<button class="back-link" onclick="state.calOffset=0;renderPortal()" style="margin:0">Today</button>`:''}
+      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${thisMonth.length} ${dateField==='publishDate'?'publishing':'due'} this month</div>
     </div>
     <div class="cal-grid">
       ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}
@@ -500,11 +792,74 @@ function renderCalendarView(delivs,body){
   `;
 }
 
-// Kept for backwards compat — older code paths may call these
-function openProject(projectId){state.projectFilter=projectId;renderHome();}
-function setView(v){state.view=v;renderHome();}
-function renderProjectView(){renderCurrentView();}
-function renderProject(){renderHome();}
+// ── DELIVERABLE DRILL-IN MODAL ──
+
+function _openDelivDrillIn(delivId){
+  const d=(state.data.deliverables||[]).find(x=>x.id===delivId);
+  if(!d) return;
+  const proj=state.data.projects.find(p=>p.id===d.projectId);
+  const type=(state.data.deliverableTypes||[]).find(t=>t.id===d.typeId);
+  const linkedTaskIds=(state.data.taskDeliverables||[]).filter(l=>l.deliverableId===delivId).map(l=>l.taskId);
+  const linkedTasks=(state.data.tasks||[]).filter(t=>linkedTaskIds.includes(t.id));
+
+  // Remove any existing modal
+  document.getElementById('deliv-modal-backdrop')?.remove();
+
+  const modal=document.createElement('div');
+  modal.id='deliv-modal-backdrop';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)';
+  modal.onclick=(e)=>{if(e.target===modal) modal.remove();};
+  modal.innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+    <div style="padding:22px 26px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+      <div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">${escapeHtml(proj?.name||'')}${type?' · '+escapeHtml(type.name):''}</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${escapeHtml(d.name)}</div>
+      </div>
+      <button onclick="document.getElementById('deliv-modal-backdrop').remove()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;padding:4px;line-height:1">✕</button>
+    </div>
+    <div style="padding:22px 26px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px">
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Status</div>
+          <span class="status-chip status-${d.status}">${STATUS_LABELS[d.status]}</span>
+        </div>
+        ${d.publishDate?`<div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Publish Date</div>
+          <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--amber)">${fmtDate(d.publishDate)}</div>
+        </div>`:''}
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
+          <div style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text2)">${linkedTasks.filter(t=>t.status==='done').length} / ${linkedTasks.length} done</div>
+        </div>
+      </div>
+
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Task Pipeline</div>
+      ${linkedTasks.length===0?`<div style="padding:18px;text-align:center;color:var(--text3);font-size:12px;font-style:italic;background:var(--bg3);border-radius:8px">No tasks linked yet</div>`:`
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${linkedTasks.map(t=>{
+            const statusClass=t.status==='done'?'status-published':t.status==='review'?'status-in_review':t.status==='progress'?'status-in_progress':'status-planned';
+            return`<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:12px">
+              <span class="status-chip ${statusClass}" style="min-width:95px;text-align:center;flex-shrink:0">${TASK_STATUS_LABELS[t.status]||t.status}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.title)}</div>
+                ${t.due?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:2px">Due ${fmtDate(t.due)}</div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+}
+
+// Backwards-compat shims (kept so older render paths don't break)
+function renderHome(){renderPortal();}
+function openProject(pid){state.projectFilter=pid;renderPortal();}
+function setView(v){state.view=v;renderPortal();}
+function renderCurrentView(){renderPortal();}
+function renderProjectView(){renderPortal();}
+function renderProject(){renderPortal();}
 
 function escapeHtml(str){
   return String(str||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
