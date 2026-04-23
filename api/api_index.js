@@ -1601,19 +1601,22 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
         // Publishable deliverables are editable content → post-production. Non-publishable (shoot days, etc.) → production.
         const tag = meta.publishable ? 'post-production' : 'production';
         return {
-          project_id: projectId,
           title: d.name,
-          status: 'todo',
-          tag,
-          due_date: proj.end_date || null,
-          est_hours: null,
+          project_id: projectId,
           assignee_id: null,
+          due_date: proj.end_date || null,
+          publish_date: null,
+          priority: 'med',
+          status: 'todo',
+          est_hours: 0,
+          tag,
+          notes: null,
         };
       });
       const { data: insertedTasks, error: tErr } = await supabase.from('tasks').insert(tasksToInsert).select();
       if (tErr) {
         // Don't roll back deliverables — the user would rather have deliverables without tasks than lose the deliverables
-        console.error('Auto-task creation failed:', tErr.message);
+        console.error('Auto-task creation failed:', tErr.message, tErr);
       } else {
         newTasks = insertedTasks || [];
         // Link each task to its deliverable (pairs are index-matched since we built them in parallel)
@@ -1623,7 +1626,7 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
         }));
         if (links.length) {
           const { error: lErr } = await supabase.from('task_deliverables').insert(links);
-          if (lErr) console.error('Auto-link creation failed:', lErr.message);
+          if (lErr) console.error('Auto-link creation failed:', lErr.message, lErr);
         }
       }
     }
