@@ -5934,7 +5934,7 @@ async function _saveDelivTypeModal(){
     if(editId){
       const updated=await api('PATCH','/deliverable-types/'+editId,payload);
       const idx=(state.deliverableTypes||[]).findIndex(x=>x.id===editId);
-      if(idx>=0) state.deliverableTypes[idx]={...state.deliverableTypes[idx],...updated};
+      if(idx>=0) state.deliverableTypes[idx]=updated; // replace fully, not spread, so no stale fields
       notify('Type updated ✓');
     } else {
       const created=await api('POST','/deliverable-types',{...payload,projectId:null});
@@ -5943,7 +5943,16 @@ async function _saveDelivTypeModal(){
       notify('Type added ✓');
     }
     renderDeliverableTypesView();
-  } catch(e){notify('Failed: '+e.message);}
+  } catch(e){
+    notify('⚠ '+e.message);
+    // Re-open modal so user doesn't lose their input
+    _openDelivTypeModal(editId||null);
+    if(editId) document.getElementById('dt-edit-id').value=editId;
+    document.getElementById('dt-name').value=name;
+    document.getElementById('dt-publishable').checked=publishable;
+    document.getElementById('dt-tag').value=defaultTag||'';
+    document.getElementById('dt-est-hours').value=hoursRaw;
+  }
 }
 
 async function _openAddDelivType(){
@@ -6884,8 +6893,8 @@ function _renderProjDetailCal(tasks, pid, dbField, stateField, label, accentColo
       ${offset!==0?`<button class="btn btn-sm" onclick="state.projDetailCalOffset=0;renderProjectDetail('${pid}')">Today</button>`:''}
       <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-left:auto">${thisMonthCount} scheduled · drag to reschedule</span>
     </div>
-    <div class="cal-grid" style="margin-bottom:${unscheduled.length?'18px':'0'}">
-      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}
+    <div class="calendar-grid" style="margin-bottom:${unscheduled.length?'18px':'0'}">
+      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-header">${d}</div>`).join('')}
       ${cells}
     </div>
     ${unscheduled.length?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 18px">
