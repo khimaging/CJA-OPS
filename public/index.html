@@ -1750,7 +1750,7 @@ let state={
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   payStatusFilter:'all',archivedProjects:{},
-  teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',
+  teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',pubCalClient:'',
   lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
 };
 
@@ -6001,6 +6001,35 @@ async function _deleteDelivType(id){
 //  PUBLISHING CALENDAR
 // ============================================================
 
+// Helper: build client options from all non-archived projects that have deals
+function _calClientOptions(selectedId){
+  // Build a map of clientId → clientName from projects that have deals attached
+  const clientMap = new Map();
+  (state.projects || []).filter(p => !p.archived).forEach(p => {
+    const deal = state.deals.find(d => d.id === p.dealId);
+    if (!deal) return;
+    const client = (state.clients || []).find(c => c.id === deal.clientId);
+    if (client) clientMap.set(client.id, client.name);
+    else if (deal.client) clientMap.set(deal.client, deal.client); // fallback to deal.client string
+  });
+  const clients = [...clientMap.entries()].sort((a,b) => a[1].localeCompare(b[1]));
+  return `<option value="">All Clients</option>` +
+    clients.map(([id,name]) => `<option value="${id}" ${selectedId===id?'selected':''}>${name}</option>`).join('');
+}
+
+// Helper: get set of project IDs for a given client filter (empty = all non-archived)
+function _calProjectIdsForClient(clientFilter){
+  const visibleProjs = (state.projects || []).filter(p => !p.archived);
+  if (!clientFilter) return new Set(visibleProjs.map(p => p.id));
+  // Match via deal → client
+  return new Set(visibleProjs.filter(p => {
+    const deal = state.deals.find(d => d.id === p.dealId);
+    if (!deal) return false;
+    const client = (state.clients || []).find(c => c.id === deal.clientId);
+    return (client && client.id === clientFilter) || deal.client === clientFilter;
+  }).map(p => p.id));
+}
+
 function renderPubCal(){
   const el=document.getElementById('pubcal-board');
   if(!el) return;
@@ -6012,90 +6041,184 @@ function renderPubCal(){
   const fd=new Date(yr,mo,1).getDay();
   const ts=now.toISOString().split('T')[0];
 
-  // Collect tasks + deliverables with publish_date in this month
-  // Only include items from projects where publishesContent is true
   const monthPrefix=`${yr}-${String(mo+1).padStart(2,'0')}`;
-  const publishingProjectIds=new Set(state.projects.filter(p=>p.publishesContent).map(p=>p.id));
-  const pubTasks=state.tasks.filter(t=>t.publishDate&&t.publishDate.startsWith(monthPrefix)&&publishingProjectIds.has(t.projectId));
-  const pubDelivs=(state.deliverables||[]).filter(d=>d.publishDate&&d.publishDate.startsWith(monthPrefix)&&publishingProjectIds.has(d.projectId));
+  // Include all non-archived projects (active + complete) — historical scope
+  const visibleIds = _calProjectIdsForClient(state.pubCalClient || '');
+  // Tasks with publish dates this month, from visible projects
+  const pubTasks=state.tasks.filter(t =>
+    t.publishDate && t.publishDate.startsWith(monthPrefix) && visibleIds.has(t.projectId) && t.tag!=='admin'
+  );
 
   const byDate={};
   pubTasks.forEach(t=>{
-    if(!byDate[t.publishDate]) byDate[t.publishDate]={tasks:[],delivs:[]};
-    byDate[t.publishDate].tasks.push(t);
-  });
-  pubDelivs.forEach(d=>{
-    if(!byDate[d.publishDate]) byDate[d.publishDate]={tasks:[],delivs:[]};
-    byDate[d.publishDate].delivs.push(d);
+    if(!byDate[t.publishDate]) byDate[t.publishDate]=[];
+    byDate[t.publishDate].push(t);
   });
 
   const dn=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   let cells='';
   const prevDim=new Date(yr,mo,0).getDate();
-  for(let i=0;i<fd;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${prevDim-fd+i+1}</div></div>`;
+  for(let i=0;i<fd;i++){
+    const prevMo = mo===0?12:mo;
+    const prevYr = mo===0?yr-1:yr;
+    const pds = `${prevYr}-${String(prevMo).padStart(2,'0')}-${String(prevDim-fd+i+1).padStart(2,'0')}`;
+    cells+=`<div class="cal-day other-month" ondragover="_calGlobalDragOver(event)" ondragleave="_calGlobalDragLeave(event)" ondrop="_calGlobalDrop(event,'${pds}','publish_date')"><div class="cal-day-num">${prevDim-fd+i+1}</div></div>`;
+  }
 
   for(let d=1;d<=dim;d++){
     const ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday=ds===ts;
-    const bucket=byDate[ds]||{tasks:[],delivs:[]};
-    const totalCount=bucket.tasks.length+bucket.delivs.length;
-    const chips=[];
-    bucket.delivs.slice(0,3).forEach(x=>{
-      const proj=state.projects.find(p=>p.id===x.projectId);
-      const type=state.deliverableTypes?.find(t=>t.id===x.typeId);
-      chips.push(`<div onclick="event.stopPropagation();openDeliverableModal('${x.id}','${x.projectId}')"
-        title="${x.name}${type?' · '+type.name:''}${proj?' · '+proj.name:''}"
-        style="background:rgba(149,97,226,0.18);border-left:2px solid var(--purple);border-radius:3px;padding:3px 6px;margin-bottom:3px;cursor:pointer">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">◆ ${x.name}</div>
-        <div style="font-size:8px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
-      </div>`);
-    });
-    bucket.tasks.slice(0,Math.max(0,3-bucket.delivs.length)).forEach(t=>{
+    const tasksForDay=byDate[ds]||[];
+    const totalCount=tasksForDay.length;
+    const chips = tasksForDay.slice(0,4).map(t=>{
       const proj=state.projects.find(p=>p.id===t.projectId);
       const a=state.team.find(m=>m.id===t.assigneeId);
-      chips.push(`<div onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
-        title="${t.title}${proj?' · '+proj.name:''}"
-        style="background:${a?.color||'var(--bg4)'};border-radius:3px;padding:3px 6px;margin-bottom:3px;cursor:pointer">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</div>
-        <div style="font-size:8px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||''}</div>
-      </div>`);
-    });
-    cells+=`<div class="cal-day${isToday?' today':''}" style="min-height:110px">
+      return `<div draggable="true"
+          ondragstart="_calGlobalDragStart(event,'${t.id}')"
+          ondragend="_calGlobalDragEnd(event)"
+          onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
+          title="${_escapeHtml(t.title)}${proj?' · '+_escapeHtml(proj.name):''}"
+          style="background:${a?.color||'var(--bg4)'};border-radius:3px;padding:3px 6px;margin-bottom:3px;cursor:grab;transition:opacity .15s">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:#0e0e0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(t.title)}</div>
+          <div style="font-size:8px;color:rgba(0,0,0,0.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?_escapeHtml(proj.name):''}</div>
+        </div>`;
+    }).join('');
+    cells+=`<div class="cal-day${isToday?' today':''}" style="min-height:110px"
+      ondragover="_calGlobalDragOver(event)" ondragleave="_calGlobalDragLeave(event)" ondrop="_calGlobalDrop(event,'${ds}','publish_date')">
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
         <div class="cal-day-num">${d}</div>
         ${totalCount>0?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">${totalCount} publishing</div>`:''}
       </div>
-      ${chips.join('')}
-      ${totalCount>3?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:2px">+${totalCount-3} more</div>`:''}
+      ${chips}
+      ${totalCount>4?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:2px">+${totalCount-4} more</div>`:''}
     </div>`;
   }
   const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
-  for(let i=1;i<=rem;i++) cells+=`<div class="cal-day other-month"><div class="cal-day-num">${i}</div></div>`;
+  for(let i=1;i<=rem;i++){
+    const nextMo = mo===11?1:mo+2;
+    const nextYr = mo===11?yr+1:yr;
+    const nds = `${nextYr}-${String(nextMo).padStart(2,'0')}-${String(i).padStart(2,'0')}`;
+    cells+=`<div class="cal-day other-month" ondragover="_calGlobalDragOver(event)" ondragleave="_calGlobalDragLeave(event)" ondrop="_calGlobalDrop(event,'${nds}','publish_date')"><div class="cal-day-num">${i}</div></div>`;
+  }
 
-  const totalMonth=pubTasks.length+pubDelivs.length;
+  // Team avatars legend
+  const active=state.team.filter(m=>m.active!==false);
+  const teamLegend=active.map(m=>`<div style="display:flex;align-items:center;gap:5px">
+    <div style="width:9px;height:9px;border-radius:2px;background:${m.color}"></div>
+    <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${m.name.split(' ')[0]}</span>
+  </div>`).join('');
+
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)-1;renderPubCal()">‹</button>
       <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
       <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)+1;renderPubCal()">›</button>
       ${offset!==0?`<button class="btn btn-sm" onclick="state.pubCalOffset=0;renderPubCal()">Today</button>`:''}
-      <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">
-          <div style="width:9px;height:9px;border-left:3px solid var(--purple);background:rgba(149,97,226,0.18)"></div>Deliverables
-        </div>
-        <div style="display:flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">
-          <div style="width:9px;height:9px;background:var(--gold);border-radius:2px"></div>Tasks
-        </div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${totalMonth} items publishing this month</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:12px">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Client</span>
+        <select onchange="state.pubCalClient=this.value;renderPubCal()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:180px">
+          ${_calClientOptions(state.pubCalClient||'')}
+        </select>
       </div>
+      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${pubTasks.length} task${pubTasks.length===1?'':'s'} publishing this month · drag to reschedule</div>
     </div>
     <div class="calendar-grid">
       ${dn.map(d=>`<div class="cal-header">${d}</div>`).join('')}
       ${cells}
     </div>
+    <div style="display:flex;gap:14px;margin-top:12px;flex-wrap:wrap">${teamLegend}</div>
   `;
 }
 
+
+// ============================================================
+//  GLOBAL CALENDAR DRAG-DROP (Production + Publishing calendars)
+// ============================================================
+
+let _calGlobalDragId = null;
+
+function _calGlobalDragStart(event, taskId) {
+  _calGlobalDragId = taskId;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', taskId);
+  if (event.currentTarget) event.currentTarget.style.opacity = '0.4';
+}
+
+function _calGlobalDragEnd(event) {
+  _calGlobalDragId = null;
+  if (event.currentTarget) event.currentTarget.style.opacity = '';
+  document.querySelectorAll('.cal-day.drag-over').forEach(el => {
+    el.classList.remove('drag-over');
+    el.style.boxShadow = '';
+    el.style.background = '';
+  });
+}
+
+function _calGlobalDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  const cell = event.currentTarget;
+  if (cell && !cell.classList.contains('drag-over')) {
+    cell.classList.add('drag-over');
+    cell.style.boxShadow = 'inset 0 0 0 2px var(--green)';
+    cell.style.background = 'rgba(76,175,122,0.1)';
+  }
+}
+
+function _calGlobalDragLeave(event) {
+  const cell = event.currentTarget;
+  if (cell) {
+    cell.classList.remove('drag-over');
+    cell.style.boxShadow = '';
+    cell.style.background = '';
+  }
+}
+
+async function _calGlobalDrop(event, dateStr, dbField) {
+  event.preventDefault();
+  const cell = event.currentTarget;
+  if (cell) {
+    cell.classList.remove('drag-over');
+    cell.style.boxShadow = '';
+    cell.style.background = '';
+  }
+  const taskId = event.dataTransfer.getData('text/plain') || _calGlobalDragId;
+  if (!taskId || !dateStr) return;
+
+  const task = (state.tasks || []).find(t => t.id === taskId);
+  if (!task) return;
+  const proj = state.projects.find(p => p.id === task.projectId);
+
+  // Production drag on finalized project → confirmation prompt
+  if (dbField === 'due_date' && proj?.payoutsFinalized) {
+    const ok = confirm(`"${proj.name}" is a finalized project. Are you sure you want to change the production (due) date for "${task.title}"?`);
+    if (!ok) return;
+  }
+
+  const stateField = dbField === 'due_date' ? 'due' : 'publishDate';
+  const patchPayload = dbField === 'due_date' ? { dueDate: dateStr } : { publishDate: dateStr };
+
+  const prevVal = task[stateField];
+  task[stateField] = dateStr; // optimistic
+
+  try {
+    await api('PATCH', '/tasks/' + taskId, patchPayload);
+    notify(`${dbField === 'due_date' ? 'Production' : 'Publish'} date → ${dateStr} ✓`);
+    // Re-render whichever calendar is active
+    if (state.currentPage === 'prodcal') renderProdCal();
+    else if (state.currentPage === 'pubcal') renderPubCal();
+    else {
+      // Shouldn't happen but try both
+      if (document.getElementById('prodcal-board')) renderProdCal();
+      if (document.getElementById('pubcal-board')) renderPubCal();
+    }
+  } catch (e) {
+    task[stateField] = prevVal;
+    notify('Update failed: ' + e.message);
+    if (document.getElementById('prodcal-board')) renderProdCal();
+    if (document.getElementById('pubcal-board')) renderPubCal();
+  }
+}
 
 let _prodCalDragId=null;
 
@@ -6153,7 +6276,16 @@ async function _pcDropMember(e,memberId,dateStr){
   document.querySelectorAll('.pc-drop-zone').forEach(z=>z.classList.remove('pc-dz-over'));
   const task=state.tasks.find(t=>t.id===taskId);
   if(!task) return;
-  if(isProjectLocked(task.projectId)){notify('🔒 Project is locked');return;}
+  // Finalized projects: confirm production date drag but don't hard-block
+  const proj=state.projects.find(p=>p.id===task.projectId);
+  if(proj?.payoutsFinalized){
+    const ok=confirm(`"${proj.name}" is a finalized project. Are you sure you want to change the production date and/or assignee for "${task.title}"?`);
+    if(!ok) return;
+  } else if(isProjectLocked(task.projectId)){
+    // Non-finalized but locked (e.g. paid complete projects for non-admins) — still block
+    notify('🔒 Project is locked');
+    return;
+  }
   const prevAssignee=task.assigneeId;
   const prevDue=task.due;
   const changed={};
@@ -6233,7 +6365,16 @@ function _renderProdCalCalendar(view){
     <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${navLabel}</span>
     <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
     ${todayBtn}
+    <div style="display:flex;align-items:center;gap:8px;margin-left:12px">
+      <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Client</span>
+      <select onchange="state.prodCalClient=this.value;renderProdCal()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:180px">
+        ${_calClientOptions(state.prodCalClient||'')}
+      </select>
+    </div>
   </div>`;
+
+  // Client-scoped visible project IDs for filtering tasks
+  const visibleProjIds = _calProjectIdsForClient(state.prodCalClient || '');
 
   const legend=active.map(m=>`<div style="display:flex;align-items:center;gap:5px">
     <div style="width:9px;height:9px;border-radius:2px;background:${m.color}"></div>
@@ -6251,7 +6392,7 @@ function _renderProdCalCalendar(view){
   if(view==='day'){
     const d=new Date(now);d.setDate(now.getDate()+offset);d.setHours(0,0,0,0);
     const ds=d.toISOString().split('T')[0];
-    const dayTasks=state.tasks.filter(t=>t.due===ds);
+    const dayTasks=state.tasks.filter(t=>t.due===ds&&visibleProjIds.has(t.projectId)&&t.tag!=='admin');
 
     const rows=active.map(m=>{
       const mTasks=dayTasks.filter(t=>t.assigneeId===m.id);
@@ -6298,7 +6439,7 @@ function _renderProdCalCalendar(view){
       const d=new Date(ws);d.setDate(ws.getDate()+i);
       return{date:d,ds:d.toISOString().split('T')[0],label:d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:d.toDateString()===now.toDateString()};
     });
-    const weekTasks=state.tasks.filter(t=>t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds);
+    const weekTasks=state.tasks.filter(t=>t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds&&visibleProjIds.has(t.projectId)&&t.tag!=='admin');
 
     const rows=active.map(m=>{
       const mTasks=weekTasks.filter(t=>t.assigneeId===m.id);
@@ -6353,7 +6494,7 @@ function _renderProdCalCalendar(view){
 
   const dayMap={};
   const dayTaskMap={};
-  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)).forEach(t=>{
+  state.tasks.filter(t=>t.due&&t.due.startsWith(`${yr}-${String(mo+1).padStart(2,'0')}`)&&visibleProjIds.has(t.projectId)&&t.tag!=='admin').forEach(t=>{
     if(!dayMap[t.due]) dayMap[t.due]={};
     if(!dayMap[t.due][t.assigneeId]) dayMap[t.due][t.assigneeId]=0;
     dayMap[t.due][t.assigneeId]+=(t.estHours||0);
