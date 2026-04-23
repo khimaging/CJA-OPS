@@ -4,31 +4,27 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Creative Juice Agency</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg:#1C1C1C; --bg2:#232221; --bg3:#2A2928; --bg4:#343231;
-    --border:#3a3836; --border2:#48453f;
-    --gold:#C03D3E; --gold2:#d95557; --gold-dim:rgba(192,61,62,0.12); --gold-dim2:rgba(192,61,62,0.22);
-    --text:#ebe7e0; --text2:#a49f96; --text3:#6b6660;
+    --bg:#17181a; --bg2:#1e1f21; --bg3:#26272a; --bg4:#2e3034;
+    --border:#33363a; --border2:#40434a;
+    /* Primary accent = soft off-white — used for active states, primary buttons */
+    --gold:#eaeaea; --gold2:#ffffff; --gold-dim:rgba(234,234,234,0.08); --gold-dim2:rgba(234,234,234,0.16);
+    --text:#eaeaea; --text2:#9ea1a6; --text3:#5e6166;
+    /* Semantic accents — tied to meaning, not brand */
     --green:#4caf7a; --green-dim:rgba(76,175,122,0.12);
     --red:#e05a5a; --red-dim:rgba(224,90,90,0.12);
     --blue:#5a8fd4; --blue-dim:rgba(90,143,212,0.12);
+    --amber:#d4a65a; --amber-dim:rgba(212,166,90,0.12);
     --purple:#9a7fd4; --orange:#d47a3a; --teal:#4cbfc9;
-  }
-  /* Fraunces variable-font tuning — aim for a modern architectural serif feel */
-  [style*="Fraunces"], .logo-text, .page-title, .stat-value, .month-title, .project-name,
-  .section-title, .team-month-label, .pay-total, .modal-title, .ps-quarter-label,
-  .pay-month-label, .member-period-title {
-    font-variation-settings: 'opsz' 144, 'SOFT' 30;
-    letter-spacing: -0.01em;
   }
   *{margin:0;padding:0;box-sizing:border-box;}
   body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px;min-height:100vh;display:flex;}
 
   .sidebar{width:220px;min-height:100vh;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:hidden;}
   .logo{padding:28px 24px 24px;border-bottom:1px solid var(--border);}
-  .logo-text{font-family:'Fraunces',serif;font-size:22px;font-weight:600;letter-spacing:0.06em;color:var(--gold);font-variation-settings:'opsz' 144, 'SOFT' 50;}
+  .logo-text{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;letter-spacing:-0.02em;color:var(--text);}
   .logo-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--text3);text-transform:uppercase;margin-top:2px;}
   .nav{padding:16px 12px;flex:1;overflow-y:auto;}
   .nav-section{margin-bottom:24px;}
@@ -42,13 +38,13 @@
 
   .main{flex:1;min-height:100vh;display:flex;flex-direction:column;overflow:auto;}
   .topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:16px 32px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100;}
-  .page-title{font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text);}
+  .page-title{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);}
   .page-sub{color:var(--text3);font-size:12px;margin-left:2px;}
   .topbar-actions{margin-left:auto;display:flex;gap:10px;align-items:center;}
   .btn{padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;font-weight:500;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);transition:all 0.15s;display:flex;align-items:center;gap:6px;}
   .btn:hover{background:var(--bg4);color:var(--text);}
-  .btn-primary{background:var(--gold);color:#fff;border-color:var(--gold);font-weight:600;}
-  .btn-primary:hover{background:var(--gold2);border-color:var(--gold2);color:#fff;}
+  .btn-primary{background:var(--gold);color:var(--bg);border-color:var(--gold);font-weight:600;}
+  .btn-primary:hover{background:var(--gold2);border-color:var(--gold2);color:var(--bg);}
   .btn-sm{padding:5px 11px;font-size:11px;}
   .content{padding:28px 32px;flex:1;}
 
@@ -58,7 +54,7 @@
   .stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px 22px;position:relative;overflow:hidden;}
   .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),transparent);}
   .stat-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text3);margin-bottom:10px;}
-  .stat-value{font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--text);line-height:1;}
+  .stat-value{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--text);line-height:1;}
   .stat-delta{font-size:11px;color:var(--green);margin-top:6px;display:flex;align-items:center;gap:4px;}
 
   /* CRM TABS */
@@ -70,7 +66,7 @@
   /* PIPELINE */
   .pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:28px;}
   .pipeline-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:160px;transition:border-color .15s,background .15s;}
-  .pipeline-col.drag-over{border-color:var(--gold);background:rgba(192,61,62,0.05);}
+  .pipeline-col.drag-over{border-color:var(--gold);background:rgba(234,234,234,0.05);}
   .pipeline-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
   .pipeline-stage{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;}
   .stage-dot{width:7px;height:7px;border-radius:50%;margin-right:8px;display:inline-block;}
@@ -82,7 +78,7 @@
   .deal-card.no-drag{cursor:default;}
   .deal-name{font-size:12px;font-weight:500;color:var(--text);margin-bottom:5px;}
   .deal-client{font-size:11px;color:var(--text3);margin-bottom:9px;}
-  .deal-value{font-family:'DM Mono',monospace;font-size:13px;color:var(--gold);font-weight:500;}
+  .deal-value{font-family:'DM Mono',monospace;font-size:13px;color:var(--green);font-weight:500;}
   .deal-buckets{display:flex;height:3px;border-radius:2px;overflow:hidden;margin-top:9px;gap:1px;}
   .bucket-bar{height:100%;border-radius:1px;}
   .deal-meta{display:flex;align-items:center;justify-content:space-between;margin-top:9px;}
@@ -98,7 +94,7 @@
 
   /* MONTHLY */
   .month-nav{display:flex;align-items:center;gap:16px;margin-bottom:20px;}
-  .month-title{font-family:'Fraunces',serif;font-size:22px;font-weight:600;color:var(--text);}
+  .month-title{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--text);}
   .month-nav-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text2);cursor:pointer;width:32px;height:32px;display:flex;align-items:center;justify-content:center;transition:all 0.15s;font-size:16px;}
   .month-nav-btn:hover{color:var(--text);background:var(--bg4);}
   .monthly-table{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:24px;}
@@ -113,7 +109,7 @@
   .projects-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px;}
   .project-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;cursor:pointer;transition:all 0.15s;}
   .project-card:hover{border-color:var(--gold-dim2);}
-  .project-name{font-family:'Fraunces',serif;font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px;}
+  .project-name{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px;}
   .project-client{font-size:11px;color:var(--text3);margin-bottom:14px;}
   .project-progress{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:14px;}
   .progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:2px;}
@@ -131,7 +127,7 @@
   .view-btn.active{background:var(--gold-dim);color:var(--gold);}
   .kanban{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
   .kanban-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;transition:border-color .15s,background .15s;}
-  .kanban-col.drag-over{border-color:var(--gold);background:rgba(192,61,62,0.05);}
+  .kanban-col.drag-over{border-color:var(--gold);background:rgba(234,234,234,0.05);}
   .kanban-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
   .kanban-stage{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;display:flex;align-items:center;gap:8px;}
   .kanban-cards{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:80px;}
@@ -159,7 +155,7 @@
   .calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
   .cal-header{background:var(--bg2);padding:10px;text-align:center;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text3);}
   .cal-day{background:var(--bg2);min-height:90px;padding:8px;transition:background .12s,outline .12s;}
-  .cal-day.drag-over{background:rgba(192,61,62,0.08);outline:2px dashed rgba(192,61,62,0.6);outline-offset:-2px;border-radius:0;}
+  .cal-day.drag-over{background:rgba(234,234,234,0.08);outline:2px dashed rgba(234,234,234,0.6);outline-offset:-2px;border-radius:0;}
   .cal-task{font-size:9px;padding:2px 5px;border-radius:3px;margin-bottom:2px;color:#0e0e0f;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:grab;}
   .cal-day-num{font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-bottom:6px;}
   .cal-day.today .cal-day-num{color:var(--gold);font-weight:600;}
@@ -167,7 +163,7 @@
 
   /* PAY */
   .pay-section{margin-bottom:36px;}
-  .section-title{font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text);margin-bottom:6px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .section-title{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text);margin-bottom:6px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
   .section-sub{font-size:12px;color:var(--text3);font-family:'DM Sans',sans-serif;font-weight:400;}
   .pay-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
   .pay-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;position:relative;}
@@ -186,11 +182,11 @@
   .manage-card.inactive-card{opacity:0.6;border-style:dashed;}
   .manage-card-actions{display:flex;gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);}
   .team-month-nav{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
-  .team-month-label{font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text);min-width:160px;text-align:center;}
+  .team-month-label{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text);min-width:160px;text-align:center;}
   .user-avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#0e0e0f;flex-shrink:0;}
   .user-name{font-size:13px;font-weight:500;color:var(--text);}
   .user-role{font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;}
-  .pay-total{font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--green);margin-bottom:14px;line-height:1;}
+  .pay-total{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--green);margin-bottom:14px;line-height:1;}
   .pay-breakdown{display:flex;flex-direction:column;gap:8px;}
   .pay-row{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
   .pay-row-label{color:var(--text3);}
@@ -232,7 +228,7 @@
   .modal-overlay.open{display:flex;}
   .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:14px;width:600px;max-height:88vh;overflow-y:auto;padding:28px;animation:slideUp 0.2s ease;}
   @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
-  .modal-title{font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text);margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;}
+  .modal-title{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;}
   .modal-close{cursor:pointer;color:var(--text3);font-size:20px;line-height:1;background:none;border:none;transition:color 0.15s;}
   .modal-close:hover{color:var(--text);}
   .form-group{margin-bottom:16px;}
@@ -261,11 +257,11 @@
   .priority-med{background:rgba(212,122,58,0.12);color:var(--orange);}
   .priority-low{background:var(--green-dim);color:var(--green);}
   .task-type-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:2px 7px;border-radius:4px;text-transform:uppercase;white-space:nowrap;}
-  .pc-drop-zone.pc-dz-over{outline:2px dashed var(--gold)!important;background:rgba(192,61,62,0.07)!important;}
-  .pc-drop-member.pc-dz-over{background:rgba(192,61,62,0.1)!important;}
+  .pc-drop-zone.pc-dz-over{outline:2px dashed var(--gold)!important;background:rgba(234,234,234,0.07)!important;}
+  .pc-drop-member.pc-dz-over{background:rgba(234,234,234,0.1)!important;}
   .tag-production{background:rgba(102,126,234,0.12);color:var(--blue);}
   .tag-post-production{background:rgba(149,97,226,0.12);color:var(--purple);}
-  .tag-admin{background:rgba(192,61,62,0.12);color:var(--gold);}
+  .tag-admin{background:rgba(234,234,234,0.12);color:var(--gold);}
   .status-todo{background:var(--bg4);color:var(--text3);}
   .status-progress{background:var(--blue-dim);color:var(--blue);}
   .status-review{background:rgba(154,127,212,0.12);color:var(--purple);}
@@ -274,7 +270,7 @@
   /* PROFIT SHARE */
   .ps-quarter-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;margin-top:32px;}
   .ps-quarter-header:first-of-type{margin-top:0;}
-  .ps-quarter-label{font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:12px;}
+  .ps-quarter-label{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:12px;}
   .ps-quarter-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);font-weight:400;}
   .ps-pool-badge{font-family:'DM Mono',monospace;font-size:11px;color:var(--green);background:var(--green-dim);padding:4px 12px;border-radius:6px;}
   .ps-member-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:8px;}
@@ -284,7 +280,7 @@
   .ps-name{font-size:13px;font-weight:500;color:var(--text);}
   .ps-role{font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:1px;}
   .ps-pct-badge{margin-left:auto;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);background:var(--gold-dim);padding:3px 9px;border-radius:5px;flex-shrink:0;}
-  .ps-amount{font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--green);line-height:1;margin-bottom:12px;}
+  .ps-amount{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--green);line-height:1;margin-bottom:12px;}
   .ps-breakdown{display:flex;flex-direction:column;gap:7px;margin-bottom:14px;}
   .ps-row{display:flex;align-items:center;justify-content:space-between;font-size:11px;}
   .ps-row-label{color:var(--text3);}
@@ -297,7 +293,7 @@
   .ps-edit-input:focus{border-color:var(--gold);}
   .ps-divider{height:1px;background:var(--border);margin:28px 0;}
   .ps-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:32px;}
-  .admin-banner{background:rgba(192,61,62,0.08);border:1px solid var(--gold-dim2);border-radius:8px;padding:10px 16px;margin-bottom:24px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--gold);font-family:'DM Mono',monospace;}
+  .admin-banner{background:rgba(234,234,234,0.08);border:1px solid var(--gold-dim2);border-radius:8px;padding:10px 16px;margin-bottom:24px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--gold);font-family:'DM Mono',monospace;}
 
   /* PROFIT SHARE - ADMIN pct warning */
   .ps-pct-warning{font-family:'DM Mono',monospace;font-size:9px;color:var(--red);margin-top:4px;display:none;}
@@ -306,11 +302,11 @@
   .exp-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px;}
   .exp-project-block{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px;}
   .exp-project-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:var(--bg);border-bottom:1px solid var(--border);}
-  .exp-project-title{font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text);}
+  .exp-project-title{font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text);}
   .exp-project-meta{font-size:11px;color:var(--text3);margin-top:2px;}
   .exp-project-total{text-align:right;}
   .exp-project-total-label{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:2px;}
-  .exp-project-total-value{font-family:'Fraunces',serif;font-size:22px;font-weight:600;color:var(--red);}
+  .exp-project-total-value{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--red);}
   .exp-table-head{display:grid;grid-template-columns:1fr 130px 110px 100px 120px 80px 36px;gap:10px;padding:8px 20px;background:var(--bg);border-bottom:1px solid var(--border);}
   .exp-table-head span{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.13em;text-transform:uppercase;color:var(--text3);}
   .exp-row{display:grid;grid-template-columns:1fr 130px 110px 100px 120px 80px 36px;gap:10px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;transition:background .1s;}
@@ -320,7 +316,7 @@
   .exp-category-pill{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:2px 8px;border-radius:10px;display:inline-block;}
   .exp-cat-software{background:rgba(90,143,212,0.12);color:var(--blue);}
   .exp-cat-contractor{background:rgba(212,122,58,0.12);color:#d47a3a;}
-  .exp-cat-assets{background:rgba(192,61,62,0.12);color:var(--gold);}
+  .exp-cat-assets{background:rgba(234,234,234,0.12);color:var(--gold);}
   .exp-cat-advertising{background:rgba(154,127,212,0.12);color:#9a7fd4;}
   .exp-cat-printing{background:rgba(76,191,201,0.12);color:var(--teal);}
   .exp-cat-travel{background:rgba(76,175,122,0.12);color:var(--green);}
@@ -345,7 +341,7 @@
   .exp-reimb-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--red);}
   .exp-reimb-card.all-clear::before{background:var(--green);}
   .exp-reimb-member{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-  .exp-reimb-amount{font-family:'Fraunces',serif;font-size:22px;font-weight:600;color:var(--red);line-height:1;margin-bottom:4px;}
+  .exp-reimb-amount{font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--red);line-height:1;margin-bottom:4px;}
   .exp-reimb-amount.clear{color:var(--green);}
   .exp-reimb-sub{font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:10px;}
   .exp-reimb-items{display:flex;flex-direction:column;gap:3px;}
@@ -374,7 +370,7 @@
   /* ===== LOGIN SCREEN ===== */
   #login-screen{position:fixed;inset:0;background:var(--bg);z-index:9999;display:flex;align-items:center;justify-content:center;}
   .login-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:40px 44px;width:420px;max-width:94vw;}
-  .login-logo{font-family:'Fraunces',serif;font-size:28px;font-weight:700;letter-spacing:.14em;color:var(--gold);margin-bottom:4px;}
+  .login-logo{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;letter-spacing:.14em;color:var(--gold);margin-bottom:4px;}
   .login-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.2em;color:var(--text3);text-transform:uppercase;margin-bottom:32px;}
   .login-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px;display:block;}
   .user-select-grid{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;}
@@ -384,7 +380,7 @@
   .user-select-name{font-size:13px;font-weight:500;color:var(--text);}
   .user-select-role{font-size:11px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:1px;}
   .user-select-badge{margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:10px;flex-shrink:0;}
-  .badge-admin{background:rgba(192,61,62,0.15);color:var(--gold);}
+  .badge-admin{background:rgba(234,234,234,0.15);color:var(--gold);}
   .badge-member{background:var(--blue-dim);color:var(--blue);}
   .pin-row{display:flex;gap:10px;margin-bottom:8px;}
   .pin-input{flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:12px;color:var(--text);font-family:'DM Mono',monospace;font-size:18px;letter-spacing:.4em;text-align:center;outline:none;transition:border-color .15s;}
@@ -407,7 +403,7 @@
 
   /* ===== CRM STATS 5-col for gross revenue card ===== */
   .stats-row-5{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:28px;}
-  .stat-card-gross{background:linear-gradient(135deg,rgba(192,61,62,0.06) 0%,var(--bg2) 60%);border:1px solid var(--gold-dim2);}
+  .stat-card-gross{background:linear-gradient(135deg,rgba(234,234,234,0.06) 0%,var(--bg2) 60%);border:1px solid var(--gold-dim2);}
 
   /* ===== RESTRICTED OVERLAY for CRM actions ===== */
   .access-denied-inline{display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(90,90,106,0.08);border:1px dashed var(--border2);border-radius:6px;font-size:11px;color:var(--text3);font-family:'DM Mono',monospace;}
@@ -433,7 +429,7 @@
   #mob-topbar{display:none;position:fixed;top:0;left:0;right:0;height:54px;background:var(--bg2);border-bottom:1px solid var(--border);z-index:200;align-items:center;padding:0 14px;gap:12px;}
   #mob-menu-btn{background:none;border:none;color:var(--text2);cursor:pointer;padding:6px;display:flex;align-items:center;border-radius:6px;}
   #mob-menu-btn:hover{background:var(--bg3);}
-  .mob-logo{font-family:'Fraunces',serif;font-size:19px;font-weight:700;letter-spacing:.12em;color:var(--gold);}
+  .mob-logo{font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;letter-spacing:.12em;color:var(--gold);}
   #mob-page-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-left:auto;}
 
   .sidebar-mobile-close{display:none;background:none;border:none;color:var(--text3);cursor:pointer;padding:8px;align-items:center;justify-content:center;margin-left:auto;}
@@ -909,7 +905,7 @@
           <button class="filter-pill active" id="ttype-all"    onclick="setTaskTagFilter('')">All</button>
           <button class="filter-pill tag-production"     id="ttype-production"      onclick="setTaskTagFilter('production')"      style="background:rgba(102,126,234,0.08)">Production</button>
           <button class="filter-pill tag-post-production" id="ttype-post-production" onclick="setTaskTagFilter('post-production')"  style="background:rgba(149,97,226,0.08)">Post-Prod</button>
-          <button class="filter-pill tag-admin"          id="ttype-admin"           onclick="setTaskTagFilter('admin')"            style="background:rgba(192,61,62,0.08)">Admin</button>
+          <button class="filter-pill tag-admin"          id="ttype-admin"           onclick="setTaskTagFilter('admin')"            style="background:rgba(234,234,234,0.08)">Admin</button>
           <button class="filter-pill"                    id="ttype-none"            onclick="setTaskTagFilter('none')"             style="color:var(--text3)">Untagged</button>
         </div>
       </div>
@@ -1079,7 +1075,7 @@
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:2px">Net Revenue</div>
         <div style="font-size:11px;color:var(--text3)" id="d-net-formula">Gross − Expenses</div>
       </div>
-      <div id="d-net-value" style="font-family:'Fraunces',serif;font-size:26px;font-weight:600;color:var(--gold);line-height:1">$0</div>
+      <div id="d-net-value" style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--gold);line-height:1">$0</div>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Close Month</label><input class="form-input" id="d-closedate" type="month"></div>
@@ -1219,7 +1215,7 @@
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--green);margin-bottom:3px">Estimated Task Pay</div>
         <div id="t-pay-detail" style="font-size:11px;color:var(--text3)"></div>
       </div>
-      <div id="t-pay-amount" style="font-family:'Fraunces',serif;font-size:26px;font-weight:600;color:var(--green);line-height:1"></div>
+      <div id="t-pay-amount" style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:600;color:var(--green);line-height:1"></div>
     </div>
     <!-- Comments section (only shown on edit) -->
     <div id="t-comments-section" style="display:none;margin-top:18px;border-top:1px solid var(--border);padding-top:16px">
@@ -1466,7 +1462,7 @@
     <div id="bi-step-progress" style="display:none">
       <div style="text-align:center;padding:24px 16px">
         <div class="spinner" style="width:40px;height:40px;border:3px solid var(--bg4);border-top-color:var(--gold);border-radius:50%;animation:bi-spin 1s linear infinite;margin:0 auto 16px"></div>
-        <div id="bi-progress-label" style="font-family:'Fraunces',serif;font-size:18px;color:var(--text);margin-bottom:4px">Processing receipts…</div>
+        <div id="bi-progress-label" style="font-family:'Space Grotesk',sans-serif;font-size:18px;color:var(--text);margin-bottom:4px">Processing receipts…</div>
         <div id="bi-progress-sub" style="font-size:11px;color:var(--text3)">This may take a minute. Claude is reading each receipt.</div>
       </div>
     </div>
@@ -1494,7 +1490,7 @@
     <div style="font-size:12px;color:var(--text3);margin-bottom:16px;line-height:1.5">
       Enter the quantity of each deliverable type for this project. Each row will auto-generate individually-tracked units (e.g., <em>Sizzle 1, Sizzle 2, Sizzle 3, Sizzle 4</em>). You can rename them and adjust publish dates per unit after they're created.
     </div>
-    <div id="quota-publish-banner" style="display:none;padding:10px 14px;background:rgba(192,61,62,0.08);border:1px solid rgba(192,61,62,0.25);border-radius:8px;margin-bottom:12px;font-size:11px;color:var(--text2)">
+    <div id="quota-publish-banner" style="display:none;padding:10px 14px;background:rgba(234,234,234,0.08);border:1px solid rgba(234,234,234,0.25);border-radius:8px;margin-bottom:12px;font-size:11px;color:var(--text2)">
       <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);display:block;margin-bottom:3px">Publish-enabled project</span>
       Publish dates shown only for types marked as publishable. Dates apply to all units of that type and can be staggered per-unit later.
     </div>
@@ -1566,7 +1562,7 @@
     <div class="modal-title" id="cli-modal-title">New Client<button class="modal-close" onclick="closeModal('client-modal')">✕</button></div>
     <input type="hidden" id="cli-edit-id">
     <div class="form-group"><label class="form-label">Client Name</label><input class="form-input" id="cli-name" placeholder="Company or person name"></div>
-    <div id="cli-fuzzy-warning" style="display:none;padding:10px 14px;background:rgba(192,61,62,0.1);border:1px solid rgba(192,61,62,0.3);border-radius:8px;margin-bottom:12px">
+    <div id="cli-fuzzy-warning" style="display:none;padding:10px 14px;background:rgba(234,234,234,0.1);border:1px solid rgba(234,234,234,0.3);border-radius:8px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--gold);margin-bottom:6px">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Similar client exists</span>
@@ -2770,7 +2766,7 @@ async function renderAuditLog(){
   if(!el)return;
   el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
     <div>
-      <div style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
       <div style="font-size:12px;color:var(--text3);margin-top:4px">Changes to paid deals, locked tasks, and profit share</div>
     </div>
   </div>
@@ -2807,7 +2803,7 @@ async function renderAuditLog(){
 
     el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
       <div>
-        <div style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--text)">Audit Log</div>
         <div style="font-size:12px;color:var(--text3);margin-top:4px">Last 200 events — changes to paid deals, locked tasks, and profit share</div>
       </div>
     </div>
@@ -3159,7 +3155,7 @@ function renderExpensesView(){
         <div style="display:flex;align-items:center;gap:16px">
           <div style="text-align:right">
             <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Expense Total</div>
-            <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:600;color:var(--red);line-height:1">${fmt(projTotal)}</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:600;color:var(--red);line-height:1">${fmt(projTotal)}</div>
             ${deal?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${expPct}% of gross · <span style="color:var(--green)">net ${fmt(netR)}</span></div>`:''}
           </div>
           <div style="display:flex;flex-direction:column;gap:6px">
@@ -3332,7 +3328,7 @@ function _renderPendingExpenseCard(p){
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
-          <span style="font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text)">${p.vendor||p.subject||'Receipt'}</span>
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text)">${p.vendor||p.subject||'Receipt'}</span>
           <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;padding:2px 7px;border-radius:4px;background:${confColor}22;color:${confColor}">${confLabel}</span>
         </div>
         <div style="font-size:11px;color:var(--text3)">From ${p.senderName||p.senderEmail||'unknown'} · ${ts}</div>
@@ -3567,7 +3563,7 @@ function _showBulkImportResults(result){
   summary.innerHTML=`
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-      <div style="font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--green)">
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--green)">
         ${proc.length} receipt${proc.length===1?'':'s'} imported
       </div>
     </div>
@@ -3699,7 +3695,7 @@ function _renderPayrollBody(){
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 20px;margin-bottom:18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Selected Total</div>
-        <div style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--green)">${fmt(selectedTotal)}</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--green)">${fmt(selectedTotal)}</div>
         <div style="font-size:11px;color:var(--text3)">${selectedCount} line item${selectedCount===1?'':'s'} across ${data.members.filter(m=>m.items.some(it=>state.payrollSelected.has(it.payKey))).length} member${data.members.length===1?'':'s'}</div>
       </div>
       <button class="btn btn-sm" onclick="_payrollToggleAll(true)">Select All</button>
@@ -4248,8 +4244,8 @@ function renderProjectDetail(pid){
 
   // RAG colors
   const ragColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
-  const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(192,61,62,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
-  const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(192,61,62,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
+  const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(234,234,234,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+  const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(234,234,234,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
 
   // Kanban
   const COLS=[{id:'todo',label:'To Do'},{id:'progress',label:'In Progress'},{id:'review',label:'In Review'},{id:'done',label:'Done'}];
@@ -4317,7 +4313,7 @@ function renderProjectDetail(pid){
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px">
             ${isFinalized?'<span style="font-size:14px">🔒</span>':''}
-            <div style="font-family:\'Fraunces\',serif;font-size:22px;font-weight:600;color:var(--text)">${proj.name}</div>
+            <div style="font-family:\'Space Grotesk\',sans-serif;font-size:22px;font-weight:600;color:var(--text)">${proj.name}</div>
             <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;padding:3px 9px;border-radius:5px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>
             <span class="proj-status ${isFinalized?'complete':pStatus}" style="font-size:9px"><span class="proj-status-dot"></span>${isFinalized?'Finalized':pStatus==='complete'?'Complete':'Active'}</span>
           </div>
@@ -4392,7 +4388,7 @@ function renderProjectDetail(pid){
         const TAGS=[
           {id:'production',      label:'Production',      color:'var(--blue)',   bg:'rgba(102,126,234,0.1)'},
           {id:'post-production', label:'Post-Production',  color:'var(--purple)', bg:'rgba(149,97,226,0.1)'},
-          {id:'admin',           label:'Admin',            color:'var(--gold)',   bg:'rgba(192,61,62,0.1)'},
+          {id:'admin',           label:'Admin',            color:'var(--gold)',   bg:'rgba(234,234,234,0.1)'},
         ];
         const untaggedH=tasks.filter(t=>!t.tag).reduce((s,t)=>s+(t.estHours||0),0);
         const untaggedDone=tasks.filter(t=>!t.tag&&t.status==='done').length;
@@ -4466,7 +4462,7 @@ function renderProjectDetail(pid){
 
       const statusColors={
         planned:['var(--text3)','var(--bg4)'],
-        in_progress:['var(--gold)','rgba(192,61,62,0.12)'],
+        in_progress:['var(--gold)','rgba(234,234,234,0.12)'],
         in_review:['var(--blue)','rgba(102,126,234,0.12)'],
         published:['var(--green)','rgba(76,175,122,0.12)'],
         cancelled:['var(--red)','rgba(224,90,90,0.08)'],
@@ -4478,10 +4474,10 @@ function renderProjectDetail(pid){
           <div>
             <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:8px">
               Deliverables
-              ${projectPublishes?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 6px;border-radius:3px;background:rgba(192,61,62,0.12);color:var(--gold)">PUBLISHING ENABLED</span>`:''}
+              ${projectPublishes?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 6px;border-radius:3px;background:rgba(234,234,234,0.12);color:var(--gold)">PUBLISHING ENABLED</span>`:''}
             </div>
             <div style="display:flex;align-items:baseline;gap:10px">
-              <span style="font-family:'Fraunces',serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
               <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--gold)':'var(--text3)'}">${overallPct}% complete</span>
             </div>
           </div>
@@ -4491,7 +4487,7 @@ function renderProjectDetail(pid){
           </div>`:''}
         </div>
         ${delivCount===0?`<div style="padding:32px 20px;text-align:center;color:var(--text3);font-size:12px">
-          <div style="font-size:14px;color:var(--text2);margin-bottom:6px;font-family:'Fraunces',serif;font-style:italic">No deliverables defined yet</div>
+          <div style="font-size:14px;color:var(--text2);margin-bottom:6px;font-family:'Space Grotesk',sans-serif;font-style:italic">No deliverables defined yet</div>
           <div style="margin-bottom:14px">Click <strong style="color:var(--gold)">Define Deliverables</strong> to bulk-create by quantity (e.g., 4 Sizzles, 5 Carousels).</div>
         </div>`:`
           <!-- Status strip -->
@@ -4521,7 +4517,7 @@ function renderProjectDetail(pid){
             return`
               <div style="padding:10px 20px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px">
                 <div style="display:flex;align-items:center;gap:10px">
-                  <span style="font-family:'Fraunces',serif;font-size:16px;font-weight:600;color:var(--text)">${g.typeName}</span>
+                  <span style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text)">${g.typeName}</span>
                   ${g.publishable?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;color:var(--gold)">◆ PUBLISHABLE</span>`:''}
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
@@ -4652,8 +4648,8 @@ function renderHealthDashboard(){
         const overdue=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
         const rag=calcProjectRag(p);
         const ragColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
-        const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(192,61,62,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
-        const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(192,61,62,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
+        const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(234,234,234,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+        const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(234,234,234,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
         const deal=state.deals.find(d=>d.id===p.dealId);
         const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
         const isFinalized=!!p.payoutsFinalized;
@@ -4667,7 +4663,7 @@ function renderHealthDashboard(){
         // Completed tab: show finalization status badge
         const completeBadge=tab==='complete'?(isFinalized
           ?`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(76,175,122,0.1);color:var(--green);border:1px solid rgba(76,175,122,0.25)">⚑ Finalized</span>`
-          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(192,61,62,0.08);color:var(--gold);border:1px solid rgba(192,61,62,0.2)">Pending</span>`)
+          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(234,234,234,0.08);color:var(--gold);border:1px solid rgba(234,234,234,0.2)">Pending</span>`)
           :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>`;
 
         const barColor=tab==='complete'?(isFinalized?'var(--green)':'var(--gold)'):(ragColor);
@@ -5329,7 +5325,7 @@ function renderDeliverableTypesView(){
       <div style="min-width:0;flex:1">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
           <span style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.name}</span>
-          ${t.publishable?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 5px;border-radius:3px;background:rgba(192,61,62,0.12);color:var(--gold);flex-shrink:0">◆ PUBLISHABLE</span>`:''}
+          ${t.publishable?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 5px;border-radius:3px;background:rgba(234,234,234,0.12);color:var(--gold);flex-shrink:0">◆ PUBLISHABLE</span>`:''}
         </div>
         <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${isCustom?(proj?.name||'unknown project'):`${usedCount} in use`}</div>
       </div>
@@ -5501,7 +5497,7 @@ function renderPubCal(){
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)-1;renderPubCal()">‹</button>
-      <span style="font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
+      <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
       <button class="month-nav-btn" onclick="state.pubCalOffset=(state.pubCalOffset||0)+1;renderPubCal()">›</button>
       ${offset!==0?`<button class="btn btn-sm" onclick="state.pubCalOffset=0;renderPubCal()">Today</button>`:''}
       <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
@@ -5606,7 +5602,7 @@ function renderProdCal(){
   const viewPicker=(tab)=>`
     <div style="display:flex;gap:4px;margin-left:auto">
       ${['day','week','month'].map(v=>`<button onclick="state.prodCalView='${v}';state.prodCalOffset=0;renderProdCal()"
-        style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:5px;border:1px solid ${view===v?'var(--gold)':'var(--border)'};background:${view===v?'rgba(192,61,62,0.1)':'var(--bg3)'};color:${view===v?'var(--gold)':'var(--text3)'};cursor:pointer">
+        style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:5px;border:1px solid ${view===v?'var(--gold)':'var(--border)'};background:${view===v?'rgba(234,234,234,0.1)':'var(--bg3)'};color:${view===v?'var(--gold)':'var(--text3)'};cursor:pointer">
         ${v.charAt(0).toUpperCase()+v.slice(1)}
       </button>`).join('')}
     </div>`;
@@ -5655,7 +5651,7 @@ function _renderProdCalCalendar(view){
 
   const nav=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
     <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
-    <span style="font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text)">${navLabel}</span>
+    <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${navLabel}</span>
     <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
     ${todayBtn}
   </div>`;
@@ -5735,7 +5731,7 @@ function _renderProdCalCalendar(view){
         const dH=dTasks.reduce((s,t)=>s+(t.estHours||0),0);
         const overD=dH>DAY_CAP;
         const dc=overD?'var(--red)':dH>DAY_CAP*0.8?'var(--gold)':dH>0?'var(--green)':'var(--text3)';
-        return`<div class="pc-drop-zone" style="flex:1;min-width:0;border-right:1px solid var(--border);padding:8px 10px;${wd.isToday?'background:rgba(192,61,62,0.04)':''}"
+        return`<div class="pc-drop-zone" style="flex:1;min-width:0;border-right:1px solid var(--border);padding:8px 10px;${wd.isToday?'background:rgba(234,234,234,0.04)':''}"
           ondragover="_pcDragOver(event,this)" ondragleave="_pcDragLeave(this)" ondrop="_pcDropMember(event,'${m.id}','${wd.ds}')">
           <div style="font-family:'DM Mono',monospace;font-size:8px;color:${wd.isToday?'var(--gold)':'var(--text3)'};margin-bottom:6px;white-space:nowrap">${wd.label}</div>
           ${dH>0?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc};margin-bottom:5px">${dH}h</div>`:''}
@@ -5798,7 +5794,7 @@ function _renderProdCalCalendar(view){
     const dtasks=dayTaskMap[ds]||[];
     const totalH=Object.values(members).reduce((s,h)=>s+h,0);
     const overCap=totalH>DAY_CAP;
-    const borderColor=overCap?'rgba(224,90,90,0.5)':totalH>DAY_CAP*0.8?'rgba(192,61,62,0.4)':'var(--border)';
+    const borderColor=overCap?'rgba(224,90,90,0.5)':totalH>DAY_CAP*0.8?'rgba(234,234,234,0.4)':'var(--border)';
 
     const bars=active.filter(m=>members[m.id]>0).map(m=>{
       const w=Math.min(Math.round(members[m.id]/DAY_CAP*100),100);
@@ -5904,7 +5900,7 @@ function _renderProdCalGantt(view){
     el.innerHTML=`
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
         <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
-        <span style="font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
+        <span style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
         <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
         ${todayBtn}
       </div>
@@ -5972,7 +5968,7 @@ function _renderProdCalGantt(view){
     const loadBars=windowDays.map((d,i)=>{
       const dayH=(dayGroups[d.ds]||[]).reduce((s,t)=>s+(t.estHours||0),0);
       if(!dayH)return'';
-      const c=dayH>WL_CAPS.day?'rgba(224,90,90,0.15)':dayH>WL_CAPS.day*0.8?'rgba(192,61,62,0.12)':'rgba(76,175,122,0.08)';
+      const c=dayH>WL_CAPS.day?'rgba(224,90,90,0.15)':dayH>WL_CAPS.day*0.8?'rgba(234,234,234,0.12)':'rgba(76,175,122,0.08)';
       return`<div style="position:absolute;left:${i*CELL_W}px;width:${CELL_W}px;height:100%;background:${c}"></div>`;
     }).join('');
 
@@ -6010,7 +6006,7 @@ function _renderProdCalGantt(view){
       <div style="flex:1;position:relative;height:${rowH}px;overflow:hidden">
         ${loadBars}
         ${windowDays.filter(d=>d.isWeekStart||d.date.getDay()===1).map(d=>{const i=windowDays.indexOf(d);return i>0?`<div style="position:absolute;left:${i*CELL_W}px;top:0;bottom:0;width:1px;background:var(--border2)"></div>`:'';}).join('')}
-        ${todayIdx>=0?`<div style="position:absolute;left:${todayIdx*CELL_W+CELL_W/2}px;top:0;bottom:0;width:2px;background:rgba(192,61,62,0.6);z-index:2"></div>`:''}
+        ${todayIdx>=0?`<div style="position:absolute;left:${todayIdx*CELL_W+CELL_W/2}px;top:0;bottom:0;width:2px;background:rgba(234,234,234,0.6);z-index:2"></div>`:''}
         ${taskBars}
       </div>
     </div>`;
@@ -6019,7 +6015,7 @@ function _renderProdCalGantt(view){
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)-1;renderProdCal()">‹</button>
-      <span style="font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
+      <span style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
       <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
       ${todayBtn}
     </div>
@@ -6037,7 +6033,7 @@ function _renderProdCalGantt(view){
     </div>
     <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
       <div>Task bars show: title · project · hours</div>
-      <div style="display:flex;align-items:center;gap:4px"><div style="width:2px;height:12px;background:rgba(192,61,62,0.6)"></div>Today</div>
+      <div style="display:flex;align-items:center;gap:4px"><div style="width:2px;height:12px;background:rgba(234,234,234,0.6)"></div>Today</div>
       <div style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:8px;border-left:2px solid rgba(224,90,90,0.7);background:rgba(255,255,255,0.1)"></div>High priority</div>
       <div style="display:flex;align-items:center;gap:4px;color:var(--green)"><div style="width:10px;height:8px;border-left:2px solid var(--green);background:var(--bg4);opacity:0.6"></div>Completed</div>
     </div>
@@ -6310,7 +6306,7 @@ function renderWorkloadBar(){
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--border)">
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Workload — ${periodLabel} <span style="color:var(--text3);font-weight:400">/ ${cap}h cap</span></div>
       <div style="display:flex;gap:4px">
-        ${['day','week','month'].map(p=>`<button onclick="state.workloadPeriod='${p}';renderWorkloadBar()" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ${period===p?'var(--gold)':'var(--border)'};background:${period===p?'rgba(192,61,62,0.1)':'var(--bg3)'};color:${period===p?'var(--gold)':'var(--text3)'};cursor:pointer">${{day:'Daily',week:'Weekly',month:'Monthly'}[p]}</button>`).join('')}
+        ${['day','week','month'].map(p=>`<button onclick="state.workloadPeriod='${p}';renderWorkloadBar()" style="font-family:'DM Mono',monospace;font-size:9px;padding:2px 8px;border-radius:4px;border:1px solid ${period===p?'var(--gold)':'var(--border)'};background:${period===p?'rgba(234,234,234,0.1)':'var(--bg3)'};color:${period===p?'var(--gold)':'var(--text3)'};cursor:pointer">${{day:'Daily',week:'Weekly',month:'Monthly'}[p]}</button>`).join('')}
       </div>
     </div>
     <div style="display:flex;gap:0;overflow-x:auto;padding:12px 16px;gap:12px;flex-wrap:wrap">
@@ -6669,7 +6665,7 @@ function renderCalendar(tasks){
   document.getElementById('task-calendar').innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <button class="month-nav-btn" onclick="state.calOffset--;renderTaskView()">‹</button>
-      <span style="font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
+      <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${MONTHS[mo]} ${yr}</span>
       <button class="month-nav-btn" onclick="state.calOffset++;renderTaskView()">›</button>
       ${state.calOffset!==0?`<button class="btn btn-sm" onclick="state.calOffset=0;renderTaskView()" style="margin-left:4px">Today</button>`:''}
       <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${tasks.filter(t=>t.due&&t.due.startsWith(yr+'-'+String(mo+1).padStart(2,'0'))).length} tasks this month</div>
@@ -7150,12 +7146,12 @@ function renderTeamOverview(){
           <div class="pay-row"><span class="pay-row-label">Hours allocated</span><span class="pay-row-value">${totH[m.id]||0}h</span></div>
 
           <!-- Actual Earnings block -->
-          <div style="background:rgba(192,61,62,0.06);border:1px solid rgba(192,61,62,0.15);border-radius:7px;padding:10px 12px;margin-top:8px">
+          <div style="background:rgba(234,234,234,0.06);border:1px solid rgba(234,234,234,0.15);border-radius:7px;padding:10px 12px;margin-top:8px">
             <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">Actual Earned</div>
             <div class="pay-row"><span class="pay-row-label">Production</span><span class="pay-row-value" style="color:var(--gold)">${fmt(prodPay[m.id]||0)}</span></div>
             <div class="pay-row"><span class="pay-row-label">Fees</span><span class="pay-row-value" style="color:var(--teal)">${fmt(feePay[m.id]||0)}</span></div>
             <div class="pay-row"><span class="pay-row-label">Profit share</span><span class="pay-row-value" style="color:var(--green)">${fmt(psPay[m.id]||0)}</span></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(192,61,62,0.2)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(234,234,234,0.2)">
               <span style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--gold)">Total Actual</span>
               <span style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--gold)">${fmt(actTotal)}</span>
             </div>
@@ -7451,7 +7447,7 @@ function renderTeamMonthly(){
               <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.label}</div>
               <div style="font-size:10px;color:var(--text3)">${l.detail}</div>
             </div>
-            <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:rgba(192,61,62,0.1);padding:2px 7px;border-radius:4px;white-space:nowrap">Actual</div>
+            <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:rgba(234,234,234,0.1);padding:2px 7px;border-radius:4px;white-space:nowrap">Actual</div>
             <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--gold);min-width:72px;text-align:right">${fmt(l.amt)}</div>
             ${l.payKey?`<label style="display:inline-flex;align-items:center;gap:4px;cursor:${canCheck?'pointer':'default'};min-width:60px;justify-content:flex-end">
               <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${l.projId}','${l.memberId}',this.checked)`:''}" style="width:14px;height:14px;accent-color:var(--green);cursor:${canCheck?'pointer':'default'}">
@@ -7501,7 +7497,7 @@ function renderTeamManage(){
   document.getElementById('team-content').innerHTML=`
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
       <div>
-        <div style="font-family:'Fraunces',serif;font-size:20px;font-weight:600;color:var(--text)">${state.team.length} Team Members</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${state.team.length} Team Members</div>
         <div style="font-size:11px;color:var(--text3);margin-top:2px">${state.team.filter(m=>m.active!==false).length} active · ${state.team.filter(m=>m.active===false).length} inactive</div>
       </div>
       <div style="padding:8px 14px;background:var(--bg2);border:1px solid ${pctValid?'var(--border)':'rgba(224,90,90,0.4)'};border-radius:8px;font-family:'DM Mono',monospace;font-size:11px;color:${pctValid?'var(--text3)':'var(--red)'}">
@@ -7859,7 +7855,7 @@ function showAutoProjectToast(proj,dealName){
         <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:3px">Project Auto-Created</div>
         <div style="font-size:11px;color:var(--text3);margin-bottom:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">"${dealName}" is now in Projects</div>
         <div style="display:flex;gap:8px">
-          <button onclick="switchView('projects');document.getElementById('auto-proj-toast')?.remove()" style="padding:5px 12px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:11px;font-family:'DM Sans',sans-serif;font-weight:600">View Projects</button>
+          <button onclick="switchView('projects');document.getElementById('auto-proj-toast')?.remove()" style="padding:5px 12px;background:var(--gold);color:var(--bg);border:none;border-radius:5px;cursor:pointer;font-size:11px;font-family:'DM Sans',sans-serif;font-weight:600">View Projects</button>
           <button onclick="document.getElementById('auto-proj-toast')?.remove()" style="padding:5px 12px;background:var(--bg3);color:var(--text2);border:1px solid var(--border2);border-radius:5px;cursor:pointer;font-size:11px;font-family:'DM Sans',sans-serif">Dismiss</button>
         </div>
       </div>
