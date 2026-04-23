@@ -281,6 +281,14 @@ function effectivePublishDate(task){
   return task.publishDate||task.due||null;
 }
 
+// Effective production date for a deliverable: earliest due date of any linked task
+function deliverableProductionDate(deliverable){
+  const linkIds=(state.data.taskDeliverables||[]).filter(l=>l.deliverableId===deliverable.id).map(l=>l.taskId);
+  const tasks=(state.data.tasks||[]).filter(t=>linkIds.includes(t.id)&&t.due);
+  if(tasks.length===0) return null;
+  return tasks.reduce((min,t)=>!min||t.due<min?t.due:min,null);
+}
+
 // Filter helpers — used by dashboard, deliverables, tasks views
 function getVisibleProjects(){
   const projs=state.data.projects||[];
@@ -552,8 +560,14 @@ function renderDeliverablesPage(){
     </button>
   </div>`;
 
+  // Production/Publishing mode toggle — only shown when calendar view is active
+  const modeToggle=state.view==='calendar'?`<div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
+    <button onclick="state.calMode='production';renderPortal()" style="background:${state.calMode==='production'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='production'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Production</button>
+    <button onclick="state.calMode='publishing';renderPortal()" style="background:${state.calMode==='publishing'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='publishing'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Publishing</button>
+  </div>`:'';
+
   document.getElementById('portal-content').innerHTML=`
-    ${renderFilterBar(viewTabs)}
+    ${renderFilterBar(modeToggle+viewTabs)}
     <div id="view-body"></div>
   `;
   renderDeliverablesViewBody();
@@ -630,7 +644,20 @@ function renderDelivsKanban(delivs,body){
 }
 
 function renderDelivsCalendar(delivs,body){
-  renderPortalCalendar(delivs,body,'publishDate','var(--purple)',d=>{
+  const color=state.calMode==='production'?'var(--blue)':'var(--purple)';
+  let decorated;
+  if(state.calMode==='production'){
+    // Production mode: earliest due date of linked tasks for each deliverable
+    decorated=delivs
+      .map(d=>({...d,__calDate:deliverableProductionDate(d)}))
+      .filter(d=>d.__calDate);
+  } else {
+    // Publishing mode: explicit publish date on the deliverable
+    decorated=delivs
+      .map(d=>({...d,__calDate:d.publishDate}))
+      .filter(d=>d.__calDate);
+  }
+  renderPortalCalendar(decorated,body,'__calDate',color,d=>{
     const t=(state.data.deliverableTypes||[]).find(x=>x.id===d.typeId);
     return{title:d.name,subtitle:t?.name||'',onClick:`_openDelivDrillIn('${d.id}')`};
   });
@@ -730,12 +757,13 @@ function renderTasksCalendar(tasks,body){
   const color=state.calMode==='publishing'?'var(--amber)':'var(--blue)';
   let decorated;
   if(state.calMode==='publishing'){
-    // Publishing mode: publish date explicit, OR fall back to due date
+    // Publishing mode: explicit publish date OR fall back to due date
     decorated=tasks.map(t=>({...t,__calDate:effectivePublishDate(t)})).filter(t=>t.__calDate);
   } else {
-    // Production mode: due dates, production + post-production only
+    // Production mode: task due dates. Admin-tagged tasks already stripped server-side.
+    // Shows production + post-production + untagged tasks (clients see what team is working on, minus admin noise).
     decorated=tasks
-      .filter(t=>t.tag==='production'||t.tag==='post-production')
+      .filter(t=>t.tag!=='admin')
       .map(t=>({...t,__calDate:t.due}))
       .filter(t=>t.__calDate);
   }
