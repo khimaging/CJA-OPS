@@ -338,11 +338,12 @@ app.post('/api/projects', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Creating projects requires Admin, Class A, or VA access.' });
   }
   try {
-    const { name, dealId, client, startDate, endDate, status } = req.body;
+    const { name, dealId, client, startDate, endDate, status, publishesContent } = req.body;
     const { data, error } = await supabase.from('projects').insert({
       name, deal_id: dealId || null, client: client || '',
       start_date: startDate || null, end_date: endDate || null,
       status: status || 'active', archived: false,
+      publishes_content: !!publishesContent,
     }).select().single();
     if (error) throw error;
     res.status(201).json(mapProject(data));
@@ -357,12 +358,13 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
       return res.status(403).json({ error: `"${current.name}" has finalized payouts — this project is permanently locked.` });
     }
     const updates = {};
-    if (req.body.status           !== undefined) updates.status            = req.body.status;
-    if (req.body.archived         !== undefined) updates.archived          = req.body.archived;
-    if (req.body.name             !== undefined) updates.name              = req.body.name;
-    if (req.body.startDate        !== undefined) updates.start_date        = req.body.startDate;
-    if (req.body.endDate          !== undefined) updates.end_date          = req.body.endDate;
-    if (req.body.payoutsFinalized !== undefined) updates.payouts_finalized = req.body.payoutsFinalized;
+    if (req.body.status            !== undefined) updates.status             = req.body.status;
+    if (req.body.archived          !== undefined) updates.archived           = req.body.archived;
+    if (req.body.name              !== undefined) updates.name               = req.body.name;
+    if (req.body.startDate         !== undefined) updates.start_date         = req.body.startDate;
+    if (req.body.endDate           !== undefined) updates.end_date           = req.body.endDate;
+    if (req.body.payoutsFinalized  !== undefined) updates.payouts_finalized  = req.body.payoutsFinalized;
+    if (req.body.publishesContent  !== undefined) updates.publishes_content  = !!req.body.publishesContent;
     const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapProject(data));
@@ -1438,11 +1440,12 @@ app.get('/api/deliverable-types', requireAuth, async (req, res) => {
 
 app.post('/api/deliverable-types', requireAuth, async (req, res) => {
   try {
-    const { name, projectId } = req.body;
+    const { name, projectId, publishable } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
     const { data, error } = await supabase.from('deliverable_types').insert({
       name: name.trim(),
       project_id: projectId || null,
+      publishable: !!publishable,
       active: true,
     }).select().single();
     if (error) {
@@ -1456,8 +1459,9 @@ app.post('/api/deliverable-types', requireAuth, async (req, res) => {
 app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
   try {
     const updates = {};
-    if (req.body.name   !== undefined) updates.name   = req.body.name;
-    if (req.body.active !== undefined) updates.active = req.body.active;
+    if (req.body.name        !== undefined) updates.name        = req.body.name;
+    if (req.body.active      !== undefined) updates.active      = req.body.active;
+    if (req.body.publishable !== undefined) updates.publishable = !!req.body.publishable;
     const { data, error } = await supabase.from('deliverable_types').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapDeliverableType(data));
@@ -1505,6 +1509,81 @@ app.post('/api/deliverables', requireAuth, async (req, res) => {
     }).select().single();
     if (error) throw error;
     res.status(201).json(mapDeliverable(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * Bulk-create deliverables from quota wizard.
+ * Body: {
+ *   projectId: uuid,
+ *   quotas: [ { typeId, quantity, publishDate? } ]
+ * }
+ * For each quota, creates N rows with auto-generated names like "Sizzle 1", "Sizzle 2"…
+ * Auto-numbering picks up from max existing N for that type on that project.
+ */
+app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
+  try {
+    const { projectId, quotas } = req.body;
+    if (!projectId) return res.status(400).json({ error: 'projectId required' });
+    if (!Array.isArray(quotas) || !quotas.length) return res.status(400).json({ error: 'quotas array required' });
+
+    // Project lock check
+    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized,publishes_content').eq('id', projectId).single();
+    if (!proj) return res.status(404).json({ error: 'Project not found' });
+    if (proj.payouts_finalized) return res.status(403).json({ error: `Project "${proj.name}" is finalized.` });
+
+    // Fetch existing deliverables on this project to find next auto-number per type
+    const { data: existing } = await supabase.from('deliverables').select('name,type_id').eq('project_id', projectId);
+
+    // Fetch deliverable types referenced to get names + publishable flag
+    const typeIds = quotas.map(q => q.typeId).filter(Boolean);
+    const { data: types } = await supabase.from('deliverable_types').select('*').in('id', typeIds);
+    const typeMap = new Map((types || []).map(t => [t.id, t]));
+
+    const toInsert = [];
+    for (const q of quotas) {
+      const qty = parseInt(q.quantity, 10);
+      if (!qty || qty < 1 || qty > 100) continue; // skip invalid
+      const type = q.typeId ? typeMap.get(q.typeId) : null;
+      const typeName = type ? type.name : 'Deliverable';
+      const publishable = type ? type.publishable : false;
+
+      // Find highest existing number for this type name on this project
+      // Match pattern: "TypeName N" where N is a number
+      const escapedTypeName = typeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const numRegex = new RegExp(`^${escapedTypeName}\\s+(\\d+)$`, 'i');
+      let maxNum = 0;
+      (existing || []).filter(d => d.type_id === q.typeId).forEach(d => {
+        const m = numRegex.exec(d.name || '');
+        if (m) {
+          const n = parseInt(m[1], 10);
+          if (n > maxNum) maxNum = n;
+        }
+      });
+
+      // Only set publish_date if project publishes content AND type is publishable
+      const usePublishDate = proj.publishes_content && publishable && q.publishDate;
+
+      for (let i = 1; i <= qty; i++) {
+        toInsert.push({
+          project_id: projectId,
+          type_id: q.typeId || null,
+          name: `${typeName} ${maxNum + i}`,
+          publish_date: usePublishDate ? q.publishDate : null,
+          status: 'planned',
+          sort_order: maxNum + i,
+        });
+      }
+    }
+
+    if (!toInsert.length) return res.status(400).json({ error: 'No valid quantities provided' });
+
+    const { data, error } = await supabase.from('deliverables').insert(toInsert).select();
+    if (error) throw error;
+    await auditLog(req.user, 'BULK_CREATE_DELIVERABLES', 'deliverables', projectId, {
+      count: data.length, quotas: quotas.map(q => ({ typeId: q.typeId, quantity: q.quantity })),
+    });
+    res.status(201).json(data.map(mapDeliverable));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1831,6 +1910,7 @@ function mapProject(p) {
     status:           p.status,
     archived:         p.archived || false,
     payoutsFinalized: p.payouts_finalized || false,
+    publishesContent: p.publishes_content || false,
   };
 }
 
@@ -1864,10 +1944,11 @@ function mapClient(c) {
 
 function mapDeliverableType(t) {
   return {
-    id:        t.id,
-    name:      t.name,
-    projectId: t.project_id,
-    active:    t.active,
+    id:          t.id,
+    name:        t.name,
+    projectId:   t.project_id,
+    active:      t.active,
+    publishable: t.publishable || false,
   };
 }
 
