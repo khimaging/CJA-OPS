@@ -4625,7 +4625,7 @@ function renderProjectDetail(pid){
                 const taskPct=linkedTasks.length>0?Math.round(doneTasks/linkedTasks.length*100):0;
                 const [sc,sb]=statusColors[d.status]||statusColors.planned;
                 const pubStr=d.publishDate?new Date(d.publishDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):null;
-                return`<div data-deliv-row="${d.id}" style="display:grid;grid-template-columns:${gridCols};gap:14px;padding:10px 20px 10px 34px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer" onmouseover="if(!this.dataset.dragHover)this.style.background='var(--bg3)'" onmouseout="if(!this.dataset.dragHover)this.style.background=''" onclick="openDeliverableModal('${d.id}','${pid}')" ondragover="_onDelivDragOver(event,'${d.id}')" ondragleave="_onDelivDragLeave(event,'${d.id}')" ondrop="_onDelivDrop(event,'${d.id}','${pid}')">
+                return`<div data-deliv-row="${d.id}" style="display:grid;grid-template-columns:${gridCols};gap:14px;padding:10px 20px 10px 34px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;position:relative" onmouseover="if(!this.dataset.dragHover){this.style.background='var(--bg3)';const del=this.querySelector('[data-role=deliv-del]');if(del)del.style.opacity='1';}" onmouseout="if(!this.dataset.dragHover){this.style.background='';const del=this.querySelector('[data-role=deliv-del]');if(del)del.style.opacity='0';}" onclick="openDeliverableModal('${d.id}','${pid}')" ondragover="_onDelivDragOver(event,'${d.id}')" ondragleave="_onDelivDragLeave(event,'${d.id}')" ondrop="_onDelivDrop(event,'${d.id}','${pid}')">
                   <div style="min-width:0">
                     <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${d.name}</div>
                     <div style="font-size:10px;color:var(--text3);margin-top:2px">${linkedTasks.length} task${linkedTasks.length===1?'':'s'}</div>
@@ -4640,7 +4640,9 @@ function renderProjectDetail(pid){
                     </div>
                     <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${doneTasks}/${linkedTasks.length} tasks done</div>
                   </div>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                  <button data-role="deliv-del" onclick="event.stopPropagation();_confirmDeleteDeliverable('${d.id}','${pid}','${d.name.replace(/'/g,"\\'").replace(/"/g,'&quot;')}',${linkedTasks.length})" title="Delete deliverable" style="background:transparent;border:1px solid transparent;color:var(--text3);padding:6px;border-radius:6px;cursor:pointer;opacity:0;transition:all .15s;display:flex;align-items:center;justify-content:center;width:28px;height:28px" onmouseover="event.stopPropagation();this.style.background='rgba(224,90,90,0.14)';this.style.borderColor='rgba(224,90,90,0.35)';this.style.color='var(--red)'" onmouseout="event.stopPropagation();this.style.background='transparent';this.style.borderColor='transparent';this.style.color='var(--text3)'">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>
+                  </button>
                 </div>`;
               }).join('')}
             `;
@@ -5469,6 +5471,21 @@ async function deleteDeliverable(){
     state.taskDeliverables=(state.taskDeliverables||[]).filter(l=>l.deliverableId!==editId);
     notify('Deliverable deleted');
     if(state.currentPage==='projects'&&state.activeProjectId) renderProjectDetail(state.activeProjectId);
+  } catch(e){notify('Delete failed: '+e.message);}
+}
+
+// Inline delete triggered from a deliverable row (project detail page)
+async function _confirmDeleteDeliverable(delivId,pid,delivName,linkedCount){
+  const warn=linkedCount>0
+    ? `Delete "${delivName}"?\n\nThis deliverable has ${linkedCount} task${linkedCount===1?'':'s'} linked to it. Deleting will unlink them but keep the tasks. Continue?`
+    : `Delete "${delivName}"?\n\nThis cannot be undone.`;
+  if(!confirm(warn)) return;
+  try{
+    await api('DELETE','/deliverables/'+delivId);
+    state.deliverables=state.deliverables.filter(d=>d.id!==delivId);
+    state.taskDeliverables=(state.taskDeliverables||[]).filter(l=>l.deliverableId!==delivId);
+    notify('Deliverable deleted');
+    if(state.activeProjectId===pid) renderProjectDetail(pid);
   } catch(e){notify('Delete failed: '+e.message);}
 }
 
