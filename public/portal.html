@@ -172,7 +172,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 
 <script>
 const API_BASE='/api';
-let state={token:null,client:null,data:null,page:'dashboard',view:'list',calMode:'publishing',projectFilter:'',showCompleted:false,calOffset:0,activeDelivId:null};
+let state={token:null,client:null,data:null,page:'dashboard',view:'kanban',calMode:'publishing',projectFilter:'',showCompleted:false,calOffset:0,activeDelivId:null};
 
 // ── Auth ──
 function getToken(){return localStorage.getItem('cja_portal_token');}
@@ -274,6 +274,11 @@ function fmtRelative(iso){
   if(days<7) return `${days}d ago`;
   if(days<30) return `${Math.floor(days/7)}w ago`;
   return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+
+// Effective publish date for a task: explicit publishDate > due date fallback > null
+function effectivePublishDate(task){
+  return task.publishDate||task.due||null;
 }
 
 // Filter helpers — used by dashboard, deliverables, tasks views
@@ -693,7 +698,7 @@ function renderTasksList(tasks,body){
         ${showProject?`<div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(proj?.name||'')}</div>`:''}
         <div><span class="status-chip ${statusClass}">${TASK_STATUS_LABELS[t.status]||t.status}</span></div>
         <div style="font-family:'DM Mono',monospace;font-size:11px;color:${t.due?'var(--text2)':'var(--text3)'}">${t.due?fmtDate(t.due):'—'}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${t.publishDate?'var(--amber)':'var(--text3)'}">${t.publishDate?fmtDate(t.publishDate):'—'}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:${t.publishDate?'var(--amber)':(t.due?'var(--text3)':'var(--text3)')}">${t.publishDate?fmtDate(t.publishDate):(t.due?fmtDate(t.due)+' <span style="opacity:0.5">(due)</span>':'—')}</div>
       </div>`;
     }).join('')}
   </div>`;
@@ -722,14 +727,19 @@ function renderTasksKanban(tasks,body){
 }
 
 function renderTasksCalendar(tasks,body){
-  // In publishing mode, use publishDate. In production mode, use due.
-  const dateField=state.calMode==='publishing'?'publishDate':'due';
   const color=state.calMode==='publishing'?'var(--amber)':'var(--blue)';
-  // Production calendar only shows production + post-production tagged tasks
-  const calTasks=state.calMode==='production'
-    ? tasks.filter(t=>t.tag==='production'||t.tag==='post-production')
-    : tasks;
-  renderPortalCalendar(calTasks,body,dateField,color,t=>{
+  let decorated;
+  if(state.calMode==='publishing'){
+    // Publishing mode: publish date explicit, OR fall back to due date
+    decorated=tasks.map(t=>({...t,__calDate:effectivePublishDate(t)})).filter(t=>t.__calDate);
+  } else {
+    // Production mode: due dates, production + post-production only
+    decorated=tasks
+      .filter(t=>t.tag==='production'||t.tag==='post-production')
+      .map(t=>({...t,__calDate:t.due}))
+      .filter(t=>t.__calDate);
+  }
+  renderPortalCalendar(decorated,body,'__calDate',color,t=>{
     const proj=state.data.projects.find(p=>p.id===t.projectId);
     return{title:t.title,subtitle:proj?.name||'',onClick:null};
   });
@@ -777,18 +787,39 @@ function renderPortalCalendar(items,body,dateField,accentColor,extractInfo){
   const rem=(fd+dim)%7===0?0:7-(fd+dim)%7;
   for(let i=1;i<=rem;i++) cells+=`<div class="cal-cell other"><div class="cal-daynum">${i}</div></div>`;
 
+  // Find next month with items if this month is empty
+  const allDates=items.map(x=>x[dateField]).filter(Boolean).sort();
+  const futureDates=allDates.filter(d=>d>=ts);
+  let emptyHint='';
+  if(thisMonth.length===0&&futureDates.length>0){
+    const nextDate=futureDates[0];
+    const nextLabel=new Date(nextDate+'T12:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    // Compute offset to that month
+    const tgt=new Date(nextDate+'T12:00:00');
+    const targetOffset=(tgt.getFullYear()-now.getFullYear())*12+(tgt.getMonth()-now.getMonth());
+    emptyHint=`<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:13px;background:var(--bg2);border:1px dashed var(--border);border-radius:10px;margin-top:14px">
+      <div style="margin-bottom:8px">Nothing scheduled for ${MONTHS[mo]} ${yr}</div>
+      <button onclick="state.calOffset=${targetOffset};renderPortal()" style="background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:6px 14px;border-radius:6px;font-family:'DM Mono',monospace;font-size:11px;cursor:pointer">Jump to ${nextLabel} →</button>
+    </div>`;
+  } else if(thisMonth.length===0&&allDates.length===0){
+    emptyHint=`<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:13px;background:var(--bg2);border:1px dashed var(--border);border-radius:10px;margin-top:14px;font-style:italic">
+      No ${dateField==='publishDate'||dateField==='__calDate'?'publish or due':'due'} dates scheduled yet
+    </div>`;
+  }
+
   body.innerHTML=`
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
       <button class="back-link" onclick="state.calOffset=(state.calOffset||0)-1;renderPortal()" style="margin:0">‹ Prev</button>
       <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${MONTHS[mo]} ${yr}</span>
       <button class="back-link" onclick="state.calOffset=(state.calOffset||0)+1;renderPortal()" style="margin:0">Next ›</button>
       ${state.calOffset!==0?`<button class="back-link" onclick="state.calOffset=0;renderPortal()" style="margin:0">Today</button>`:''}
-      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${thisMonth.length} ${dateField==='publishDate'?'publishing':'due'} this month</div>
+      <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${thisMonth.length} ${dateField==='publishDate'?'publishing':dateField==='__calDate'?'scheduled':'due'} this month</div>
     </div>
     <div class="cal-grid">
       ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-head">${d}</div>`).join('')}
       ${cells}
     </div>
+    ${emptyHint}
   `;
 }
 
