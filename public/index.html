@@ -5933,8 +5933,12 @@ async function _saveDelivTypeModal(){
   try{
     if(editId){
       const updated=await api('PATCH','/deliverable-types/'+editId,payload);
+      console.log('[delivType save] payload sent:', JSON.stringify(payload));
+      console.log('[delivType save] response received:', JSON.stringify(updated));
       const idx=(state.deliverableTypes||[]).findIndex(x=>x.id===editId);
-      if(idx>=0) state.deliverableTypes[idx]=updated; // replace fully, not spread, so no stale fields
+      console.log('[delivType save] state idx:', idx, 'current:', JSON.stringify(state.deliverableTypes[idx]));
+      if(idx>=0) state.deliverableTypes[idx]=updated;
+      console.log('[delivType save] state after:', JSON.stringify(state.deliverableTypes[idx]));
       notify('Type updated ✓');
     } else {
       const created=await api('POST','/deliverable-types',{...payload,projectId:null});
