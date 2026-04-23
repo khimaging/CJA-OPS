@@ -112,7 +112,7 @@
   .project-name{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px;}
   .project-client{font-size:11px;color:var(--text3);margin-bottom:14px;}
   .project-progress{height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:14px;}
-  .progress-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:2px;}
+  .progress-fill{height:100%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px;}
   .project-stats{display:flex;gap:16px;}
   .project-stat{font-size:11px;color:var(--text3);}
   .project-stat strong{color:var(--text);font-weight:500;display:block;font-size:13px;font-family:'DM Mono',monospace;}
@@ -4061,7 +4061,7 @@ function renderProjects(){
     const isFinalized=!!p.payoutsFinalized;
     const statusColors={active:'var(--blue)',complete:'var(--green)',archived:'var(--text3)'};
     const sColor=isArchived?'var(--text3)':statusColors[pStatus];
-    const progressColor=isComplete||isFinalized?'var(--green)':'linear-gradient(90deg,var(--gold),var(--gold2))';
+    const progressColor=isComplete||isFinalized?'var(--green)':'linear-gradient(90deg,var(--amber),var(--amber))';
     return`<div class="project-card" style="${isArchived?'opacity:0.55;':''}${isFinalized?'border-color:rgba(76,175,122,0.4);':''}" onclick="goToProjectTasks('${p.id}')">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
         <div class="project-name" style="margin-bottom:0">${isFinalized?'🔒 ':''}${p.name}</div>
@@ -4252,7 +4252,7 @@ function renderProjectDetail(pid){
   const kanbanHtml=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
     ${COLS.map(col=>{
       const ct=tasks.filter(t=>t.status===col.id);
-      const colColor=col.id==='done'?'var(--green)':col.id==='progress'?'var(--gold)':col.id==='review'?'var(--blue)':'var(--text3)';
+      const colColor=col.id==='done'?'var(--green)':col.id==='progress'?'var(--amber)':col.id==='review'?'var(--blue)':'var(--text3)';
       return`<div class="kanban-col" ondragover="pdetailDragOver(event,this)" ondragleave="pdetailDragLeave(this)" ondrop="pdetailDrop(event,'${col.id}')">
         <div class="kanban-header">
           <div class="kanban-stage"><span class="stage-dot" style="background:${colColor}"></span><span style="color:${colColor}">${col.label}</span></div>
@@ -4282,7 +4282,7 @@ function renderProjectDetail(pid){
       const a=state.team.find(m=>m.id===t.assigneeId);
       const isOverdue=t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now;
       const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-      const statusColor={'done':'var(--green)','progress':'var(--gold)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
+      const statusColor={'done':'var(--green)','progress':'var(--amber)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
       const locked=isProjectLocked(pid);
       return`<div style="display:grid;grid-template-columns:${listCols};padding:10px 16px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
         <div style="font-size:12px;font-weight:500;color:var(--text)">${locked?'🔒 ':''}${t.title}</div>
@@ -4462,7 +4462,7 @@ function renderProjectDetail(pid){
 
       const statusColors={
         planned:['var(--text3)','var(--bg4)'],
-        in_progress:['var(--gold)','rgba(234,234,234,0.12)'],
+        in_progress:['var(--amber)','rgba(212,166,90,0.12)'],
         in_review:['var(--blue)','rgba(102,126,234,0.12)'],
         published:['var(--green)','rgba(76,175,122,0.12)'],
         cancelled:['var(--red)','rgba(224,90,90,0.08)'],
@@ -4478,7 +4478,7 @@ function renderProjectDetail(pid){
             </div>
             <div style="display:flex;align-items:baseline;gap:10px">
               <span style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
-              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--gold)':'var(--text3)'}">${overallPct}% complete</span>
+              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--amber)':'var(--text3)'}">${overallPct}% complete</span>
             </div>
           </div>
           ${can.createProject()?`<div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4494,7 +4494,7 @@ function renderProjectDetail(pid){
           <div style="display:flex;padding:10px 20px;gap:14px;background:var(--bg);border-bottom:1px solid var(--border2);flex-wrap:wrap">
             ${[
               {key:'planned',label:'Planned',color:'var(--text3)'},
-              {key:'in_progress',label:'In Progress',color:'var(--gold)'},
+              {key:'in_progress',label:'In Progress',color:'var(--amber)'},
               {key:'in_review',label:'In Review',color:'var(--blue)'},
               {key:'published',label:'Published',color:'var(--green)'},
             ].map(s=>`<div style="display:flex;align-items:center;gap:6px">
@@ -6221,7 +6221,7 @@ function renderProjMonthly(){
               </div>
               <div>
                 <div style="display:flex;align-items:center;gap:8px">
-                  <div style="flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;min-width:60px"><div style="height:100%;width:${pct}%;background:${pStatus==='complete'||isFinalized?'var(--green)':'var(--gold)'};border-radius:2px"></div></div>
+                  <div style="flex:1;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;min-width:60px"><div style="height:100%;width:${pct}%;background:${pStatus==='complete'||isFinalized?'var(--green)':'var(--amber)'};border-radius:2px"></div></div>
                   <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${pct}%</span>
                 </div>
               </div>
