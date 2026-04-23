@@ -1532,12 +1532,12 @@ app.post('/api/deliverables', requireAuth, async (req, res) => {
  */
 app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
   try {
-    const { projectId, quotas } = req.body;
+    const { projectId, quotas, autoCreateTasks = true } = req.body;
     if (!projectId) return res.status(400).json({ error: 'projectId required' });
     if (!Array.isArray(quotas) || !quotas.length) return res.status(400).json({ error: 'quotas array required' });
 
-    // Project lock check
-    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized,publishes_content').eq('id', projectId).single();
+    // Project lock check + fetch end_date for task due date defaulting
+    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized,publishes_content,end_date').eq('id', projectId).single();
     if (!proj) return res.status(404).json({ error: 'Project not found' });
     if (proj.payouts_finalized) return res.status(403).json({ error: `Project "${proj.name}" is finalized.` });
 
@@ -1550,6 +1550,8 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
     const typeMap = new Map((types || []).map(t => [t.id, t]));
 
     const toInsert = [];
+    // Keep a parallel array so we can match deliverables back to their source type after insert
+    const insertMeta = [];
     for (const q of quotas) {
       const qty = parseInt(q.quantity, 10);
       if (!qty || qty < 1 || qty > 100) continue; // skip invalid
@@ -1582,17 +1584,59 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
           status: 'planned',
           sort_order: maxNum + i,
         });
+        insertMeta.push({ publishable, typeName });
       }
     }
 
     if (!toInsert.length) return res.status(400).json({ error: 'No valid quantities provided' });
 
-    const { data, error } = await supabase.from('deliverables').insert(toInsert).select();
+    const { data: newDelivs, error } = await supabase.from('deliverables').insert(toInsert).select();
     if (error) throw error;
+
+    // ── Auto-create one task per deliverable and link them ──
+    let newTasks = [];
+    if (autoCreateTasks && newDelivs && newDelivs.length) {
+      const tasksToInsert = newDelivs.map((d, idx) => {
+        const meta = insertMeta[idx] || {};
+        // Publishable deliverables are editable content → post-production. Non-publishable (shoot days, etc.) → production.
+        const tag = meta.publishable ? 'post-production' : 'production';
+        return {
+          project_id: projectId,
+          title: d.name,
+          status: 'todo',
+          tag,
+          due_date: proj.end_date || null,
+          est_hours: null,
+          assignee_id: null,
+        };
+      });
+      const { data: insertedTasks, error: tErr } = await supabase.from('tasks').insert(tasksToInsert).select();
+      if (tErr) {
+        // Don't roll back deliverables — the user would rather have deliverables without tasks than lose the deliverables
+        console.error('Auto-task creation failed:', tErr.message);
+      } else {
+        newTasks = insertedTasks || [];
+        // Link each task to its deliverable (pairs are index-matched since we built them in parallel)
+        const links = newTasks.map((t, idx) => ({
+          task_id: t.id,
+          deliverable_id: newDelivs[idx].id,
+        }));
+        if (links.length) {
+          const { error: lErr } = await supabase.from('task_deliverables').insert(links);
+          if (lErr) console.error('Auto-link creation failed:', lErr.message);
+        }
+      }
+    }
+
     await auditLog(req.user, 'BULK_CREATE_DELIVERABLES', 'deliverables', projectId, {
-      count: data.length, quotas: quotas.map(q => ({ typeId: q.typeId, quantity: q.quantity })),
+      count: newDelivs.length, quotas: quotas.map(q => ({ typeId: q.typeId, quantity: q.quantity })),
+      autoTasksCreated: newTasks.length,
     });
-    res.status(201).json(data.map(mapDeliverable));
+    res.status(201).json({
+      deliverables: newDelivs.map(mapDeliverable),
+      tasks: newTasks.map(mapTask),
+      links: newTasks.map((t, idx) => ({ taskId: t.id, deliverableId: newDelivs[idx].id })),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
