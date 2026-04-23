@@ -1449,14 +1449,18 @@ app.get('/api/deliverable-types', requireAuth, async (req, res) => {
 
 app.post('/api/deliverable-types', requireAuth, async (req, res) => {
   try {
-    const { name, projectId, publishable } = req.body;
+    const { name, projectId, publishable, defaultAssigneeId, defaultEstHours, defaultTag } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
-    const { data, error } = await supabase.from('deliverable_types').insert({
+    const row = {
       name: name.trim(),
       project_id: projectId || null,
       publishable: !!publishable,
       active: true,
-    }).select().single();
+      default_assignee_id: defaultAssigneeId || null,
+      default_est_hours:   defaultEstHours != null && defaultEstHours !== '' ? parseFloat(defaultEstHours) : null,
+      default_tag:         defaultTag || null,
+    };
+    const { data, error } = await supabase.from('deliverable_types').insert(row).select().single();
     if (error) {
       if (error.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
       throw error;
@@ -1468,9 +1472,12 @@ app.post('/api/deliverable-types', requireAuth, async (req, res) => {
 app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
   try {
     const updates = {};
-    if (req.body.name        !== undefined) updates.name        = req.body.name;
-    if (req.body.active      !== undefined) updates.active      = req.body.active;
-    if (req.body.publishable !== undefined) updates.publishable = !!req.body.publishable;
+    if (req.body.name              !== undefined) updates.name               = req.body.name;
+    if (req.body.active            !== undefined) updates.active             = req.body.active;
+    if (req.body.publishable       !== undefined) updates.publishable        = !!req.body.publishable;
+    if (req.body.defaultAssigneeId !== undefined) updates.default_assignee_id = req.body.defaultAssigneeId || null;
+    if (req.body.defaultEstHours   !== undefined) updates.default_est_hours  = req.body.defaultEstHours != null && req.body.defaultEstHours !== '' ? parseFloat(req.body.defaultEstHours) : null;
+    if (req.body.defaultTag        !== undefined) updates.default_tag        = req.body.defaultTag || null;
     const { data, error } = await supabase.from('deliverable_types').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapDeliverableType(data));
@@ -1584,7 +1591,7 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
           status: 'planned',
           sort_order: maxNum + i,
         });
-        insertMeta.push({ publishable, typeName });
+        insertMeta.push({ publishable, typeName, typeId: q.typeId || null });
       }
     }
 
@@ -1595,33 +1602,45 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
 
     // ── Auto-create one task per deliverable and link them ──
     let newTasks = [];
+    let missingDefaults = []; // types that have no defaults configured
     if (autoCreateTasks && newDelivs && newDelivs.length) {
+      // Check all types have defaults configured — collect warnings
+      const usedTypeIds = [...new Set(newDelivs.map((d,idx) => insertMeta[idx]?.typeId).filter(Boolean))];
+      usedTypeIds.forEach(tid => {
+        const t = typeMap.get(tid);
+        if (t && !t.default_tag) {
+          missingDefaults.push(t.name);
+        }
+      });
+
       const tasksToInsert = newDelivs.map((d, idx) => {
         const meta = insertMeta[idx] || {};
-        // Publishable deliverables are editable content → post-production. Non-publishable (shoot days, etc.) → production.
-        const tag = meta.publishable ? 'post-production' : 'production';
+        const typeRec = meta.typeId ? typeMap.get(meta.typeId) : null;
+        // Pull from type defaults, fall back to sensible values
+        const tag          = typeRec?.default_tag        || (meta.publishable ? 'post-production' : 'production');
+        const assigneeId   = typeRec?.default_assignee_id || null;
+        const estHours     = typeRec?.default_est_hours   != null ? parseFloat(typeRec.default_est_hours) : 0;
         return {
-          title: d.name,
-          project_id: projectId,
-          assignee_id: null,
-          due_date: proj.end_date || null,
-          publish_date: null,
-          priority: 'med',
-          status: 'todo',
-          est_hours: 0,
+          title:        d.name,
+          project_id:   projectId,
+          assignee_id:  assigneeId,
+          due_date:     proj.end_date || null,
+          publish_date: proj.end_date || null,
+          priority:     'med',
+          status:       'todo',
+          est_hours:    estHours,
           tag,
-          notes: null,
+          notes:        null,
         };
       });
+
       const { data: insertedTasks, error: tErr } = await supabase.from('tasks').insert(tasksToInsert).select();
       if (tErr) {
-        // Don't roll back deliverables — the user would rather have deliverables without tasks than lose the deliverables
         console.error('Auto-task creation failed:', tErr.message, tErr);
       } else {
         newTasks = insertedTasks || [];
-        // Link each task to its deliverable (pairs are index-matched since we built them in parallel)
         const links = newTasks.map((t, idx) => ({
-          task_id: t.id,
+          task_id:        t.id,
           deliverable_id: newDelivs[idx].id,
         }));
         if (links.length) {
@@ -1639,6 +1658,7 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
       deliverables: newDelivs.map(mapDeliverable),
       tasks: newTasks.map(mapTask),
       links: newTasks.map((t, idx) => ({ taskId: t.id, deliverableId: newDelivs[idx].id })),
+      missingDefaults, // type names that had no default_tag set — frontend shows warning
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2013,11 +2033,14 @@ function mapClient(c) {
 
 function mapDeliverableType(t) {
   return {
-    id:          t.id,
-    name:        t.name,
-    projectId:   t.project_id,
-    active:      t.active,
-    publishable: t.publishable || false,
+    id:                t.id,
+    name:              t.name,
+    projectId:         t.project_id,
+    active:            t.active,
+    publishable:       t.publishable || false,
+    defaultAssigneeId: t.default_assignee_id || null,
+    defaultEstHours:   t.default_est_hours != null ? parseFloat(t.default_est_hours) : null,
+    defaultTag:        t.default_tag || null,
   };
 }
 
