@@ -169,7 +169,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       supabase.from('profit_share_status').select('*'),
       supabase.from('pay_log').select('*').order('paid_at', { ascending: false }).limit(500),
       supabase.from('clients').select('*').eq('active', true).order('name'),
-      supabase.from('deliverable_types').select('*').eq('active', true).order('name'),
+      supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').eq('active', true).order('name'),
       supabase.from('deliverables').select('*').order('sort_order'),
       supabase.from('task_deliverables').select('*'),
     ]);
@@ -338,13 +338,18 @@ app.post('/api/projects', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Creating projects requires Admin, Class A, or VA access.' });
   }
   try {
-    const { name, dealId, client, startDate, endDate, status, publishesContent } = req.body;
-    const { data, error } = await supabase.from('projects').insert({
+    const { name, dealId, client, startDate, endDate, status, publishesContent, editHoursBudget } = req.body;
+    const row = {
       name, deal_id: dealId || null, client: client || '',
       start_date: startDate || null, end_date: endDate || null,
       status: status || 'active', archived: false,
       publishes_content: !!publishesContent,
-    }).select().single();
+    };
+    if (editHoursBudget !== undefined) {
+      const n = parseFloat(editHoursBudget);
+      row.edit_hours_budget = (!isNaN(n) && n > 0) ? n : null;
+    }
+    const { data, error } = await supabase.from('projects').insert(row).select().single();
     if (error) throw error;
     res.status(201).json(mapProject(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -365,6 +370,10 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
     if (req.body.endDate           !== undefined) updates.end_date           = req.body.endDate;
     if (req.body.payoutsFinalized  !== undefined) updates.payouts_finalized  = req.body.payoutsFinalized;
     if (req.body.publishesContent  !== undefined) updates.publishes_content  = !!req.body.publishesContent;
+    if (req.body.editHoursBudget   !== undefined) {
+      const n = parseFloat(req.body.editHoursBudget);
+      updates.edit_hours_budget = (!isNaN(n) && n > 0) ? n : null;
+    }
     const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapProject(data));
@@ -1432,7 +1441,7 @@ app.delete('/api/clients/:id', requireAuth, requireCanDelete, async (req, res) =
 
 app.get('/api/deliverable-types', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase.from('deliverable_types').select('*').eq('active', true).order('name');
+    const { data, error } = await supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').eq('active', true).order('name');
     if (error) throw error;
     res.json(data.map(mapDeliverableType));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1440,18 +1449,27 @@ app.get('/api/deliverable-types', requireAuth, async (req, res) => {
 
 app.post('/api/deliverable-types', requireAuth, async (req, res) => {
   try {
-    const { name, projectId, publishable } = req.body;
+    const { name, projectId, publishable, defaultAssigneeId, defaultEstHours, defaultTag } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
-    const { data, error } = await supabase.from('deliverable_types').insert({
+    const row = {
       name: name.trim(),
       project_id: projectId || null,
       publishable: !!publishable,
       active: true,
-    }).select().single();
-    if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
-      throw error;
+      default_assignee_id: defaultAssigneeId || null,
+      default_est_hours:   defaultEstHours != null && defaultEstHours !== '' ? parseFloat(defaultEstHours) : null,
+      default_tag:         defaultTag || null,
+    };
+    // Insert then re-fetch separately to avoid schema cache stripping new columns
+    const { data: inserted, error: insertError } = await supabase
+      .from('deliverable_types').insert(row).select('id').single();
+    if (insertError) {
+      if (insertError.code === '23505') return res.status(409).json({ error: 'Deliverable type with this name already exists' });
+      throw insertError;
     }
+    const { data, error: selectError } = await supabase
+      .from('deliverable_types').select('*').eq('id', inserted.id).single();
+    if (selectError) throw selectError;
     res.status(201).json(mapDeliverableType(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1459,11 +1477,38 @@ app.post('/api/deliverable-types', requireAuth, async (req, res) => {
 app.patch('/api/deliverable-types/:id', requireAuth, async (req, res) => {
   try {
     const updates = {};
-    if (req.body.name        !== undefined) updates.name        = req.body.name;
-    if (req.body.active      !== undefined) updates.active      = req.body.active;
-    if (req.body.publishable !== undefined) updates.publishable = !!req.body.publishable;
-    const { data, error } = await supabase.from('deliverable_types').update(updates).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    if (req.body.name              !== undefined) updates.name               = req.body.name;
+    if (req.body.active            !== undefined) updates.active             = req.body.active;
+    if (req.body.publishable       !== undefined) updates.publishable        = !!req.body.publishable;
+    if (req.body.defaultAssigneeId !== undefined) updates.default_assignee_id = req.body.defaultAssigneeId || null;
+    if (req.body.defaultEstHours   !== undefined) updates.default_est_hours  = req.body.defaultEstHours != null && req.body.defaultEstHours !== '' ? parseFloat(req.body.defaultEstHours) : null;
+    if (req.body.defaultTag        !== undefined) updates.default_tag        = req.body.defaultTag || null;
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'No valid fields to update' });
+
+    console.log('[PATCH deliverable-types] id:', req.params.id, 'updates:', JSON.stringify(updates));
+
+    // Step 1: update (don't rely on its return — schema cache may omit new columns)
+    const { error: updateError } = await supabase
+      .from('deliverable_types')
+      .update(updates)
+      .eq('id', req.params.id);
+
+    if (updateError) {
+      console.error('[PATCH deliverable-types] update error:', updateError);
+      throw updateError;
+    }
+
+    // Step 2: separate select to get fresh row with all columns
+    const { data, error: selectError } = await supabase
+      .from('deliverable_types')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (selectError) throw selectError;
+    if (!data) return res.status(404).json({ error: 'Type not found' });
+
+    console.log('[PATCH deliverable-types] fetched after update:', JSON.stringify(data));
     res.json(mapDeliverableType(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1523,12 +1568,12 @@ app.post('/api/deliverables', requireAuth, async (req, res) => {
  */
 app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
   try {
-    const { projectId, quotas } = req.body;
+    const { projectId, quotas, autoCreateTasks = true } = req.body;
     if (!projectId) return res.status(400).json({ error: 'projectId required' });
     if (!Array.isArray(quotas) || !quotas.length) return res.status(400).json({ error: 'quotas array required' });
 
-    // Project lock check
-    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized,publishes_content').eq('id', projectId).single();
+    // Project lock check + fetch end_date for task due date defaulting
+    const { data: proj } = await supabase.from('projects').select('name,payouts_finalized,publishes_content,end_date').eq('id', projectId).single();
     if (!proj) return res.status(404).json({ error: 'Project not found' });
     if (proj.payouts_finalized) return res.status(403).json({ error: `Project "${proj.name}" is finalized.` });
 
@@ -1537,10 +1582,12 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
 
     // Fetch deliverable types referenced to get names + publishable flag
     const typeIds = quotas.map(q => q.typeId).filter(Boolean);
-    const { data: types } = await supabase.from('deliverable_types').select('*').in('id', typeIds);
+    const { data: types } = await supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').in('id', typeIds);
     const typeMap = new Map((types || []).map(t => [t.id, t]));
 
     const toInsert = [];
+    // Keep a parallel array so we can match deliverables back to their source type after insert
+    const insertMeta = [];
     for (const q of quotas) {
       const qty = parseInt(q.quantity, 10);
       if (!qty || qty < 1 || qty > 100) continue; // skip invalid
@@ -1573,17 +1620,75 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
           status: 'planned',
           sort_order: maxNum + i,
         });
+        insertMeta.push({ publishable, typeName, typeId: q.typeId || null });
       }
     }
 
     if (!toInsert.length) return res.status(400).json({ error: 'No valid quantities provided' });
 
-    const { data, error } = await supabase.from('deliverables').insert(toInsert).select();
+    const { data: newDelivs, error } = await supabase.from('deliverables').insert(toInsert).select();
     if (error) throw error;
+
+    // ── Auto-create one task per deliverable and link them ──
+    let newTasks = [];
+    let missingDefaults = []; // types that have no defaults configured
+    if (autoCreateTasks && newDelivs && newDelivs.length) {
+      // Check all types have defaults configured — collect warnings
+      const usedTypeIds = [...new Set(newDelivs.map((d,idx) => insertMeta[idx]?.typeId).filter(Boolean))];
+      usedTypeIds.forEach(tid => {
+        const t = typeMap.get(tid);
+        if (t && !t.default_tag) {
+          missingDefaults.push(t.name);
+        }
+      });
+
+      const tasksToInsert = newDelivs.map((d, idx) => {
+        const meta = insertMeta[idx] || {};
+        const typeRec = meta.typeId ? typeMap.get(meta.typeId) : null;
+        // Pull from type defaults, fall back to sensible values
+        const tag          = typeRec?.default_tag        || (meta.publishable ? 'post-production' : 'production');
+        const assigneeId   = typeRec?.default_assignee_id || null;
+        const estHours     = typeRec?.default_est_hours   != null ? parseFloat(typeRec.default_est_hours) : 0;
+        return {
+          title:        d.name,
+          project_id:   projectId,
+          assignee_id:  assigneeId,
+          due_date:     proj.end_date || null,
+          publish_date: proj.end_date || null,
+          priority:     'med',
+          status:       'todo',
+          est_hours:    estHours,
+          tag,
+          notes:        null,
+        };
+      });
+
+      const { data: insertedTasks, error: tErr } = await supabase.from('tasks').insert(tasksToInsert).select();
+      if (tErr) {
+        console.error('Auto-task creation failed:', tErr.message, tErr);
+      } else {
+        newTasks = insertedTasks || [];
+        const links = newTasks.map((t, idx) => ({
+          task_id:        t.id,
+          deliverable_id: newDelivs[idx].id,
+        }));
+        if (links.length) {
+          const { error: lErr } = await supabase.from('task_deliverables').insert(links);
+          if (lErr) console.error('Auto-link creation failed:', lErr.message, lErr);
+        }
+      }
+    }
+
     await auditLog(req.user, 'BULK_CREATE_DELIVERABLES', 'deliverables', projectId, {
-      count: data.length, quotas: quotas.map(q => ({ typeId: q.typeId, quantity: q.quantity })),
+      count: newDelivs.length, quotas: quotas.map(q => ({ typeId: q.typeId, quantity: q.quantity })),
+      autoTasksCreated: newTasks.length,
     });
-    res.status(201).json(data.map(mapDeliverable));
+    res.status(201).json({
+      deliverables: newDelivs.map(mapDeliverable),
+      tasks: newTasks.map(mapTask),
+      links: newTasks.map((t, idx) => ({ taskId: t.id, deliverableId: newDelivs[idx].id })),
+      missingDefaults, // type names that had no default_tag set — frontend shows warning
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1820,33 +1925,40 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     const { data: deals } = await supabase.from('deals').select('id,name').eq('client_id', clientId);
     const dealIds = (deals || []).map(d => d.id);
     if (!dealIds.length) {
-      return res.json({ client: { id: clientId, name: req.portalClient.clientName }, projects: [], deliverables: [], deliverable_types: [] });
+      return res.json({ client: { id: clientId, name: req.portalClient.clientName }, projects: [], deliverables: [], deliverableTypes: [] });
     }
 
-    const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id')
+    const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id,publishes_content,edit_hours_budget')
       .in('deal_id', dealIds).eq('archived', false);
     const projectIds = (projects || []).map(p => p.id);
 
-    const [ { data: deliverables }, { data: taskLinks }, { data: tasks }, { data: dTypes } ] = await Promise.all([
+    const [ { data: deliverables }, { data: dTypes } ] = await Promise.all([
       projectIds.length ? supabase.from('deliverables').select('*').in('project_id', projectIds) : Promise.resolve({ data: [] }),
-      Promise.resolve({ data: [] }), // populated below
-      Promise.resolve({ data: [] }), // populated below
-      supabase.from('deliverable_types').select('id,name,project_id').eq('active', true),
+      supabase.from('deliverable_types').select('id,name,project_id,publishable').eq('active', true),
     ]);
 
-    // For task-derived data we only need task_deliverable links + minimal task info (id, status, publish_date, due, title)
-    let tLinks = [], tRows = [];
+    // Fetch tasks and links, but strip admin-tagged tasks from what the client sees
+    let tLinks = [], tRows = [], allTasksForBudget = [];
     if (projectIds.length) {
       const [linksResp, tasksResp] = await Promise.all([
         supabase.from('task_deliverables').select('*'),
-        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id').in('project_id', projectIds),
+        // Include est_hours in the raw fetch so we can compute per-project budget usage server-side
+        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,updated_at,est_hours').in('project_id', projectIds),
       ]);
-      tLinks = linksResp.data || [];
-      tRows = tasksResp.data || [];
-      // Filter links to only those referring to tasks in our projects
+      allTasksForBudget = tasksResp.data || [];
+      // Strip admin-tagged tasks from client view — clients don't need to see internal admin work
+      tRows = allTasksForBudget.filter(t => t.tag !== 'admin');
       const taskIdSet = new Set(tRows.map(t => t.id));
-      tLinks = tLinks.filter(l => taskIdSet.has(l.task_id));
+      tLinks = (linksResp.data || []).filter(l => taskIdSet.has(l.task_id));
     }
+
+    // Compute edit hours used per project (sum of est_hours on post-production tasks)
+    const hoursUsedByProject = {};
+    allTasksForBudget.forEach(t => {
+      if (t.tag !== 'post-production') return;
+      const h = parseFloat(t.est_hours) || 0;
+      hoursUsedByProject[t.project_id] = (hoursUsedByProject[t.project_id] || 0) + h;
+    });
 
     res.json({
       client: { id: clientId, name: req.portalClient.clientName },
@@ -1854,15 +1966,20 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
         id: p.id, name: p.name,
         startDate: p.start_date, endDate: p.end_date,
         status: p.status,
+        publishesContent: p.publishes_content || false,
+        editHoursBudget: p.edit_hours_budget != null ? parseFloat(p.edit_hours_budget) : null,
+        editHoursUsed: hoursUsedByProject[p.id] || 0,
       })),
       deliverables: (deliverables || []).map(mapDeliverable),
       deliverableTypes: (dTypes || []).filter(t => t.project_id === null || projectIds.includes(t.project_id))
-        .map(t => ({ id: t.id, name: t.name, projectId: t.project_id })),
+        .map(t => ({ id: t.id, name: t.name, projectId: t.project_id, publishable: t.publishable || false })),
       taskDeliverables: tLinks.map(l => ({ taskId: l.task_id, deliverableId: l.deliverable_id })),
-      // Minimal task info — NO assignee, hours, pay, notes, tag
+      // Stripped task info — NO assignee, hours, pay, notes. Tag used client-side to filter admin.
       tasks: tRows.map(t => ({
         id: t.id, title: t.title, status: t.status,
         due: t.due_date, publishDate: t.publish_date, projectId: t.project_id,
+        tag: t.tag,
+        updatedAt: t.updated_at,
       })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1911,6 +2028,7 @@ function mapProject(p) {
     archived:         p.archived || false,
     payoutsFinalized: p.payouts_finalized || false,
     publishesContent: p.publishes_content || false,
+    editHoursBudget:  p.edit_hours_budget != null ? parseFloat(p.edit_hours_budget) : null,
   };
 }
 
@@ -1944,11 +2062,14 @@ function mapClient(c) {
 
 function mapDeliverableType(t) {
   return {
-    id:          t.id,
-    name:        t.name,
-    projectId:   t.project_id,
-    active:      t.active,
-    publishable: t.publishable || false,
+    id:                t.id,
+    name:              t.name,
+    projectId:         t.project_id,
+    active:            t.active,
+    publishable:       t.publishable || false,
+    defaultAssigneeId: t.default_assignee_id || null,
+    defaultEstHours:   t.default_est_hours != null ? parseFloat(t.default_est_hours) : null,
+    defaultTag:        t.default_tag || null,
   };
 }
 
@@ -1963,6 +2084,7 @@ function mapDeliverable(d) {
     status:      d.status,
     sortOrder:   d.sort_order || 0,
     createdAt:   d.created_at,
+    updatedAt:   d.updated_at,
   };
 }
 
