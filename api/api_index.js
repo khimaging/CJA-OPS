@@ -338,13 +338,18 @@ app.post('/api/projects', requireAuth, async (req, res) => {
     return res.status(403).json({ error: 'Creating projects requires Admin, Class A, or VA access.' });
   }
   try {
-    const { name, dealId, client, startDate, endDate, status, publishesContent } = req.body;
-    const { data, error } = await supabase.from('projects').insert({
+    const { name, dealId, client, startDate, endDate, status, publishesContent, editHoursBudget } = req.body;
+    const row = {
       name, deal_id: dealId || null, client: client || '',
       start_date: startDate || null, end_date: endDate || null,
       status: status || 'active', archived: false,
       publishes_content: !!publishesContent,
-    }).select().single();
+    };
+    if (editHoursBudget !== undefined) {
+      const n = parseFloat(editHoursBudget);
+      row.edit_hours_budget = (!isNaN(n) && n > 0) ? n : null;
+    }
+    const { data, error } = await supabase.from('projects').insert(row).select().single();
     if (error) throw error;
     res.status(201).json(mapProject(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -365,6 +370,10 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
     if (req.body.endDate           !== undefined) updates.end_date           = req.body.endDate;
     if (req.body.payoutsFinalized  !== undefined) updates.payouts_finalized  = req.body.payoutsFinalized;
     if (req.body.publishesContent  !== undefined) updates.publishes_content  = !!req.body.publishesContent;
+    if (req.body.editHoursBudget   !== undefined) {
+      const n = parseFloat(req.body.editHoursBudget);
+      updates.edit_hours_budget = (!isNaN(n) && n > 0) ? n : null;
+    }
     const { data, error } = await supabase.from('projects').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
     res.json(mapProject(data));
@@ -1823,7 +1832,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
       return res.json({ client: { id: clientId, name: req.portalClient.clientName }, projects: [], deliverables: [], deliverableTypes: [] });
     }
 
-    const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id,publishes_content')
+    const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id,publishes_content,edit_hours_budget')
       .in('deal_id', dealIds).eq('archived', false);
     const projectIds = (projects || []).map(p => p.id);
 
@@ -1833,17 +1842,27 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     ]);
 
     // Fetch tasks and links, but strip admin-tagged tasks from what the client sees
-    let tLinks = [], tRows = [];
+    let tLinks = [], tRows = [], allTasksForBudget = [];
     if (projectIds.length) {
       const [linksResp, tasksResp] = await Promise.all([
         supabase.from('task_deliverables').select('*'),
-        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,updated_at').in('project_id', projectIds),
+        // Include est_hours in the raw fetch so we can compute per-project budget usage server-side
+        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,updated_at,est_hours').in('project_id', projectIds),
       ]);
+      allTasksForBudget = tasksResp.data || [];
       // Strip admin-tagged tasks from client view — clients don't need to see internal admin work
-      tRows = (tasksResp.data || []).filter(t => t.tag !== 'admin');
+      tRows = allTasksForBudget.filter(t => t.tag !== 'admin');
       const taskIdSet = new Set(tRows.map(t => t.id));
       tLinks = (linksResp.data || []).filter(l => taskIdSet.has(l.task_id));
     }
+
+    // Compute edit hours used per project (sum of est_hours on post-production tasks)
+    const hoursUsedByProject = {};
+    allTasksForBudget.forEach(t => {
+      if (t.tag !== 'post-production') return;
+      const h = parseFloat(t.est_hours) || 0;
+      hoursUsedByProject[t.project_id] = (hoursUsedByProject[t.project_id] || 0) + h;
+    });
 
     res.json({
       client: { id: clientId, name: req.portalClient.clientName },
@@ -1852,6 +1871,8 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
         startDate: p.start_date, endDate: p.end_date,
         status: p.status,
         publishesContent: p.publishes_content || false,
+        editHoursBudget: p.edit_hours_budget != null ? parseFloat(p.edit_hours_budget) : null,
+        editHoursUsed: hoursUsedByProject[p.id] || 0,
       })),
       deliverables: (deliverables || []).map(mapDeliverable),
       deliverableTypes: (dTypes || []).filter(t => t.project_id === null || projectIds.includes(t.project_id))
@@ -1911,6 +1932,7 @@ function mapProject(p) {
     archived:         p.archived || false,
     payoutsFinalized: p.payouts_finalized || false,
     publishesContent: p.publishes_content || false,
+    editHoursBudget:  p.edit_hours_budget != null ? parseFloat(p.edit_hours_budget) : null,
   };
 }
 
