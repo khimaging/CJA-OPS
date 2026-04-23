@@ -2723,7 +2723,7 @@ function renderPage(name){
   if(name==='payroll'){renderPayrollView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
-  if(name==='health'){state.healthTab=state.healthTab||'active';renderHealthDashboard();}
+  if(name==='health'){renderHealthDashboard();}
   if(name==='workload')renderStandaloneWorkload();
   if(name==='prodcal')renderProdCal();
   if(name==='pubcal')renderPubCal();
@@ -4642,104 +4642,341 @@ function openTaskModalForProject(pid){
 function renderHealthDashboard(){
   const el=document.getElementById('proj-health-board');
   if(!el) return;
-  const tab=state.healthTab||'active';
   const now=new Date();
+  const today=now.toISOString().split('T')[0];
+  const in7Days=new Date(now.getTime()+7*86400000).toISOString().split('T')[0];
+  const in48h=new Date(now.getTime()+48*3600000).toISOString().split('T')[0];
+  const weekAgo=new Date(now.getTime()-7*86400000).toISOString();
 
-  // Filter by tab
+  // ── Scope: active, non-archived projects ──
   const allProjects=state.projects.filter(p=>!state.archivedProjects[p.id]);
   const activeProjects=allProjects.filter(p=>(p.status||'active')!=='complete'&&!p.payoutsFinalized);
-  const completeProjects=allProjects.filter(p=>p.status==='complete'||p.payoutsFinalized);
-  const shown=tab==='active'?activeProjects:completeProjects;
+  const activeProjIds=new Set(activeProjects.map(p=>p.id));
 
-  const counts={green:0,amber:0,red:0,grey:0};
-  shown.forEach(p=>{counts[calcProjectRag(p).rag]++;});
+  // ── Metric calculations ──
 
+  // RAG rollup
+  const ragCounts={green:0,amber:0,red:0,grey:0};
+  activeProjects.forEach(p=>{ragCounts[calcProjectRag(p).rag]++;});
+
+  // Overdue tasks across active projects
+  const allActiveTasks=state.tasks.filter(t=>activeProjIds.has(t.projectId));
+  const overdueTasks=allActiveTasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now);
+
+  // This week's pipeline — tasks due + deliverables publishing in next 7 days
+  const tasksThisWeek=allActiveTasks.filter(t=>t.status!=='done'&&t.due&&t.due>=today&&t.due<=in7Days&&t.tag!=='admin');
+  const delivsThisWeek=(state.deliverables||[]).filter(d=>{
+    if(!activeProjIds.has(d.projectId)) return false;
+    return d.publishDate&&d.publishDate>=today&&d.publishDate<=in7Days&&d.status!=='cancelled';
+  });
+  const pipelineCount=tasksThisWeek.length+delivsThisWeek.length;
+
+  // Team workload — committed hours this week vs capacity (50 hrs/active team member)
+  const activeTeamCount=state.team.filter(m=>m.active!==false).length;
+  const weeklyCapacity=activeTeamCount*50;
+  const committedHours=allActiveTasks
+    .filter(t=>t.status!=='done'&&t.due&&t.due>=today&&t.due<=in7Days)
+    .reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
+  const utilPct=weeklyCapacity>0?Math.round(committedHours/weeklyCapacity*100):0;
+  const utilColor=utilPct>=90?'var(--red)':utilPct>=70?'var(--amber)':utilPct>=40?'var(--green)':'var(--text2)';
+
+  // ── Needs Attention items ──
+  const attentionItems=[];
+
+  // 1. Overdue tasks
+  overdueTasks.forEach(t=>{
+    const proj=state.projects.find(p=>p.id===t.projectId);
+    const daysOverdue=Math.floor((now-new Date(t.due+'T23:59:59'))/86400000);
+    attentionItems.push({
+      priority:1,
+      kind:'overdue_task',
+      title:t.title,
+      subtitle:`${proj?.name||'Unknown'} · ${daysOverdue} day${daysOverdue===1?'':'s'} overdue`,
+      color:'var(--red)',
+      label:'OVERDUE',
+      onClick:`openEditTaskModal('${t.id}')`,
+    });
+  });
+
+  // 2. Tasks due in next 48 hours (not done)
+  allActiveTasks
+    .filter(t=>t.status!=='done'&&t.due&&t.due>=today&&t.due<=in48h&&t.tag!=='admin')
+    .forEach(t=>{
+      const proj=state.projects.find(p=>p.id===t.projectId);
+      const dueLabel=t.due===today?'today':'tomorrow';
+      attentionItems.push({
+        priority:2,
+        kind:'due_soon',
+        title:t.title,
+        subtitle:`${proj?.name||'Unknown'} · due ${dueLabel}`,
+        color:'var(--amber)',
+        label:'DUE SOON',
+        onClick:`openEditTaskModal('${t.id}')`,
+      });
+    });
+
+  // 3. Deliverables stuck in review > 7 days
+  (state.deliverables||[])
+    .filter(d=>activeProjIds.has(d.projectId)&&d.status==='in_review'&&d.updatedAt&&new Date(d.updatedAt)<new Date(weekAgo))
+    .forEach(d=>{
+      const proj=state.projects.find(p=>p.id===d.projectId);
+      const daysStuck=Math.floor((now-new Date(d.updatedAt))/86400000);
+      attentionItems.push({
+        priority:3,
+        kind:'stuck_review',
+        title:d.name,
+        subtitle:`${proj?.name||'Unknown'} · in review ${daysStuck} days`,
+        color:'var(--blue)',
+        label:'STUCK',
+        onClick:`goToProjectTasks('${d.projectId}')`,
+      });
+    });
+
+  // 4. Projects with no task activity in 7+ days
+  activeProjects.forEach(p=>{
+    const projTasks=state.tasks.filter(t=>t.projectId===p.id);
+    if(projTasks.length===0) return;
+    const mostRecentUpdate=projTasks.reduce((max,t)=>{
+      const ts=t.updatedAt||t.updated_at;
+      return ts&&ts>max?ts:max;
+    },'');
+    if(mostRecentUpdate&&new Date(mostRecentUpdate)<new Date(weekAgo)){
+      const daysQuiet=Math.floor((now-new Date(mostRecentUpdate))/86400000);
+      attentionItems.push({
+        priority:4,
+        kind:'stale_project',
+        title:p.name,
+        subtitle:`no task activity in ${daysQuiet} days`,
+        color:'var(--text3)',
+        label:'QUIET',
+        onClick:`goToProjectTasks('${p.id}')`,
+      });
+    }
+  });
+
+  // 5. Unlinked tasks on projects with deliverables
+  const delivsByProj={};
+  (state.deliverables||[]).forEach(d=>{
+    if(!delivsByProj[d.projectId]) delivsByProj[d.projectId]=0;
+    delivsByProj[d.projectId]++;
+  });
+  const linkedTaskIds=new Set((state.taskDeliverables||[]).map(l=>l.taskId));
+  const unlinkedCountByProj={};
+  allActiveTasks.forEach(t=>{
+    if((delivsByProj[t.projectId]||0)>0&&!linkedTaskIds.has(t.id)){
+      unlinkedCountByProj[t.projectId]=(unlinkedCountByProj[t.projectId]||0)+1;
+    }
+  });
+  Object.entries(unlinkedCountByProj).forEach(([pid,count])=>{
+    const proj=state.projects.find(p=>p.id===pid);
+    attentionItems.push({
+      priority:5,
+      kind:'unlinked_tasks',
+      title:`${count} unlinked task${count===1?'':'s'}`,
+      subtitle:`${proj?.name||'Unknown'} · link to deliverables`,
+      color:'var(--amber)',
+      label:'UNLINKED',
+      onClick:`goToProjectTasks('${pid}')`,
+    });
+  });
+
+  // 6. Deliverables with no linked tasks
+  (state.deliverables||[])
+    .filter(d=>activeProjIds.has(d.projectId)&&d.status!=='cancelled')
+    .forEach(d=>{
+      const hasTasks=(state.taskDeliverables||[]).some(l=>l.deliverableId===d.id);
+      if(!hasTasks){
+        const proj=state.projects.find(p=>p.id===d.projectId);
+        attentionItems.push({
+          priority:6,
+          kind:'no_tasks',
+          title:d.name,
+          subtitle:`${proj?.name||'Unknown'} · no tasks yet`,
+          color:'var(--text3)',
+          label:'NEEDS TASKS',
+          onClick:`goToProjectTasks('${d.projectId}')`,
+        });
+      }
+    });
+
+  // Sort by priority, then limit to top 10 for screen real estate
+  attentionItems.sort((a,b)=>a.priority-b.priority);
+  const attentionShown=attentionItems.slice(0,10);
+
+  // ── This Week's Pipeline — group by date ──
+  const pipelineItems=[
+    ...tasksThisWeek.map(t=>{
+      const proj=state.projects.find(p=>p.id===t.projectId);
+      return{date:t.due,kind:'task',title:t.title,subtitle:proj?.name||'',status:t.status,id:t.id,projectId:t.projectId};
+    }),
+    ...delivsThisWeek.map(d=>{
+      const proj=state.projects.find(p=>p.id===d.projectId);
+      return{date:d.publishDate,kind:'deliv',title:d.name,subtitle:proj?.name||'',status:d.status,id:d.id,projectId:d.projectId};
+    }),
+  ].sort((a,b)=>a.date.localeCompare(b.date));
+
+  const pipelineByDate={};
+  pipelineItems.forEach(it=>{
+    if(!pipelineByDate[it.date]) pipelineByDate[it.date]=[];
+    pipelineByDate[it.date].push(it);
+  });
+
+  const fmtDateLabel=(ds)=>{
+    if(ds===today) return 'Today';
+    const tmr=new Date(now.getTime()+86400000).toISOString().split('T')[0];
+    if(ds===tmr) return 'Tomorrow';
+    return new Date(ds+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  };
+
+  // ── Per-project grid data ──
+  const projRows=activeProjects.map(p=>{
+    const tasks=state.tasks.filter(t=>t.projectId===p.id);
+    const projDelivs=(state.deliverables||[]).filter(d=>d.projectId===p.id&&d.status!=='cancelled');
+    // Prefer deliverable-based progress if deliverables exist; otherwise task-based
+    let pct,progressLabel;
+    if(projDelivs.length>0){
+      const delivsDone=projDelivs.filter(d=>d.status==='published').length;
+      pct=Math.round(delivsDone/projDelivs.length*100);
+      progressLabel=`${delivsDone} / ${projDelivs.length} deliverables`;
+    } else {
+      const tasksDone=tasks.filter(t=>t.status==='done').length;
+      pct=tasks.length?Math.round(tasksDone/tasks.length*100):0;
+      progressLabel=`${tasksDone} / ${tasks.length} tasks`;
+    }
+    const inReview=projDelivs.filter(d=>d.status==='in_review').length;
+    const overdueCount=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
+    const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
+    const rag=calcProjectRag(p);
+    const client=state.clients?.find(c=>{
+      const deal=state.deals.find(d=>d.id===p.dealId);
+      return deal&&c.id===deal.clientId;
+    });
+    return{p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName:client?.name||p.client||''};
+  });
+
+  // ── RENDER ──
   el.innerHTML=`
-    <!-- Tabs — same crm-tab pattern -->
-    <div class="crm-tabs" style="margin-bottom:20px">
-      <button class="crm-tab ${tab==='active'?'active':''}" onclick="state.healthTab='active';renderHealthDashboard()">
-        Active Projects <span style="font-family:'DM Mono',monospace;font-size:9px;opacity:0.6;margin-left:4px">${activeProjects.length}</span>
-      </button>
-      <button class="crm-tab ${tab==='complete'?'active':''}" onclick="state.healthTab='complete';renderHealthDashboard()">
-        Completed <span style="font-family:'DM Mono',monospace;font-size:9px;opacity:0.6;margin-left:4px">${completeProjects.length}</span>
-      </button>
-    </div>
-
-    <!-- Summary cards -->
-    <div class="month-summary" style="margin-bottom:24px">
-      ${tab==='active'?`
-      <div class="stat-card"><div class="stat-label" style="color:var(--green)">On Track</div><div class="stat-value" style="color:var(--green)">${counts.green}</div><div class="stat-delta">all tasks healthy</div></div>
-      <div class="stat-card"><div class="stat-label" style="color:var(--gold)">At Risk</div><div class="stat-value" style="color:var(--gold)">${counts.amber}</div><div class="stat-delta">needs attention</div></div>
-      <div class="stat-card"><div class="stat-label" style="color:var(--red)">Behind</div><div class="stat-value" style="color:var(--red)">${counts.red}</div><div class="stat-delta">overdue tasks</div></div>
-      <div class="stat-card"><div class="stat-label">No Tasks</div><div class="stat-value" style="color:var(--text3)">${counts.grey}</div><div class="stat-delta">not started</div></div>
-      `:`
-      <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value">${completeProjects.length}</div><div class="stat-delta">projects done</div></div>
-      <div class="stat-card"><div class="stat-label" style="color:var(--green)">Finalized</div><div class="stat-value" style="color:var(--green)">${completeProjects.filter(p=>p.payoutsFinalized).length}</div><div class="stat-delta">payouts locked</div></div>
-      <div class="stat-card"><div class="stat-label" style="color:var(--gold)">Awaiting Finalization</div><div class="stat-value" style="color:var(--gold)">${completeProjects.filter(p=>!p.payoutsFinalized).length}</div><div class="stat-delta">complete, not locked</div></div>
-      <div class="stat-card"><div class="stat-label">Total Tasks</div><div class="stat-value">${completeProjects.reduce((s,p)=>s+state.tasks.filter(t=>t.projectId===p.id).length,0)}</div><div class="stat-delta">delivered</div></div>
-      `}
-    </div>
-
-    <!-- Project table -->
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-      <div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;padding:9px 20px;background:var(--bg);border-bottom:2px solid var(--border2)">
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${tab==='active'?'Health':'Status'}</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Progress</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${tab==='active'?'Due':'Completed'}</span>
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Team</span>
+    <!-- TOP METRICS STRIP -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:26px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Active Projects</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;color:var(--text);line-height:1;letter-spacing:-0.025em">${activeProjects.length}</div>
+        <div style="display:flex;gap:10px;margin-top:10px;font-family:'DM Mono',monospace;font-size:10px">
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:var(--green)"></span><span style="color:var(--green)">${ragCounts.green}</span><span style="color:var(--text3)">on track</span></span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:var(--amber)"></span><span style="color:var(--amber)">${ragCounts.amber}</span><span style="color:var(--text3)">at risk</span></span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:var(--red)"></span><span style="color:var(--red)">${ragCounts.red}</span><span style="color:var(--text3)">behind</span></span>
+        </div>
       </div>
-      ${shown.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No ${tab} projects</div>`:''}
-      ${shown.map(p=>{
-        const tasks=state.tasks.filter(t=>t.projectId===p.id);
-        const done=tasks.filter(t=>t.status==='done').length;
-        const pct=tasks.length?Math.round(done/tasks.length*100):0;
-        const overdue=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
-        const rag=calcProjectRag(p);
-        const ragColor={'green':'var(--green)','amber':'var(--gold)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
-        const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(234,234,234,0.1)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
-        const ragBorder={'green':'rgba(76,175,122,0.25)','amber':'rgba(234,234,234,0.25)','red':'rgba(224,90,90,0.25)','grey':'var(--border)'}[rag.rag];
-        const deal=state.deals.find(d=>d.id===p.dealId);
-        const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
-        const isFinalized=!!p.payoutsFinalized;
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Overdue Tasks</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;color:${overdueTasks.length>0?'var(--red)':'var(--text)'};line-height:1;letter-spacing:-0.025em">${overdueTasks.length}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:10px">${overdueTasks.length===0?'all tasks on time':'across '+new Set(overdueTasks.map(t=>t.projectId)).size+' project'+(new Set(overdueTasks.map(t=>t.projectId)).size===1?'':'s')}</div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">This Week's Pipeline</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;color:var(--text);line-height:1;letter-spacing:-0.025em">${pipelineCount}</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:10px">${tasksThisWeek.length} task${tasksThisWeek.length===1?'':'s'} · ${delivsThisWeek.length} publishing</div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Team Workload</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:600;color:${utilColor};line-height:1;letter-spacing:-0.025em">${utilPct}<span style="font-size:18px;color:var(--text3);font-weight:500">%</span></div>
+        <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:10px">
+          <div style="height:100%;width:${Math.min(utilPct,100)}%;background:${utilColor};border-radius:2px"></div>
+        </div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:6px">${committedHours.toFixed(1)}h of ${weeklyCapacity}h this week</div>
+      </div>
+    </div>
 
-        // Date display
-        const dueDate=tab==='active'?(p.endDate||p.end):null;
-        const daysLeft=dueDate?Math.ceil((new Date(dueDate+'T23:59:59')-now)/86400000):null;
-        const dueStr=dueDate?new Date(dueDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
-        const dueColor=daysLeft===null?'var(--text3)':daysLeft<0?'var(--red)':daysLeft<7?'var(--gold)':'var(--text3)';
-
-        // Completed tab: show finalization status badge
-        const completeBadge=tab==='complete'?(isFinalized
-          ?`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(76,175,122,0.1);color:var(--green);border:1px solid rgba(76,175,122,0.25)">⚑ Finalized</span>`
-          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:rgba(234,234,234,0.08);color:var(--gold);border:1px solid rgba(234,234,234,0.2)">Pending</span>`)
-          :`<span style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};border:1px solid ${ragBorder}">${rag.label}</span>`;
-
-        const barColor=tab==='complete'?(isFinalized?'var(--green)':'var(--gold)'):(ragColor);
-
-        return`<div style="display:grid;grid-template-columns:2fr 110px 1fr 110px 130px;padding:12px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="goToProjectTasks('${p.id}')">
-          <div>
-            <div style="font-size:12px;font-weight:500;color:var(--text);margin-bottom:2px">${isFinalized?'🔒 ':''}${p.name}</div>
-            <div style="font-size:10px;color:var(--text3)">${deal?.client||p.client||'—'}${tab==='active'&&overdue>0?` · <span style="color:var(--red)">${overdue} overdue</span>`:''}</div>
+    <!-- NEEDS ATTENTION -->
+    ${attentionShown.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:26px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Needs Attention</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${attentionItems.length} item${attentionItems.length===1?'':'s'}${attentionItems.length>10?' · showing top 10':''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${attentionShown.map(it=>`<div onclick="${it.onClick}" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:all .15s"
+          onmouseover="this.style.borderColor='var(--border2)';this.style.background='var(--bg4)'"
+          onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg3)'">
+          <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;padding:3px 8px;border-radius:4px;background:${it.color.replace(')',',0.14)').replace('var(--','rgba(')==it.color.replace(')',',0.14)').replace('var(--','rgba(')?it.color.replace('var(--','rgba(').replace(')',',0.14)'):it.color};color:${it.color};min-width:95px;text-align:center;flex-shrink:0;font-weight:600">${it.label}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(it.title)}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:2px">${_escapeHtml(it.subtitle)}</div>
           </div>
-          <div>${completeBadge}</div>
-          <div style="padding-right:16px">
-            <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
-              <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px;transition:width .3s"></div>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}% · ${done}/${tasks.length} tasks</div>
-          </div>
-          <div>
-            ${tab==='active'?`<div style="font-family:'DM Mono',monospace;font-size:11px;color:${dueColor}">${dueStr}</div>${daysLeft!==null?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:${dueColor}">${daysLeft<0?Math.abs(daysLeft)+' days over':daysLeft+' days left'}</div>`:''}`:
-            `<span class="proj-status complete" style="font-size:9px"><span class="proj-status-dot"></span>Complete</span>`}
-          </div>
-          <div style="display:flex;align-items:center">
-            ${memberIds.slice(0,5).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
-            ${memberIds.length>5?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:12px">+${memberIds.length-5}</span>`:''}
-            ${memberIds.length===0?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">No team</span>`:''}
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+        </div>`).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- THIS WEEK'S PIPELINE -->
+    ${pipelineItems.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:26px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">This Week's Pipeline</div>
+      ${Object.keys(pipelineByDate).sort().map(dateKey=>{
+        const items=pipelineByDate[dateKey];
+        return`<div style="margin-bottom:14px">
+          <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);margin-bottom:8px;font-weight:600">${fmtDateLabel(dateKey)} <span style="color:var(--text3);font-weight:400">· ${items.length} item${items.length===1?'':'s'}</span></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${items.map(it=>{
+              const typeLabel=it.kind==='task'?'Task':'Publish';
+              const typeColor=it.kind==='task'?'var(--blue)':'var(--purple)';
+              const statusClass=it.kind==='task'
+                ?(it.status==='done'?'status-published':it.status==='review'?'status-in_review':it.status==='progress'?'status-in_progress':'status-planned')
+                :`status-${it.status}`;
+              const statusLabel=it.kind==='task'
+                ?({todo:'To Do',progress:'In Progress',review:'In Review',done:'Done'}[it.status]||it.status)
+                :({planned:'Planned',in_progress:'In Progress',in_review:'In Review',published:'Published',cancelled:'Cancelled'}[it.status]||it.status);
+              const clickAttr=it.kind==='task'?`onclick="openEditTaskModal('${it.id}')"`:`onclick="goToProjectTasks('${it.projectId}')"`;
+              return`<div ${clickAttr} style="background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:9px 14px;display:grid;grid-template-columns:70px 1fr 120px;gap:12px;align-items:center;cursor:pointer"
+                onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+                <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;padding:2px 6px;border-radius:3px;background:${typeColor.replace('var(--','rgba(').replace(')',',0.14)')};color:${typeColor};text-align:center;font-weight:600">${typeLabel}</span>
+                <div style="min-width:0">
+                  <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(it.title)}</div>
+                  <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:1px">${_escapeHtml(it.subtitle)}</div>
+                </div>
+                <span class="status-chip ${statusClass}" style="font-size:9px;padding:2px 7px;justify-self:end">${statusLabel}</span>
+              </div>`;
+            }).join('')}
           </div>
         </div>`;
       }).join('')}
+    </div>`:''}
+
+    <!-- PER-PROJECT GRID -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+      <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Active Projects (${activeProjects.length})</div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+        ${['Project','Health','Progress','In Review','Overdue','Team'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+      </div>
+      ${projRows.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No active projects</div>`:
+        projRows.map(({p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName})=>{
+          const ragColor={'green':'var(--green)','amber':'var(--amber)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
+          const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(212,166,90,0.12)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+          return`<div onclick="goToProjectTasks('${p.id}')" style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer"
+            onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
+              ${clientName?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${_escapeHtml(clientName)}</div>`:''}
+            </div>
+            <div>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};font-weight:600">${rag.label.toUpperCase()}</span>
+            </div>
+            <div>
+              <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+                <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:3px"></div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${progressLabel}</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${inReview>0?'var(--blue)':'var(--text3)'};font-weight:${inReview>0?'600':'400'}">${inReview}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${overdueCount>0?'var(--red)':'var(--text3)'};font-weight:${overdueCount>0?'600':'400'}">${overdueCount}</div>
+            <div style="display:flex;align-items:center">
+              ${memberIds.slice(0,4).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
+              ${memberIds.length>4?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:10px">+${memberIds.length-4}</span>`:''}
+              ${memberIds.length===0?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">No team</span>`:''}
+            </div>
+          </div>`;
+        }).join('')
+      }
     </div>
   `;
 }
