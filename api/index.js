@@ -384,7 +384,7 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
   try {
-    const { title, projectId, assigneeId, dueDate, publishDate, priority, status, estHours, tag, notes, deliverableId } = req.body;
+    const { title, projectId, assigneeId, dueDate, publishDate, priority, status, estHours, tag, publishable, notes, deliverableId } = req.body;
     const { data, error } = await supabase.from('tasks').insert({
       title, project_id: projectId, assignee_id: assigneeId || null,
       due_date: dueDate || null,
@@ -392,6 +392,7 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
       priority: priority || 'med',
       status: status || 'todo', est_hours: estHours || 0,
       tag: tag || null,
+      publishable: !!publishable,
       notes: notes || null,
     }).select().single();
     if (error) throw error;
@@ -430,6 +431,7 @@ app.patch('/api/tasks/:id', requireAuth, async (req, res) => {
     if (req.body.status      !== undefined) updates.status       = req.body.status;
     if (req.body.estHours    !== undefined) updates.est_hours    = req.body.estHours;
     if (req.body.tag         !== undefined) updates.tag          = req.body.tag || null;
+    if (req.body.publishable !== undefined) updates.publishable  = !!req.body.publishable;
     if (req.body.notes       !== undefined) updates.notes        = req.body.notes || null;
     const { data, error } = await supabase.from('tasks').update(updates).eq('id', req.params.id).select().single();
     if (error) throw error;
@@ -1649,6 +1651,8 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
         const tag          = typeRec?.default_tag        || (meta.publishable ? 'post-production' : 'production');
         const assigneeId   = typeRec?.default_assignee_id || null;
         const estHours     = typeRec?.default_est_hours   != null ? parseFloat(typeRec.default_est_hours) : 0;
+        // Auto-created tasks inherit publishable flag from the deliverable type
+        const publishable  = !!(typeRec?.publishable);
         return {
           title:        d.name,
           project_id:   projectId,
@@ -1659,6 +1663,7 @@ app.post('/api/deliverables/bulk', requireAuth, async (req, res) => {
           status:       'todo',
           est_hours:    estHours,
           tag,
+          publishable,
           notes:        null,
         };
       });
@@ -1942,7 +1947,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     if (projectIds.length) {
       const [linksResp, tasksResp] = await Promise.all([
         supabase.from('task_deliverables').select('task_id,deliverable_id'),
-        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,est_hours').in('project_id', projectIds),
+        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,publishable,est_hours').in('project_id', projectIds),
       ]);
       if (tasksResp.error) console.error('[portal/data] tasks error:', tasksResp.error);
       if (linksResp.error) console.error('[portal/data] links error:', linksResp.error);
@@ -1980,6 +1985,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
         id: t.id, title: t.title, status: t.status,
         due: t.due_date, publishDate: t.publish_date, projectId: t.project_id,
         tag: t.tag,
+        publishable: !!t.publishable,
       })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2044,6 +2050,7 @@ function mapTask(t) {
     status:      t.status,
     estHours:    t.est_hours || 0,
     tag:         t.tag || null,
+    publishable: !!t.publishable,
     notes:       t.notes || null,
   };
 }
