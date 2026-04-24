@@ -276,7 +276,20 @@ function fmtRelative(iso){
   return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'});
 }
 
-// Effective publish date for a task: explicit publishDate > due date fallback > null
+// A task is "publishable" if it's linked to at least one deliverable whose type is publishable.
+// Tasks not linked to any publishable deliverable (shoot days, production milestones, admin) should
+// never appear on the publishing calendar.
+function isPublishableTask(task){
+  const links=(state.data.taskDeliverables||[]).filter(l=>l.taskId===task.id);
+  if(!links.length) return false;
+  const delivIds=new Set(links.map(l=>l.deliverableId));
+  const linkedDelivs=(state.data.deliverables||[]).filter(d=>delivIds.has(d.id));
+  const pubTypeIds=new Set((state.data.deliverableTypes||[]).filter(t=>t.publishable).map(t=>t.id));
+  return linkedDelivs.some(d=>pubTypeIds.has(d.typeId));
+}
+
+// Effective publish date for a publishable task: explicit publishDate > due date fallback > null.
+// Callers MUST check isPublishableTask first — this function assumes the task qualifies.
 function effectivePublishDate(task){
   return task.publishDate||task.due||null;
 }
@@ -854,7 +867,8 @@ function renderCalendarPage(){
   const color=state.calMode==='publishing'?'var(--amber)':'var(--blue)';
   let decorated;
   if(state.calMode==='publishing'){
-    decorated=tasks.map(t=>({...t,__calDate:effectivePublishDate(t)})).filter(t=>t.__calDate);
+    // Only show tasks linked to a deliverable of a publishable type
+    decorated=tasks.filter(isPublishableTask).map(t=>({...t,__calDate:effectivePublishDate(t)})).filter(t=>t.__calDate);
   } else {
     decorated=tasks.filter(t=>t.tag!=='admin').map(t=>({...t,__calDate:t.due})).filter(t=>t.__calDate);
   }
