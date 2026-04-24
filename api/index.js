@@ -1947,7 +1947,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     if (projectIds.length) {
       const [linksResp, tasksResp] = await Promise.all([
         supabase.from('task_deliverables').select('task_id,deliverable_id'),
-        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,publishable,est_hours').in('project_id', projectIds),
+        supabase.from('tasks').select('id,title,status,due_date,publish_date,project_id,tag,publishable,est_hours,updated_at,created_at').in('project_id', projectIds),
       ]);
       if (tasksResp.error) console.error('[portal/data] tasks error:', tasksResp.error);
       if (linksResp.error) console.error('[portal/data] links error:', linksResp.error);
@@ -1986,6 +1986,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
         due: t.due_date, publishDate: t.publish_date, projectId: t.project_id,
         tag: t.tag,
         publishable: !!t.publishable,
+        updatedAt: t.updated_at || t.created_at || null,
       })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2052,6 +2053,7 @@ function mapTask(t) {
     tag:         t.tag || null,
     publishable: !!t.publishable,
     notes:       t.notes || null,
+    updatedAt:   t.updated_at || t.created_at || null,
   };
 }
 
