@@ -1200,6 +1200,15 @@
       </div>
       <input type="hidden" id="t-tag">
     </div>
+    <div class="form-group" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin:0">
+        <input type="checkbox" id="t-publishable" style="margin-top:3px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">Publishable</div>
+          <div style="font-size:10px;color:var(--text3);line-height:1.4">Mark if this task represents a piece of publishable content. Appears on the publishing calendar in the client portal.</div>
+        </div>
+      </label>
+    </div>
     <!-- Deliverable link -->
     <div class="form-group" id="t-deliverable-wrap">
       <label class="form-label" style="display:flex;align-items:center;gap:6px">
@@ -2368,6 +2377,7 @@ async function saveTask() {
     status:      document.getElementById('t-status').value,
     estHours:    parseFloat(document.getElementById('t-est').value) || 0,
     tag:         document.getElementById('t-tag').value || null,
+    publishable: document.getElementById('t-publishable').checked,
     notes:       document.getElementById('t-notes').value || null,
   };
   closeModal('task-modal');
@@ -8789,6 +8799,7 @@ function openTaskModal(editId){
   document.getElementById('t-status').value=t?t.status:'todo';
   document.getElementById('t-est').value=t?(t.estHours||''):'';
   document.getElementById('t-notes').value=t?(t.notes||''):'';
+  document.getElementById('t-publishable').checked=t?!!t.publishable:false;
   document.getElementById('task-modal').dataset.editId=editId||'';
   _selectTag(t?t.tag||'':'');
   _onTaskProjectChange(t?_getTaskDeliverableId(t.id):'');
