@@ -172,7 +172,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 
 <script>
 const API_BASE='/api';
-let state={token:null,client:null,data:null,page:'dashboard',view:'kanban',calMode:'publishing',projectFilter:'',calOffset:0,activeDelivId:null};
+let state={token:null,client:null,data:null,page:'dashboard',view:'kanban',calMode:'publishing',projectFilter:'',calOffset:0,activeDelivId:null,_dashboardDefaulted:false,_tasksDefaulted:false,_calendarDefaulted:false};
 
 // ── Auth ──
 function getToken(){return localStorage.getItem('cja_portal_token');}
@@ -409,9 +409,13 @@ function defaultProjectForCurrentMonth(){
 // ── DASHBOARD ──
 
 function renderDashboard(){
-  // Auto-select the current month's project on first dashboard load
-  if(!state.projectFilter){
-    state.projectFilter=defaultProjectForCurrentMonth();
+  // Auto-select the current month's project on FIRST load only — subsequent manual
+  // changes (including back to empty/All) are preserved
+  if(!state._dashboardDefaulted){
+    state._dashboardDefaulted=true;
+    if(!state.projectFilter){
+      state.projectFilter=defaultProjectForCurrentMonth();
+    }
   }
   const delivs=getFilteredDeliverables();
   const tasks=getFilteredTasks();
@@ -730,6 +734,14 @@ function renderDelivsCalendar(delivs,body){
 // ── TASKS PAGE ──
 
 function renderTasksPage(){
+  // Auto-select the current month's project on FIRST load of the tasks page only
+  if(!state._tasksDefaulted){
+    state._tasksDefaulted=true;
+    if(!state.projectFilter){
+      state.projectFilter=defaultProjectForCurrentMonth();
+    }
+  }
+
   const viewTabs=`<div class="view-tabs" style="margin-bottom:0;margin-left:auto">
     <button class="view-tab ${state.view==='kanban'?'active':''}" onclick="state.view='kanban';renderPortal()">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="4" height="18" rx="1"/></svg>
@@ -816,6 +828,13 @@ function renderTasksKanban(tasks,body){
 // ── CALENDAR PAGE (standalone tab — production + publishing, all projects including completed) ──
 
 function renderCalendarPage(){
+  // On FIRST load of the calendar page, default to 'All Projects' (empty filter).
+  // Subsequent manual changes are preserved.
+  if(!state._calendarDefaulted){
+    state._calendarDefaulted=true;
+    state.projectFilter='';
+  }
+
   const modeToggle=`<div style="display:flex;gap:2px;background:var(--bg2);padding:3px;border-radius:8px;border:1px solid var(--border)">
     <button onclick="state.calMode='production';renderPortal()" style="background:${state.calMode==='production'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='production'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Production</button>
     <button onclick="state.calMode='publishing';renderPortal()" style="background:${state.calMode==='publishing'?'var(--bg4)':'transparent'};border:none;color:${state.calMode==='publishing'?'var(--text)':'var(--text3)'};padding:6px 14px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;border-radius:6px">Publishing</button>
