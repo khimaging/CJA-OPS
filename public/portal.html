@@ -451,16 +451,40 @@ function renderDashboard(){
   });
   const groupKeys=Object.keys(groups).sort((a,b)=>groups[a].typeName.localeCompare(groups[b].typeName));
 
-  // Activity feed — 10 most recently-updated deliverables + task-completion events from recent days
-  const recentDelivs=[...delivs]
-    .filter(d=>d.updatedAt)
-    .sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt))
-    .slice(0,10);
+  // Recent Activity — combined stream of tasks + deliverables, sorted by most recently updated
+  const activityItems=[
+    ...tasks.filter(t=>t.updatedAt).map(t=>{
+      const proj=(state.data.projects||[]).find(p=>p.id===t.projectId);
+      return{
+        kind:'task',
+        id:t.id,
+        label:t.title,
+        projName:proj?.name||'',
+        status:t.status,
+        statusLabel:TASK_STATUS_LABELS[t.status]||t.status,
+        updatedAt:t.updatedAt,
+      };
+    }),
+    ...delivs.filter(d=>d.updatedAt).map(d=>{
+      const proj=(state.data.projects||[]).find(p=>p.id===d.projectId);
+      return{
+        kind:'deliverable',
+        id:d.id,
+        label:d.name,
+        projName:proj?.name||'',
+        status:d.status,
+        statusLabel:STATUS_LABELS[d.status]||d.status,
+        updatedAt:d.updatedAt,
+      };
+    }),
+  ].sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).slice(0,10);
 
-  // Upcoming to publish: next 5 items with future publish dates
-  const publishUpcoming=delivs
-    .filter(d=>d.publishDate&&d.publishDate>=today&&d.status!=='published')
-    .sort((a,b)=>a.publishDate.localeCompare(b.publishDate))
+  // Upcoming to publish: next 5 publishable tasks with upcoming publish date, not yet done
+  const publishUpcoming=tasks
+    .filter(t=>t.publishable && t.status!=='done')
+    .map(t=>({...t,__pubDate:effectivePublishDate(t)}))
+    .filter(t=>t.__pubDate && t.__pubDate>=today)
+    .sort((a,b)=>a.__pubDate.localeCompare(b.__pubDate))
     .slice(0,5);
   // Upcoming to review: next 5 post-production tasks with future due dates, not done
   const reviewUpcoming=tasks
@@ -577,16 +601,18 @@ function renderDashboard(){
         </div>
         ${publishUpcoming.length===0?`<div style="padding:20px 0;text-align:center;color:var(--text3);font-size:12px;font-style:italic">No upcoming publish dates scheduled</div>`:`
           <div style="display:flex;flex-direction:column;gap:10px">
-            ${publishUpcoming.map(d=>{
-              const proj=state.data.projects.find(p=>p.id===d.projectId);
-              const type=types.find(t=>t.id===d.typeId);
-              return`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
-                <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--purple);letter-spacing:.06em;min-width:56px">${fmtDate(d.publishDate).split(',')[0]}</div>
+            ${publishUpcoming.map(t=>{
+              const proj=state.data.projects.find(p=>p.id===t.projectId);
+              // Try to find a linked deliverable for the nicer display name
+              const linkedDelivId=(state.data.taskDeliverables||[]).find(l=>l.taskId===t.id)?.deliverableId;
+              const linkedDeliv=linkedDelivId?(state.data.deliverables||[]).find(d=>d.id===linkedDelivId):null;
+              return`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+                <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--purple);letter-spacing:.06em;min-width:56px">${fmtDate(t.__pubDate).split(',')[0]}</div>
                 <div style="flex:1;min-width:0">
-                  <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(d.name)}</div>
-                  <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}${type?' · '+type.name:''}</div>
+                  <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${linkedDeliv?escapeHtml(linkedDeliv.name):escapeHtml(t.title)}</div>
+                  <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}</div>
                 </div>
-                <span class="status-chip status-${d.status}">${STATUS_LABELS[d.status]}</span>
+                <span class="status-chip status-${t.status}">${TASK_STATUS_LABELS[t.status]||t.status}</span>
               </div>`;
             }).join('')}
           </div>
@@ -595,18 +621,19 @@ function renderDashboard(){
     </div>
 
     <!-- Activity feed -->
-    ${recentDelivs.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+    ${activityItems.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
       <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Recent Activity</div>
       <div style="display:flex;flex-direction:column;gap:10px">
-        ${recentDelivs.map(d=>{
-          const proj=state.data.projects.find(p=>p.id===d.projectId);
-          return`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="_openDelivDrillIn('${d.id}')">
-            <span class="status-chip status-${d.status}" style="min-width:95px;text-align:center">${STATUS_LABELS[d.status]}</span>
+        ${activityItems.map(a=>{
+          const onClick=a.kind==='deliverable'?`onclick="_openDelivDrillIn('${a.id}')"`:'';
+          const cursor=a.kind==='deliverable'?'cursor:pointer':'';
+          return`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);${cursor}" ${onClick}>
+            <span class="status-chip status-${a.status}" style="min-width:95px;text-align:center">${a.statusLabel}</span>
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(d.name)}</div>
-              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(proj?.name||'')}</div>
+              <div style="font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.label)}</div>
+              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${escapeHtml(a.projName)}</div>
             </div>
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${fmtRelative(d.updatedAt)}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${fmtRelative(a.updatedAt)}</span>
           </div>`;
         }).join('')}
       </div>
