@@ -262,6 +262,7 @@
   .tag-production{background:rgba(102,126,234,0.12);color:var(--blue);}
   .tag-post-production{background:rgba(149,97,226,0.12);color:var(--purple);}
   .tag-admin{background:rgba(234,234,234,0.12);color:var(--gold);}
+  .tag-publishable{background:rgba(212,166,90,0.14);color:var(--amber);}
   .status-todo{background:var(--bg4);color:var(--text3);}
   .status-progress{background:var(--blue-dim);color:var(--blue);}
   .status-review{background:rgba(154,127,212,0.12);color:var(--purple);}
@@ -1200,14 +1201,14 @@
       </div>
       <input type="hidden" id="t-tag">
     </div>
-    <div class="form-group" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
-      <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;margin:0">
-        <input type="checkbox" id="t-publishable" style="margin-top:3px">
-        <div>
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">Publishable</div>
-          <div style="font-size:10px;color:var(--text3);line-height:1.4">Mark if this task represents a piece of publishable content. Appears on the publishing calendar in the client portal.</div>
-        </div>
-      </label>
+    <div class="form-group">
+      <label class="form-label">Publishable</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="t-publishable-picker">
+        <button type="button" class="task-type-tag tag-publishable" data-pub="yes" onclick="_selectPublishable(true)" style="cursor:pointer;border:1px solid transparent;padding:5px 12px">Publishable</button>
+        <button type="button" class="task-type-tag" data-pub="no" onclick="_selectPublishable(false)" style="cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text3);padding:5px 12px">Not Publishable</button>
+      </div>
+      <input type="hidden" id="t-publishable">
+      <div style="font-size:10px;color:var(--text3);margin-top:6px">Publishable tasks appear on the client portal's publishing calendar.</div>
     </div>
     <!-- Deliverable link -->
     <div class="form-group" id="t-deliverable-wrap">
@@ -2377,7 +2378,7 @@ async function saveTask() {
     status:      document.getElementById('t-status').value,
     estHours:    parseFloat(document.getElementById('t-est').value) || 0,
     tag:         document.getElementById('t-tag').value || null,
-    publishable: document.getElementById('t-publishable').checked,
+    publishable: !!document.getElementById('t-publishable').value,
     notes:       document.getElementById('t-notes').value || null,
   };
   closeModal('task-modal');
@@ -7389,13 +7390,23 @@ async function _listPatch(taskId, field, value){
     const apiField={
       title:'title', assigneeId:'assigneeId', due:'dueDate',
       priority:'priority', status:'status', estHours:'estHours', tag:'tag',
+      publishable:'publishable',
     }[field];
-    await api('PATCH','/tasks/'+taskId,{[apiField]:value||null});
+    // For publishable (boolean), don't null-coerce false values
+    const payloadVal = field==='publishable' ? !!value : (value||null);
+    await api('PATCH','/tasks/'+taskId,{[apiField]:payloadVal});
   } catch(e){
     task[field]=prev;
     notify('Save failed: '+e.message);
   }
   renderTaskView();
+}
+
+// Toggle publishable in-place on the list view with a single click
+async function _listTogglePublishable(taskId){
+  const task=state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  _listPatch(taskId, 'publishable', !task.publishable);
 }
 
 // Make a cell editable: type = 'text'|'date'|'select'|'number'
@@ -7442,20 +7453,24 @@ function renderList(tasks){
   document.getElementById('task-list').innerHTML=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
     <table class="list-table">
       <thead><tr>
-        <th>Task</th><th>Type</th><th>Assigned To</th><th>Due</th>
+        <th>Task</th><th>Type</th><th>Publishable</th><th>Assigned To</th><th>Due</th>
         <th>Priority</th><th>Status</th><th>Hours</th><th>Task Pay</th>
       </tr></thead>
       <tbody>${tasks.length===0
-        ?`<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`
+        ?`<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`
         :tasks.map(t=>{
           const a=state.team.find(m=>m.id===t.assigneeId);
           const dc=t.due?getDueClass(t.due):'';
           const pay=calcTaskPay(t);
           const locked=isProjectLocked(t.projectId);
           const rowId='lr-'+t.id;
+          const pubCell = t.publishable
+            ? `<span class="task-type-tag tag-publishable">PUBLISHABLE</span>`
+            : `<span style="color:var(--text3);font-size:10px">—</span>`;
           if(locked) return`<tr id="${rowId}" style="opacity:0.7">
             <td style="color:var(--text);font-weight:500">🔒 ${t.title}</td>
             <td>${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}</td>
+            <td>${pubCell}</td>
             <td><div style="display:flex;align-items:center;gap:7px"><div class="deal-avatar" style="background:${a?.color||'#555'};width:22px;height:22px;font-size:9px">${a?a.name.split(' ').map(n=>n[0]).join(''):'?'}</div><span style="color:var(--text2)">${a?.name||'—'}</span></div></td>
             <td class="task-due ${dc}">${t.due?formatDue(t.due):'—'}</td>
             <td><span class="task-tag priority-${t.priority}">${t.priority}</span></td>
@@ -7471,6 +7486,10 @@ function renderList(tasks){
             <!-- Tag -->
             <td class="le-cell" title="Click to change type" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','tag','${t.tag||''}',{type:'select',choices:[['','None'],['production','Production'],['post-production','Post-Production'],['admin','Admin']]})">
               ${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}
+            </td>
+            <!-- Publishable (single-click toggle) -->
+            <td class="le-cell" title="Click to toggle publishable" onclick="event.stopPropagation();_listTogglePublishable('${t.id}')">
+              ${pubCell}
             </td>
             <!-- Assignee -->
             <td class="le-cell" title="Click to reassign" onclick="event.stopPropagation();_listEditCell(this,'${t.id}','assigneeId','${t.assigneeId||''}',{type:'select',choices:[['','Unassigned'],...state.team.map(m=>[m.id,m.name])]})">
@@ -8799,7 +8818,7 @@ function openTaskModal(editId){
   document.getElementById('t-status').value=t?t.status:'todo';
   document.getElementById('t-est').value=t?(t.estHours||''):'';
   document.getElementById('t-notes').value=t?(t.notes||''):'';
-  document.getElementById('t-publishable').checked=t?!!t.publishable:false;
+  _selectPublishable(t?!!t.publishable:false);
   document.getElementById('task-modal').dataset.editId=editId||'';
   _selectTag(t?t.tag||'':'');
   _onTaskProjectChange(t?_getTaskDeliverableId(t.id):'');
@@ -8971,6 +8990,21 @@ function _selectTag(tag){
     const isNone=!tag;
     noneBtn.style.borderColor=isNone?'var(--text2)':'var(--border)';
     noneBtn.style.fontWeight=isNone?'700':'500';
+  }
+}
+
+function _selectPublishable(isPublishable){
+  document.getElementById('t-publishable').value=isPublishable?'1':'';
+  const yesBtn=document.querySelector('#t-publishable-picker button[data-pub="yes"]');
+  const noBtn=document.querySelector('#t-publishable-picker button[data-pub="no"]');
+  if(yesBtn){
+    yesBtn.style.borderColor=isPublishable?'currentColor':'transparent';
+    yesBtn.style.boxShadow=isPublishable?'0 0 0 1px currentColor inset':'none';
+    yesBtn.style.fontWeight=isPublishable?'700':'500';
+  }
+  if(noBtn){
+    noBtn.style.borderColor=!isPublishable?'var(--text2)':'var(--border)';
+    noBtn.style.fontWeight=!isPublishable?'700':'500';
   }
 }
 
