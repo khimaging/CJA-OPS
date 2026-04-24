@@ -427,10 +427,14 @@ function renderDashboard(){
   const totalDelivs=delivs.length;
   const completed=delivs.filter(d=>d.status==='published').length;
   const overallPct=totalDelivs>0?Math.round(completed/totalDelivs*100):0;
-  const inReview=delivs.filter(d=>d.status==='in_review').length;
-  // Upcoming publishes: next 14 days
+  // In Review — tasks currently in review status (not done)
+  const inReview=tasks.filter(t=>t.status==='review').length;
+  // Upcoming publishes: publishable tasks with publish date in next 14 days, not yet done
   const in14Days=new Date(now.getTime()+14*86400000).toISOString().split('T')[0];
-  const upcomingPublish=delivs.filter(d=>d.publishDate&&d.publishDate>=today&&d.publishDate<=in14Days).length;
+  const upcomingPublish=tasks.filter(t=>
+    t.publishable && t.status!=='done' &&
+    effectivePublishDate(t) && effectivePublishDate(t)>=today && effectivePublishDate(t)<=in14Days
+  ).length;
   // Upcoming reviews: post-production tasks due in next 14 days, not done
   const upcomingReview=tasks.filter(t=>t.tag==='post-production'&&t.status!=='done'&&t.due&&t.due>=today&&t.due<=in14Days).length;
 
@@ -506,17 +510,17 @@ function renderDashboard(){
       <div class="metric-card">
         <div class="metric-label">In Review</div>
         <div class="metric-value" style="color:${inReview>0?'var(--blue)':'var(--text)'}">${inReview}</div>
-        <div class="metric-sub">awaiting publish / feedback</div>
+        <div class="metric-sub">tasks awaiting feedback</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">Coming Up to Publish</div>
         <div class="metric-value" style="color:${upcomingPublish>0?'var(--amber)':'var(--text)'}">${upcomingPublish}</div>
-        <div class="metric-sub">in the next 14 days</div>
+        <div class="metric-sub">publishable tasks in next 14 days</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">Coming Up to Review</div>
         <div class="metric-value" style="color:${upcomingReview>0?'var(--amber)':'var(--text)'}">${upcomingReview}</div>
-        <div class="metric-sub">deliverables you will see soon</div>
+        <div class="metric-sub">post-prod tasks due in next 14 days</div>
       </div>
     </div>
 
