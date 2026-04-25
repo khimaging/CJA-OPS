@@ -572,12 +572,21 @@ function renderDashboard(){
 
     <!-- Deliverables by type -->
     ${groupKeys.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:26px">
-      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:16px">Progress by Type</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:16px">Delivered to Client by Type</div>
       <div style="display:flex;flex-direction:column;gap:14px">
         ${groupKeys.map(gk=>{
           const g=groups[gk];
           const total=g.items.length;
-          const done=g.items.filter(x=>x.status==='published').length;
+          // A deliverable is "delivered" if at least one linked task has reached review or done.
+          // Same logic as the "Delivered to Client" top-level metric.
+          const done=g.items.filter(d=>{
+            const linkedTaskIds=links.filter(l=>l.deliverableId===d.id).map(l=>l.taskId);
+            if(!linkedTaskIds.length) return false;
+            return linkedTaskIds.some(tid=>{
+              const t=taskById.get(tid);
+              return t && (t.status==='review'||t.status==='done');
+            });
+          }).length;
           const pct=total>0?Math.round(done/total*100):0;
           return`<div>
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;gap:10px">
