@@ -427,9 +427,19 @@ function renderDashboard(){
   const totalDelivs=delivs.length;
   const completed=delivs.filter(d=>d.status==='published').length;
   const overallPct=totalDelivs>0?Math.round(completed/totalDelivs*100):0;
-  // Delivered to client — deliverables that have reached in_review or published status
-  // (i.e., the client has seen them, regardless of whether they're finally live yet)
-  const delivered=delivs.filter(d=>d.status==='in_review'||d.status==='published').length;
+  // Delivered to client — a deliverable counts as "delivered" once at least one linked task
+  // has reached review or done status (i.e., the client has been shown something from it).
+  const links=state.data.taskDeliverables||[];
+  const allTasks=state.data.tasks||[];
+  const taskById=new Map(allTasks.map(t=>[t.id,t]));
+  const delivered=delivs.filter(d=>{
+    const linkedTaskIds=links.filter(l=>l.deliverableId===d.id).map(l=>l.taskId);
+    if(!linkedTaskIds.length) return false;
+    return linkedTaskIds.some(tid=>{
+      const t=taskById.get(tid);
+      return t && (t.status==='review'||t.status==='done');
+    });
+  }).length;
   const deliveredPct=totalDelivs>0?Math.round(delivered/totalDelivs*100):0;
   // In Review — tasks currently in review status (not done)
   const inReview=tasks.filter(t=>t.status==='review').length;
