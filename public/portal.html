@@ -427,6 +427,10 @@ function renderDashboard(){
   const totalDelivs=delivs.length;
   const completed=delivs.filter(d=>d.status==='published').length;
   const overallPct=totalDelivs>0?Math.round(completed/totalDelivs*100):0;
+  // Delivered to client — deliverables that have reached in_review or published status
+  // (i.e., the client has seen them, regardless of whether they're finally live yet)
+  const delivered=delivs.filter(d=>d.status==='in_review'||d.status==='published').length;
+  const deliveredPct=totalDelivs>0?Math.round(delivered/totalDelivs*100):0;
   // In Review — tasks currently in review status (not done)
   const inReview=tasks.filter(t=>t.status==='review').length;
   // Upcoming publishes: publishable tasks with publish date in next 14 days, not yet done
@@ -524,12 +528,20 @@ function renderDashboard(){
     <!-- Metrics strip -->
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:26px">
       <div class="metric-card">
-        <div class="metric-label">Overall Progress</div>
+        <div class="metric-label">Deliverables Published</div>
         <div class="metric-value">${overallPct}<span style="font-size:18px;color:var(--text3);font-weight:500">%</span></div>
         <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:10px">
           <div style="height:100%;width:${overallPct}%;background:linear-gradient(90deg,var(--amber),var(--green));border-radius:2px"></div>
         </div>
-        <div class="metric-sub">${completed} of ${totalDelivs} deliverables published</div>
+        <div class="metric-sub">${completed} of ${totalDelivs} live</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Delivered to Client</div>
+        <div class="metric-value">${deliveredPct}<span style="font-size:18px;color:var(--text3);font-weight:500">%</span></div>
+        <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:10px">
+          <div style="height:100%;width:${deliveredPct}%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:2px"></div>
+        </div>
+        <div class="metric-sub">${delivered} of ${totalDelivs} delivered for review</div>
       </div>
       <div class="metric-card">
         <div class="metric-label">In Review</div>
