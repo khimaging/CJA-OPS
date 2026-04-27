@@ -721,7 +721,7 @@
       </div>
       <div class="nav-item" onclick="switchView('workload')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-        Workload
+        Team Utilization
       </div>
       <div class="nav-item" onclick="switchView('prodcal')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
@@ -831,7 +831,7 @@
   <!-- WORKLOAD -->
   <div id="view-workload" class="view">
     <div class="topbar">
-      <div><div class="page-title">Workload</div><div class="page-sub">Task load distribution across the team</div></div>
+      <div><div class="page-title">Team Utilization</div><div class="page-sub">Hours, capacity, and work distribution across the team</div></div>
     </div>
     <div class="content"><div id="workload-board"></div></div>
   </div>
@@ -1759,6 +1759,7 @@ let state={
   ],
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
+  utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',pubCalClient:'',
   lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
@@ -5115,10 +5116,366 @@ function renderHealthDashboard(){
 // ============================================================
 //  WORKLOAD VIEW
 // ============================================================
+//  TEAM UTILIZATION DASHBOARD (replaces legacy Workload page)
+// ============================================================
 function renderStandaloneWorkload(){
   const el=document.getElementById('workload-board');
   if(!el) return;
-  _renderWorkloadInto(el);
+  _renderTeamUtilization(el);
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+const HOURS_PER_WEEK = 50; // capacity per active team member
+
+// Returns {start, end} ISO date strings for the chosen window. Inclusive.
+function _utilWindow(){
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const win = state.utilWindow || 'currentMonth';
+  if (win === 'currentMonth') {
+    const offset = state.utilMonthOffset || 0;
+    const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const yr = base.getFullYear(), mo = base.getMonth();
+    const dim = new Date(yr, mo+1, 0).getDate();
+    const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][mo];
+    return {
+      start: `${yr}-${String(mo+1).padStart(2,'0')}-01`,
+      end:   `${yr}-${String(mo+1).padStart(2,'0')}-${String(dim).padStart(2,'0')}`,
+      label: `${monthName} ${yr}`,
+      days:  dim,
+    };
+  }
+  if (win === 'lastMonth') {
+    const base = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const yr = base.getFullYear(), mo = base.getMonth();
+    const dim = new Date(yr, mo+1, 0).getDate();
+    const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][mo];
+    return {
+      start: `${yr}-${String(mo+1).padStart(2,'0')}-01`,
+      end:   `${yr}-${String(mo+1).padStart(2,'0')}-${String(dim).padStart(2,'0')}`,
+      label: `Last Month (${monthName})`,
+      days:  dim,
+    };
+  }
+  if (win === 'rolling30') {
+    const start = new Date(now.getTime() - 29*86400000);
+    return {
+      start: start.toISOString().split('T')[0],
+      end:   today,
+      label: 'Rolling 30 Days',
+      days:  30,
+    };
+  }
+  // Fallback
+  return { start: today, end: today, label: 'Today', days: 1 };
+}
+
+// Pull the right date field off a task based on the current lens.
+// 'completed' → completedAt (when work was actually delivered) — falls back to nothing if not delivered.
+// 'due' → due_date (when work was scheduled) — covers planning lens.
+function _utilTaskDate(task, lens){
+  if (lens === 'due') return task.due || null;
+  // completed lens: only return a date if the task was actually completed
+  return task.completedAt ? task.completedAt.split('T')[0] : null;
+}
+
+// Get tasks falling in the window for the chosen lens, after applying member/client filters
+function _utilFilteredTasks(){
+  const win = _utilWindow();
+  const lens = state.utilDateLens || 'completed';
+  const memberFilter = state.utilMemberFilter || '';
+  const clientFilter = state.utilClientFilter || '';
+
+  // Build project → client lookup
+  const projClient = {};
+  (state.projects||[]).forEach(p => {
+    const deal = state.deals.find(d => d.id === p.dealId);
+    if (deal) {
+      const client = (state.clients||[]).find(c => c.id === deal.clientId);
+      projClient[p.id] = client ? client.id : (deal.client || null);
+    }
+  });
+
+  return (state.tasks||[]).filter(t => {
+    const date = _utilTaskDate(t, lens);
+    if (!date) return false;
+    if (date < win.start || date > win.end) return false;
+    if (memberFilter && t.assigneeId !== memberFilter) return false;
+    if (clientFilter && projClient[t.projectId] !== clientFilter) return false;
+    return true;
+  });
+}
+
+// Build a client lookup keyed by ID with name + project IDs
+function _utilClientLookup(){
+  const out = new Map();
+  (state.clients||[]).filter(c => c.active !== false).forEach(c => {
+    out.set(c.id, { id: c.id, name: c.name, projectIds: [] });
+  });
+  (state.projects||[]).forEach(p => {
+    const deal = state.deals.find(d => d.id === p.dealId);
+    if (!deal) return;
+    if (deal.clientId && out.has(deal.clientId)) {
+      out.get(deal.clientId).projectIds.push(p.id);
+    }
+  });
+  return out;
+}
+
+// ── Main render ──────────────────────────────────────────────
+function _renderTeamUtilization(el){
+  const win = _utilWindow();
+  const lens = state.utilDateLens || 'completed';
+  const tasks = _utilFilteredTasks();
+  const active = (state.team||[]).filter(m => m.active !== false);
+  const totalHours = tasks.reduce((s,t) => s + (t.estHours||0), 0);
+
+  // Capacity = HOURS_PER_WEEK × weeks × member count
+  // weeks = days / 7 (fractional, but accurate)
+  const capPerMember = HOURS_PER_WEEK * (win.days / 7);
+  const capTotal = capPerMember * active.length;
+  const utilPct = capTotal > 0 ? Math.round(totalHours / capTotal * 100) : 0;
+
+  // Tag breakdown
+  const byTag = { production:0, 'post-production':0, admin:0, untagged:0 };
+  tasks.forEach(t => {
+    const k = t.tag || 'untagged';
+    byTag[k] = (byTag[k]||0) + (t.estHours||0);
+  });
+
+  // Per-member breakdown
+  const byMember = active.map(m => {
+    const mTasks = tasks.filter(t => t.assigneeId === m.id);
+    const hours = mTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    const pct = capPerMember > 0 ? Math.round(hours / capPerMember * 100) : 0;
+    const tags = { production:0, 'post-production':0, admin:0, untagged:0 };
+    mTasks.forEach(t => { const k=t.tag||'untagged'; tags[k]=(tags[k]||0)+(t.estHours||0); });
+    return { member:m, tasks:mTasks, hours, pct, tags };
+  }).sort((a,b)=>b.hours-a.hours);
+
+  // Client breakdown
+  const clientLookup = _utilClientLookup();
+  const projClient = {};
+  (state.projects||[]).forEach(p => {
+    const deal = state.deals.find(d=>d.id===p.dealId);
+    if (deal && deal.clientId) projClient[p.id] = deal.clientId;
+  });
+  const byClient = {};
+  tasks.forEach(t => {
+    const cid = projClient[t.projectId] || '__internal__';
+    if (!byClient[cid]) {
+      const c = clientLookup.get(cid);
+      byClient[cid] = { id:cid, name: c ? c.name : 'Internal / No Client', hours:0, taskCount:0, members:new Set() };
+    }
+    byClient[cid].hours += (t.estHours||0);
+    byClient[cid].taskCount += 1;
+    if (t.assigneeId) byClient[cid].members.add(t.assigneeId);
+  });
+  const clientList = Object.values(byClient).sort((a,b)=>b.hours-a.hours);
+
+  // Build UI
+  el.innerHTML = `
+    ${_utilFilterBar(win)}
+    ${_utilTopMetrics(totalHours, capTotal, utilPct, byTag, win)}
+    ${_utilMemberSection(byMember, capPerMember, win)}
+    ${_utilClientSection(clientList, totalHours, win)}
+  `;
+}
+
+// ── Filter bar ──
+function _utilFilterBar(win){
+  const lens = state.utilDateLens || 'completed';
+  const memberFilter = state.utilMemberFilter || '';
+  const clientFilter = state.utilClientFilter || '';
+  const window_ = state.utilWindow || 'currentMonth';
+  const offset = state.utilMonthOffset || 0;
+
+  const memberOpts = `<option value="">All Members</option>` +
+    (state.team||[]).filter(m=>m.active!==false).map(m=>`<option value="${m.id}" ${memberFilter===m.id?'selected':''}>${m.name}</option>`).join('');
+
+  const clientLookup = _utilClientLookup();
+  const clientOpts = `<option value="">All Clients</option>` +
+    [...clientLookup.values()].sort((a,b)=>a.name.localeCompare(b.name))
+      .map(c=>`<option value="${c.id}" ${clientFilter===c.id?'selected':''}>${c.name}</option>`).join('');
+
+  const monthNavBtns = window_==='currentMonth' ? `
+    <button class="btn btn-sm" onclick="state.utilMonthOffset=(state.utilMonthOffset||0)-1;renderStandaloneWorkload()">‹</button>
+    <button class="btn btn-sm" onclick="state.utilMonthOffset=(state.utilMonthOffset||0)+1;renderStandaloneWorkload()">›</button>
+    ${offset!==0?`<button class="btn btn-sm" onclick="state.utilMonthOffset=0;renderStandaloneWorkload()">Today</button>`:''}
+  ` : '';
+
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:20px">
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+      <!-- Window selector -->
+      <div style="display:flex;gap:2px;background:var(--bg3);padding:3px;border-radius:8px;border:1px solid var(--border)">
+        ${[
+          ['currentMonth','Current Month'],
+          ['lastMonth','Last Month'],
+          ['rolling30','Rolling 30 Days'],
+        ].map(([v,l])=>`<button onclick="state.utilWindow='${v}';state.utilMonthOffset=0;renderStandaloneWorkload()" style="background:${window_===v?'var(--bg4)':'transparent'};border:none;color:${window_===v?'var(--text)':'var(--text3)'};padding:6px 12px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-radius:6px">${l}</button>`).join('')}
+      </div>
+      ${monthNavBtns}
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${win.label}</span>
+      </div>
+
+      <!-- Lens toggle -->
+      <div style="margin-left:auto;display:flex;gap:2px;background:var(--bg3);padding:3px;border-radius:8px;border:1px solid var(--border)">
+        ${[
+          ['completed','Delivered'],
+          ['due','Scheduled'],
+        ].map(([v,l])=>`<button onclick="state.utilDateLens='${v}';renderStandaloneWorkload()" style="background:${lens===v?'var(--bg4)':'transparent'};border:none;color:${lens===v?'var(--text)':'var(--text3)'};padding:6px 12px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-radius:6px" title="${v==='completed'?'Hours from tasks completed in window (review/done)':'Hours from tasks scheduled in window (by due date)'}">${l}</button>`).join('')}
+      </div>
+
+      <!-- Member filter -->
+      <select onchange="state.utilMemberFilter=this.value;renderStandaloneWorkload()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:140px">
+        ${memberOpts}
+      </select>
+
+      <!-- Client filter -->
+      <select onchange="state.utilClientFilter=this.value;renderStandaloneWorkload()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:140px">
+        ${clientOpts}
+      </select>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text3);line-height:1.5">
+      <strong style="color:var(--text2)">${lens==='completed'?'Delivered lens':'Scheduled lens'}:</strong>
+      ${lens==='completed'?'Hours from tasks completed (moved to Review or Done) within this window. Reflects what was actually delivered.':'Hours from tasks with due dates in this window. Reflects what was planned to happen.'}
+    </div>
+  </div>`;
+}
+
+// ── Top KPI metrics ──
+function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, win){
+  const utilColor = utilPct >= 100 ? 'var(--red)' : utilPct >= 85 ? 'var(--amber)' : utilPct >= 50 ? 'var(--green)' : 'var(--text2)';
+  const tagColor = { production:'var(--blue)', 'post-production':'var(--purple)', admin:'var(--text3)', untagged:'var(--text3)' };
+  const tagOrder = ['production','post-production','admin','untagged'];
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:20px">
+    <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Total Hours</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${totalHours.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500;margin-left:4px">h</span></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Capacity: ${capTotal.toFixed(0)}h</div>
+    </div>
+    <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Team Utilization</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:${utilColor};letter-spacing:-0.02em">${utilPct}<span style="font-size:14px;color:var(--text3);font-weight:500;margin-left:4px">%</span></div>
+      <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-top:10px">
+        <div style="height:100%;width:${Math.min(100,utilPct)}%;background:${utilColor};border-radius:2px"></div>
+      </div>
+    </div>
+    <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Work Mix</div>
+      ${totalHours>0?tagOrder.filter(k=>byTag[k]>0).map(k=>{
+        const pct = Math.round(byTag[k]/totalHours*100);
+        const label = k==='untagged'?'Untagged':k.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase());
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:2px">
+            <span style="color:var(--text2)">${label}</span>
+            <span style="color:var(--text3)">${byTag[k].toFixed(1)}h · ${pct}%</span>
+          </div>
+          <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${tagColor[k]};border-radius:2px"></div>
+          </div>
+        </div>`;
+      }).join(''):'<div style="color:var(--text3);font-size:11px;font-style:italic">No tasks in window</div>'}
+    </div>
+  </div>`;
+}
+
+// ── Per-member section ──
+function _utilMemberSection(byMember, capPerMember, win){
+  if (!byMember.length) return '';
+  const tagColor = { production:'var(--blue)', 'post-production':'var(--purple)', admin:'var(--text3)', untagged:'var(--text3)' };
+
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Per-Member Utilization</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Capacity: ${capPerMember.toFixed(0)}h per person</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      ${byMember.map(({member,hours,pct,tags,tasks})=>{
+        const utilColor = pct >= 100 ? 'var(--red)' : pct >= 85 ? 'var(--amber)' : pct >= 50 ? 'var(--green)' : 'var(--text2)';
+        const tagBreakdown = ['production','post-production','admin','untagged']
+          .filter(k=>tags[k]>0)
+          .map(k=>{
+            const tagPct = hours>0 ? Math.round(tags[k]/hours*100) : 0;
+            const label = k==='untagged'?'Untagged':k.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase());
+            return `<div style="display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:10px">
+              <div style="width:8px;height:8px;border-radius:2px;background:${tagColor[k]}"></div>
+              <span style="color:var(--text2)">${label}</span>
+              <span style="color:var(--text3)">${tags[k].toFixed(1)}h</span>
+            </div>`;
+          }).join('');
+        // Stacked bar
+        const stackedSegments = ['production','post-production','admin','untagged']
+          .filter(k=>tags[k]>0)
+          .map(k=>{
+            const segPct = capPerMember>0 ? (tags[k]/capPerMember*100) : 0;
+            return `<div style="height:100%;width:${Math.min(100,segPct)}%;background:${tagColor[k]};border-right:1px solid rgba(0,0,0,0.3)" title="${k}: ${tags[k].toFixed(1)}h"></div>`;
+          }).join('');
+        return `<div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+            <div class="user-avatar" style="background:${member.color};width:30px;height:30px;font-size:11px">${member.name.split(' ').map(n=>n[0]).join('')}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:600;color:var(--text);letter-spacing:-0.015em">${member.name}</div>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:3px">${tagBreakdown}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:${utilColor};letter-spacing:-0.02em">${pct}%</div>
+              <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap">${hours.toFixed(1)}h · ${tasks.length} task${tasks.length===1?'':'s'}</div>
+            </div>
+          </div>
+          <div style="display:flex;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+            ${stackedSegments}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+// ── Client distribution section ──
+function _utilClientSection(clientList, totalHours, win){
+  if (!clientList.length) return '';
+
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Client Distribution</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${clientList.length} client${clientList.length===1?'':'s'}</div>
+    </div>
+    <table class="list-table" style="width:100%;font-size:12px">
+      <thead><tr>
+        <th>Client</th>
+        <th style="text-align:right">Hours</th>
+        <th style="text-align:right">Share</th>
+        <th>Distribution</th>
+        <th>Team</th>
+        <th style="text-align:right">Tasks</th>
+      </tr></thead>
+      <tbody>
+        ${clientList.map(c => {
+          const share = totalHours>0 ? c.hours/totalHours*100 : 0;
+          const memberAvatars = [...c.members].map(mid => {
+            const m = state.team.find(x => x.id === mid);
+            return m ? `<div class="user-avatar" style="background:${m.color};width:22px;height:22px;font-size:8px;border:1px solid var(--bg2)" title="${m.name}">${m.name.split(' ').map(n=>n[0]).join('')}</div>` : '';
+          }).join('');
+          const isInternal = c.id === '__internal__';
+          return `<tr>
+            <td><span style="color:${isInternal?'var(--text3)':'var(--text)'};font-weight:${isInternal?400:500};${isInternal?'font-style:italic':''}">${c.name}</span></td>
+            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text);font-weight:600">${c.hours.toFixed(1)}h</td>
+            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text2)">${share.toFixed(1)}%</td>
+            <td style="width:30%">
+              <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${share}%;background:linear-gradient(90deg,var(--blue),var(--purple));border-radius:3px"></div>
+              </div>
+            </td>
+            <td><div style="display:flex;gap:-4px">${memberAvatars}</div></td>
+            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text3)">${c.taskCount}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>`;
 }
 
 function renderWorkloadView(){
