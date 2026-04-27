@@ -2054,6 +2054,8 @@ function mapTask(t) {
     publishable: !!t.publishable,
     notes:       t.notes || null,
     updatedAt:   t.updated_at || t.created_at || null,
+    completedAt: t.completed_at || null,
+    createdAt:   t.created_at || null,
   };
 }
 
