@@ -228,6 +228,7 @@
   .modal-overlay.open{display:flex;}
   .modal{background:var(--bg2);border:1px solid var(--border2);border-radius:14px;width:600px;max-height:88vh;overflow-y:auto;padding:28px;animation:slideUp 0.2s ease;}
   @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
   .modal-title{font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text);margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;}
   .modal-close{cursor:pointer;color:var(--text3);font-size:20px;line-height:1;background:none;border:none;transition:color 0.15s;}
   .modal-close:hover{color:var(--text);}
@@ -626,6 +627,12 @@
     <input class="pin-input" id="login-pin" type="password" maxlength="6" placeholder="·  ·  ·  ·" oninput="clearLoginError()" onkeydown="if(event.key==='Enter')attemptLogin()">
     <div class="pin-hint" id="pin-hint">Enter your PIN to continue</div>
 
+    <div id="login-totp-block" style="display:none;margin-top:14px">
+      <span class="login-label">Authenticator code</span>
+      <input class="pin-input" id="login-totp" type="text" inputmode="numeric" maxlength="6" placeholder="·  ·  ·  ·  ·  ·" oninput="clearLoginError()" onkeydown="if(event.key==='Enter')attemptLogin()" autocomplete="one-time-code">
+      <div class="pin-hint">Enter the 6-digit code from your authenticator app</div>
+    </div>
+
     <div class="login-error" id="login-error">Incorrect PIN. Please try again.</div>
 
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px" onclick="attemptLogin()">
@@ -754,13 +761,18 @@
       <div style="width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0"></div>
       <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green);letter-spacing:.08em">SYNCED</span>
     </div>
-    <div class="user-chip" onclick="showLogoutConfirm()">
-      <div id="nav-user-avatar" class="user-avatar" style="width:28px;height:28px;font-size:11px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;color:#0e0e0f"></div>
-      <div style="flex:1;min-width:0">
-        <div class="user-chip-name" id="nav-user-name">—</div>
-        <div class="user-chip-role" id="nav-user-role">—</div>
+    <div style="display:flex;gap:8px;align-items:stretch">
+      <div class="user-chip" onclick="showLogoutConfirm()" style="flex:1;min-width:0">
+        <div id="nav-user-avatar" class="user-avatar" style="width:28px;height:28px;font-size:11px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;color:#0e0e0f"></div>
+        <div style="flex:1;min-width:0">
+          <div class="user-chip-name" id="nav-user-name">—</div>
+          <div class="user-chip-role" id="nav-user-role">—</div>
+        </div>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
       </div>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+      <button id="nav-refresh-btn" onclick="refreshSession()" title="Refresh session and reload data" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:0 12px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:all .15s" onmouseover="this.style.background='var(--bg4)';this.style.color='var(--text)'" onmouseout="this.style.background='var(--bg3)';this.style.color='var(--text2)'">
+        <svg id="nav-refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.4L3 16"/><path d="M3 21v-5h5"/></svg>
+      </button>
     </div>
   </div>
 </nav>
@@ -1338,12 +1350,66 @@
         </label>
       </div>
     </div>
+    <!-- Two-Factor Auth — only visible when admin editing themselves -->
+    <div class="form-group" id="tm-2fa-group" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px">Two-Factor Authentication</div>
+          <div style="font-size:10px;color:var(--text3);line-height:1.5">Adds a 6-digit code from your authenticator app on top of your PIN. Strongly recommended for admin accounts.</div>
+        </div>
+        <span id="tm-2fa-status" style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;padding:3px 8px;border-radius:4px;white-space:nowrap"></span>
+      </div>
+      <div id="tm-2fa-actions" style="margin-top:10px;display:flex;gap:8px"></div>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
       <div id="tm-delete-wrap" style="display:none;margin-right:auto">
         <button class="btn" style="color:var(--red);border-color:rgba(224,90,90,0.35)" onclick="deleteTeamMember()">Remove Member</button>
       </div>
       <button class="btn" onclick="closeModal('team-modal')">Cancel</button>
       <button class="btn btn-primary" id="tm-save-btn" onclick="saveTeamMember()">Add Member</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOTP SETUP MODAL -->
+<div class="modal-overlay" id="totp-setup-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-title">Set Up Two-Factor Authentication<button class="modal-close" onclick="closeModal('totp-setup-modal')">✕</button></div>
+    <div id="totp-setup-body">
+      <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">
+        Open your authenticator app (Google Authenticator, Authy, 1Password, etc.) and scan the QR code below, or enter the secret manually.
+      </div>
+      <div id="totp-qr-container" style="display:flex;justify-content:center;background:#fff;padding:14px;border-radius:10px;margin-bottom:14px"></div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center;margin-bottom:6px">Manual entry secret:</div>
+      <div id="totp-secret-display" style="font-family:'DM Mono',monospace;font-size:13px;color:var(--text);text-align:center;background:var(--bg3);padding:10px 14px;border-radius:8px;letter-spacing:.06em;word-break:break-all;margin-bottom:18px;user-select:all">—</div>
+      <div class="form-group">
+        <label class="form-label">Verify with a code from your app</label>
+        <input class="form-input" id="totp-verify-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="off">
+      </div>
+      <div id="totp-setup-error" style="color:var(--red);font-size:11px;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn" onclick="closeModal('totp-setup-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmTotpSetup()">Enable Two-Factor</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOTP DISABLE MODAL -->
+<div class="modal-overlay" id="totp-disable-modal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-title">Disable Two-Factor<button class="modal-close" onclick="closeModal('totp-disable-modal')">✕</button></div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px">
+      Enter a current code from your authenticator app to confirm. This will remove two-factor authentication from your account.
+    </div>
+    <div class="form-group">
+      <label class="form-label">Authenticator code</label>
+      <input class="form-input" id="totp-disable-code" type="text" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="off">
+    </div>
+    <div id="totp-disable-error" style="color:var(--red);font-size:11px;margin-bottom:10px;display:none"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('totp-disable-modal')">Cancel</button>
+      <button class="btn btn-primary" style="color:var(--red);border-color:rgba(224,90,90,0.35);background:transparent" onclick="confirmTotpDisable()">Disable</button>
     </div>
   </div>
 </div>
@@ -1688,6 +1754,14 @@ const MONTHS=['January','February','March','April','May','June','July','August',
 function uid(){return Math.random().toString(36).substr(2,9);}
 function copyBuckets(){return DEFAULT_BUCKETS.map(b=>({...b,assignedTo:''}));}
 
+// Tasks in Review status are NOT overdue — they're awaiting client action, not waiting on us.
+// Tasks in Done status are obviously not overdue. Anything else with a past due date IS overdue.
+function isTaskOverdue(t){
+  if(!t || !t.due) return false;
+  if(t.status === 'done' || t.status === 'review') return false;
+  return new Date(t.due+'T23:59:59') < new Date();
+}
+
 // Net revenue = gross revenue minus expenses. All bucket/pay calculations use this.
 function netRev(deal){
   const gross=deal.value||0;
@@ -1791,7 +1865,12 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(API_BASE + '/api' + path, opts);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'API error ' + res.status);
+  if (!res.ok) {
+    const err = new Error(data.error || 'API error ' + res.status);
+    // Preserve any flags the server returned (e.g. totpRequired) so callers can branch on them
+    Object.assign(err, data);
+    throw err;
+  }
   return data;
 }
 
@@ -1866,6 +1945,7 @@ function clearLoginError() {
 
 async function attemptLogin() {
   const pin = document.getElementById('login-pin').value;
+  const totpCode = document.getElementById('login-totp')?.value || '';
   if (!loginSelectedId) {
     document.getElementById('login-error').textContent = 'Please select an account.';
     document.getElementById('login-error').classList.add('show');
@@ -1876,25 +1956,37 @@ async function attemptLogin() {
   if (loginBtn) { loginBtn.textContent = 'Signing in…'; loginBtn.disabled = true; }
 
   try {
-    const { token, member } = await api('POST', '/auth/login', { memberId: loginSelectedId, pin });
+    const payload = { memberId: loginSelectedId, pin };
+    if (totpCode) payload.totpCode = totpCode;
+    const { token, member } = await api('POST', '/auth/login', payload);
     _authToken = token;
     auth.user  = member;
-    auth.role  = member.authRole;  // 'admin' | 'class_a' | 'class_b' | 'va'
+    auth.role  = member.authRole;
     state.isAdmin = (member.authRole === 'admin');
 
-    // Load all data from the server
     await bootstrapState();
-    // Start realtime
     startRealtime();
 
     document.getElementById('login-screen').style.display = 'none';
+    // Reset 2FA UI
+    document.getElementById('login-totp-block').style.display = 'none';
+    if (document.getElementById('login-totp')) document.getElementById('login-totp').value = '';
     updateNavChip();
     renderPage(state.currentPage);
   } catch(e) {
-    document.getElementById('login-error').textContent = e.message === 'Incorrect PIN' ? 'Incorrect PIN. Please try again.' : 'Login failed — ' + e.message;
-    document.getElementById('login-error').classList.add('show');
-    document.getElementById('login-pin').value = '';
-    document.getElementById('login-pin').focus();
+    // 2FA-required signal: server returns totpRequired:true with status 401
+    if (e?.totpRequired || e.message === 'totp_required') {
+      document.getElementById('login-totp-block').style.display = 'block';
+      document.getElementById('login-error').textContent = e?.message || 'Enter your authenticator code to continue.';
+      document.getElementById('login-error').classList.add('show');
+      setTimeout(()=>{document.getElementById('login-totp')?.focus();}, 50);
+    } else {
+      document.getElementById('login-error').textContent = e.message || 'Login failed';
+      document.getElementById('login-error').classList.add('show');
+      document.getElementById('login-pin').value = '';
+      if (document.getElementById('login-totp')) document.getElementById('login-totp').value = '';
+      document.getElementById('login-pin').focus();
+    }
   } finally {
     if (loginBtn) { loginBtn.textContent = 'Sign In'; loginBtn.disabled = false; }
   }
@@ -2099,6 +2191,50 @@ function updateNavChip() {
   if (payNav)  payNav.style.display  = can.viewFinance()  ? '' : 'none';
   if (psNav)   psNav.style.display   = can.viewFinance()  ? '' : 'none';
   if (teamNav) teamNav.style.display = can.manageTeam() || auth.role === 'class_a' || auth.role === 'va' ? '' : 'none';
+}
+
+async function refreshSession() {
+  const btn = document.getElementById('nav-refresh-btn');
+  const icon = document.getElementById('nav-refresh-icon');
+  if (btn) btn.disabled = true;
+  if (icon) icon.style.animation = 'spin 0.8s linear infinite';
+  try {
+    // 1. Try to refresh the JWT first (extends expiry without re-login)
+    if (_authToken) {
+      try {
+        const { token, member } = await api('POST', '/auth/refresh');
+        _authToken = token;
+        if (member) {
+          auth.user = member;
+          auth.role = member.authRole;
+          state.isAdmin = (member.authRole === 'admin');
+        }
+      } catch (refreshErr) {
+        // Token may have already expired — fall through to a hard re-login prompt
+        if (refreshErr.message && /expired|Authentication required|Invalid/i.test(refreshErr.message)) {
+          _authToken = null;
+          auth = { user: null, role: null };
+          state.isAdmin = false;
+          if (_realtimeChannel) { _realtimeChannel.unsubscribe(); _realtimeChannel = null; }
+          document.getElementById('login-screen').style.display = 'flex';
+          initLogin();
+          notify('Session expired — please sign in again');
+          return;
+        }
+        throw refreshErr;
+      }
+    }
+    // 2. Re-fetch all data from the server
+    await bootstrapState();
+    // 3. Re-render the current page so it reflects fresh data
+    renderPage(state.currentPage);
+    notify('Session refreshed ✓');
+  } catch (e) {
+    notify('Refresh failed: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (icon) icon.style.animation = '';
+  }
 }
 
 function showLogoutConfirm() {
@@ -4278,7 +4414,7 @@ function calcProjectRag(proj){
   const now=new Date();
   const done=tasks.filter(t=>t.status==='done').length;
   const pct=Math.round(done/tasks.length*100);
-  const overdue=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
+  const overdue=tasks.filter(t=>isTaskOverdue(t)).length;
   if(overdue>0) return{rag:'red',label:'Overdue',pct};
   // Time-based: how far through the project are we vs completion %
   const start=(proj.startDate||proj.start)?new Date((proj.startDate||proj.start)+'T00:00:00'):null;
@@ -4345,7 +4481,7 @@ function renderProjectDetail(pid){
 
   // List view — matches pay calculator table aesthetic
   const listCols='2fr 130px 80px 90px 70px 70px';
-  const overdueTasks=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now);
+  const overdueTasks=tasks.filter(t=>isTaskOverdue(t));
   const listHtml=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
     <div style="display:grid;grid-template-columns:${listCols};padding:9px 16px;background:var(--bg);border-bottom:2px solid var(--border2)">
       <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
@@ -4358,7 +4494,7 @@ function renderProjectDetail(pid){
     ${tasks.length===0?`<div style="padding:24px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No tasks yet — add tasks or apply a template</div>`:''}
     ${tasks.map(t=>{
       const a=state.team.find(m=>m.id===t.assigneeId);
-      const isOverdue=t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now;
+      const isOverdue=isTaskOverdue(t);
       const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
       const statusColor={'done':'var(--green)','progress':'var(--amber)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
       const locked=isProjectLocked(pid);
@@ -4777,7 +4913,7 @@ function renderHealthDashboard(){
 
   // Overdue tasks across active projects
   const allActiveTasks=state.tasks.filter(t=>activeProjIds.has(t.projectId));
-  const overdueTasks=allActiveTasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now);
+  const overdueTasks=allActiveTasks.filter(t=>isTaskOverdue(t));
 
   // This week's pipeline — tasks due + deliverables publishing in next 7 days
   const tasksThisWeek=allActiveTasks.filter(t=>t.status!=='done'&&t.due&&t.due>=today&&t.due<=in7Days&&t.tag!=='admin');
@@ -4960,7 +5096,7 @@ function renderHealthDashboard(){
       progressLabel=`${tasksDone} / ${tasks.length} tasks`;
     }
     const inReview=projDelivs.filter(d=>d.status==='in_review').length;
-    const overdueCount=tasks.filter(t=>t.status!=='done'&&t.due&&new Date(t.due+'T23:59:59')<now).length;
+    const overdueCount=tasks.filter(t=>isTaskOverdue(t)).length;
     const memberIds=[...new Set(tasks.map(t=>t.assigneeId).filter(Boolean))];
     const rag=calcProjectRag(p);
     // Edit hours budget usage
@@ -5475,7 +5611,7 @@ function _utilLegacyMemberCards(){
       byPeriod[p.id] = { tasks, hours, pct:Math.min(Math.round(hours/p.cap*100),100), over:hours>p.cap };
     });
     const openTasks = state.tasks.filter(t => t.assigneeId===m.id && t.status!=='done');
-    const overdue = openTasks.filter(t => t.due && new Date(t.due+'T23:59:59')<now);
+    const overdue = openTasks.filter(t => isTaskOverdue(t));
     return { ...m, byPeriod, openTasks, overdue };
   });
 
@@ -5536,7 +5672,7 @@ function _utilLegacyMemberCards(){
             </div>
             ${m.openTasks.slice(0,8).map(t=>{
               const proj=state.projects.find(p=>p.id===t.projectId);
-              const isOverdue=t.due&&new Date(t.due+'T23:59:59')<now;
+              const isOverdue=isTaskOverdue(t);
               const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
               return`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:8px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
                 <div style="display:flex;align-items:center;gap:7px;min-width:0">
@@ -5722,7 +5858,7 @@ function _renderWorkloadInto(el){
       byPeriod[p.id]={tasks,hours,pct:Math.min(Math.round(hours/p.cap*100),100),over:hours>p.cap};
     });
     const openTasks=state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done');
-    const overdue=openTasks.filter(t=>t.due&&new Date(t.due+'T23:59:59')<now);
+    const overdue=openTasks.filter(t=>isTaskOverdue(t));
     return{...m,byPeriod,openTasks,overdue};
   });
 
@@ -5791,7 +5927,7 @@ function _renderWorkloadInto(el){
             </div>
             ${m.openTasks.slice(0,8).map(t=>{
               const proj=state.projects.find(p=>p.id===t.projectId);
-              const isOverdue=t.due&&new Date(t.due+'T23:59:59')<now;
+              const isOverdue=isTaskOverdue(t);
               const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
               return`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:8px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
                 <div style="display:flex;align-items:center;gap:7px">
@@ -7815,7 +7951,7 @@ function renderTaskCard(t){
   const ac=a?a.color:'#555';
   const proj=state.projects.find(p=>p.id===t.projectId);
   const ds=t.due?formatDue(t.due):null;
-  const dc=ds?getDueClass(t.due):'';
+  const dc=ds?getDueClass(t):'';
   const h=t.estHours||0;
   const pay=calcTaskPay(t);
   const locked=isProjectLocked(t.projectId);
@@ -7960,7 +8096,7 @@ function renderList(tasks){
         ?`<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:32px">No tasks</td></tr>`
         :tasks.map(t=>{
           const a=state.team.find(m=>m.id===t.assigneeId);
-          const dc=t.due?getDueClass(t.due):'';
+          const dc=t.due?getDueClass(t):'';
           const pay=calcTaskPay(t);
           const locked=isProjectLocked(t.projectId);
           const rowId='lr-'+t.id;
@@ -9004,7 +9140,115 @@ function openTeamModal(editId){
   const saveBtn=document.getElementById('tm-save-btn');
   if(saveBtn) saveBtn.textContent=m?'Save Changes':'Add Member';
   document.getElementById('team-modal').dataset.editId=editId||'';
+  // Two-Factor Auth section — only when editing yourself
+  _renderTeam2FASection(m);
   document.getElementById('team-modal').classList.add('open');
+}
+
+// Render the 2FA section in the team-edit modal — only visible when admin is editing themselves
+function _renderTeam2FASection(member){
+  const wrap = document.getElementById('tm-2fa-group');
+  const statusEl = document.getElementById('tm-2fa-status');
+  const actionsEl = document.getElementById('tm-2fa-actions');
+  if (!wrap || !member || !auth.user || member.id !== auth.user.id) {
+    if (wrap) wrap.style.display = 'none';
+    return;
+  }
+  // Only admins can use 2FA in this build
+  if (member.authRole !== 'admin') {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+  // We rely on auth.user.totpEnabled which the API returns at login + refresh
+  const enabled = !!auth.user.totpEnabled;
+  if (enabled) {
+    statusEl.textContent = '✓ ENABLED';
+    statusEl.style.background = 'rgba(76,175,122,0.16)';
+    statusEl.style.color = 'var(--green)';
+    actionsEl.innerHTML = `<button class="btn btn-sm" onclick="openTotpDisableModal()" style="color:var(--red);border-color:rgba(224,90,90,0.35)">Disable 2FA</button>`;
+  } else {
+    statusEl.textContent = 'NOT ENABLED';
+    statusEl.style.background = 'rgba(212,166,90,0.14)';
+    statusEl.style.color = 'var(--amber)';
+    actionsEl.innerHTML = `<button class="btn btn-sm btn-primary" onclick="openTotpSetupModal()">Enable 2FA</button>`;
+  }
+}
+
+// ── TOTP setup flow ──
+async function openTotpSetupModal(){
+  try {
+    const { secret, otpauthUri } = await api('POST', '/auth/totp/setup');
+    document.getElementById('totp-secret-display').textContent = secret;
+    document.getElementById('totp-verify-code').value = '';
+    document.getElementById('totp-setup-error').style.display = 'none';
+    // Render QR via a free public QR API (loaded as image, no data leaves the device for the secret since it's just rendered)
+    // Fallback: we use the api.qrserver.com service. If it's blocked, the manual secret is still shown.
+    const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(otpauthUri);
+    document.getElementById('totp-qr-container').innerHTML = `<img src="${qrUrl}" alt="QR code" style="display:block;width:200px;height:200px" onerror="this.replaceWith(document.createTextNode('QR rendering failed — use manual entry below'))">`;
+    document.getElementById('totp-setup-modal').classList.add('open');
+  } catch (e) {
+    notify('Setup failed: ' + e.message);
+  }
+}
+
+async function confirmTotpSetup(){
+  const code = document.getElementById('totp-verify-code').value.trim();
+  const errEl = document.getElementById('totp-setup-error');
+  errEl.style.display = 'none';
+  if (!/^\d{6}$/.test(code)) {
+    errEl.textContent = 'Enter a 6-digit code from your authenticator app.';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    await api('POST', '/auth/totp/enable', { code });
+    auth.user.totpEnabled = true;
+    closeModal('totp-setup-modal');
+    notify('Two-factor authentication enabled ✓');
+    // Re-render the section if the team modal is still open
+    const modal = document.getElementById('team-modal');
+    if (modal && modal.classList.contains('open')) {
+      const editId = modal.dataset.editId;
+      const m = editId ? state.team.find(x=>x.id===editId) : null;
+      _renderTeam2FASection(m);
+    }
+  } catch (e) {
+    errEl.textContent = e.message || 'Verification failed';
+    errEl.style.display = 'block';
+  }
+}
+
+function openTotpDisableModal(){
+  document.getElementById('totp-disable-code').value = '';
+  document.getElementById('totp-disable-error').style.display = 'none';
+  document.getElementById('totp-disable-modal').classList.add('open');
+}
+
+async function confirmTotpDisable(){
+  const code = document.getElementById('totp-disable-code').value.trim();
+  const errEl = document.getElementById('totp-disable-error');
+  errEl.style.display = 'none';
+  if (!/^\d{6}$/.test(code)) {
+    errEl.textContent = 'Enter a 6-digit code from your authenticator app.';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    await api('POST', '/auth/totp/disable', { code });
+    auth.user.totpEnabled = false;
+    closeModal('totp-disable-modal');
+    notify('Two-factor authentication disabled');
+    const modal = document.getElementById('team-modal');
+    if (modal && modal.classList.contains('open')) {
+      const editId = modal.dataset.editId;
+      const m = editId ? state.team.find(x=>x.id===editId) : null;
+      _renderTeam2FASection(m);
+    }
+  } catch (e) {
+    errEl.textContent = e.message || 'Disable failed';
+    errEl.style.display = 'block';
+  }
 }
 
 
@@ -9548,7 +9792,19 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 function fmt(v){return'$'+Math.round(v).toLocaleString('en-US');}
 function statusLabel(s){return{todo:'To Do',progress:'In Progress',review:'In Review',done:'Done'}[s]||s;}
 function formatDue(ds){const d=new Date(ds+'T12:00:00'),now=new Date();const diff=Math.round((d-now)/86400000);if(diff<-1)return`${Math.abs(diff)}d ago`;if(diff===-1)return'Yesterday';if(diff===0)return'Today';if(diff===1)return'Tomorrow';if(diff<7)return`${diff}d`;return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});}
-function getDueClass(ds){const diff=Math.round((new Date(ds+'T12:00:00')-new Date())/86400000);if(diff<0)return'overdue';if(diff<=3)return'soon';return'';}
+function getDueClass(taskOrDate){
+  // Accept either a task object (preferred) or a raw date string (legacy)
+  const t = (typeof taskOrDate === 'object') ? taskOrDate : null;
+  const ds = t ? t.due : taskOrDate;
+  if(!ds) return '';
+  // Tasks in done or review status never get an overdue color, even if past due —
+  // review means we've delivered our part and are awaiting client action.
+  if(t && (t.status==='done' || t.status==='review')) return '';
+  const diff = Math.round((new Date(ds+'T12:00:00') - new Date()) / 86400000);
+  if(diff<0) return 'overdue';
+  if(diff<=3) return 'soon';
+  return '';
+}
 function notify(msg){const el=document.getElementById('notif');el.textContent=msg;el.style.display='block';setTimeout(()=>el.style.display='none',2500);}
 
 document.querySelectorAll('.modal-overlay').forEach(el=>{el.addEventListener('click',function(e){if(e.target===this)this.classList.remove('open');});});
