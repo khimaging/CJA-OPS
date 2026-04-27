@@ -5170,19 +5170,16 @@ function _utilWindow(){
   return { start: today, end: today, label: 'Today', days: 1 };
 }
 
-// Pull the right date field off a task based on the current lens.
-// 'completed' → completedAt (when work was actually delivered) — falls back to nothing if not delivered.
-// 'due' → due_date (when work was scheduled) — covers planning lens.
-function _utilTaskDate(task, lens){
-  if (lens === 'due') return task.due || null;
-  // completed lens: only return a date if the task was actually completed
-  return task.completedAt ? task.completedAt.split('T')[0] : null;
+// Pull the due date off a task. Due dates are kept current by the team to reflect
+// when work is actually scheduled, so a single date field is sufficient — no need
+// for separate Delivered/Scheduled lenses.
+function _utilTaskDate(task){
+  return task.due || null;
 }
 
-// Get tasks falling in the window for the chosen lens, after applying member/client filters
+// Get tasks falling in the window after applying member/client filters
 function _utilFilteredTasks(){
   const win = _utilWindow();
-  const lens = state.utilDateLens || 'completed';
   const memberFilter = state.utilMemberFilter || '';
   const clientFilter = state.utilClientFilter || '';
 
@@ -5197,7 +5194,7 @@ function _utilFilteredTasks(){
   });
 
   return (state.tasks||[]).filter(t => {
-    const date = _utilTaskDate(t, lens);
+    const date = _utilTaskDate(t);
     if (!date) return false;
     if (date < win.start || date > win.end) return false;
     if (memberFilter && t.assigneeId !== memberFilter) return false;
@@ -5225,13 +5222,11 @@ function _utilClientLookup(){
 // ── Main render ──────────────────────────────────────────────
 function _renderTeamUtilization(el){
   const win = _utilWindow();
-  const lens = state.utilDateLens || 'completed';
   const tasks = _utilFilteredTasks();
   const active = (state.team||[]).filter(m => m.active !== false);
   const totalHours = tasks.reduce((s,t) => s + (t.estHours||0), 0);
 
   // Capacity = HOURS_PER_WEEK × weeks × member count
-  // weeks = days / 7 (fractional, but accurate)
   const capPerMember = HOURS_PER_WEEK * (win.days / 7);
   const capTotal = capPerMember * active.length;
   const utilPct = capTotal > 0 ? Math.round(totalHours / capTotal * 100) : 0;
@@ -5241,6 +5236,13 @@ function _renderTeamUtilization(el){
   tasks.forEach(t => {
     const k = t.tag || 'untagged';
     byTag[k] = (byTag[k]||0) + (t.estHours||0);
+  });
+
+  // Status breakdown (what proportion of the window's work has progressed how far)
+  const byStatus = { todo:0, progress:0, review:0, done:0 };
+  tasks.forEach(t => {
+    const s = t.status || 'todo';
+    byStatus[s] = (byStatus[s]||0) + (t.estHours||0);
   });
 
   // Per-member breakdown
@@ -5276,7 +5278,7 @@ function _renderTeamUtilization(el){
   // Build UI
   el.innerHTML = `
     ${_utilFilterBar(win)}
-    ${_utilTopMetrics(totalHours, capTotal, utilPct, byTag, win)}
+    ${_utilTopMetrics(totalHours, capTotal, utilPct, byTag, byStatus, win)}
     ${_utilMemberSection(byMember, capPerMember, win)}
     ${_utilClientSection(clientList, totalHours, win)}
   `;
@@ -5284,7 +5286,6 @@ function _renderTeamUtilization(el){
 
 // ── Filter bar ──
 function _utilFilterBar(win){
-  const lens = state.utilDateLens || 'completed';
   const memberFilter = state.utilMemberFilter || '';
   const clientFilter = state.utilClientFilter || '';
   const window_ = state.utilWindow || 'currentMonth';
@@ -5319,16 +5320,8 @@ function _utilFilterBar(win){
         <span style="font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${win.label}</span>
       </div>
 
-      <!-- Lens toggle -->
-      <div style="margin-left:auto;display:flex;gap:2px;background:var(--bg3);padding:3px;border-radius:8px;border:1px solid var(--border)">
-        ${[
-          ['completed','Delivered'],
-          ['due','Scheduled'],
-        ].map(([v,l])=>`<button onclick="state.utilDateLens='${v}';renderStandaloneWorkload()" style="background:${lens===v?'var(--bg4)':'transparent'};border:none;color:${lens===v?'var(--text)':'var(--text3)'};padding:6px 12px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;border-radius:6px" title="${v==='completed'?'Hours from tasks completed in window (review/done)':'Hours from tasks scheduled in window (by due date)'}">${l}</button>`).join('')}
-      </div>
-
       <!-- Member filter -->
-      <select onchange="state.utilMemberFilter=this.value;renderStandaloneWorkload()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:140px">
+      <select onchange="state.utilMemberFilter=this.value;renderStandaloneWorkload()" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:140px">
         ${memberOpts}
       </select>
 
@@ -5338,19 +5331,27 @@ function _utilFilterBar(win){
       </select>
     </div>
     <div style="margin-top:10px;font-size:11px;color:var(--text3);line-height:1.5">
-      <strong style="color:var(--text2)">${lens==='completed'?'Delivered lens':'Scheduled lens'}:</strong>
-      ${lens==='completed'?'Hours from tasks completed (moved to Review or Done) within this window. Reflects what was actually delivered.':'Hours from tasks with due dates in this window. Reflects what was planned to happen.'}
+      Tasks are counted toward the window where their <strong style="color:var(--text2)">due date</strong> falls.
+      Move a task's due date to reflect when work is actually scheduled and the dashboard updates accordingly.
     </div>
   </div>`;
 }
 
 // ── Top KPI metrics ──
-function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, win){
+function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, byStatus, win){
   const utilColor = utilPct >= 100 ? 'var(--red)' : utilPct >= 85 ? 'var(--amber)' : utilPct >= 50 ? 'var(--green)' : 'var(--text2)';
   const tagColor = { production:'var(--blue)', 'post-production':'var(--purple)', admin:'var(--text3)', untagged:'var(--text3)' };
   const tagOrder = ['production','post-production','admin','untagged'];
+  const statusColor = { todo:'var(--text3)', progress:'var(--amber)', review:'var(--blue)', done:'var(--green)' };
+  const statusLabel = { todo:'To Do', progress:'In Progress', review:'In Review', done:'Done' };
+  const statusOrder = ['done','review','progress','todo'];
 
-  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:20px">
+  // Of total hours in window, how much is already done?
+  const doneHours = byStatus.done || 0;
+  const reviewHours = byStatus.review || 0;
+  const deliveredPct = totalHours > 0 ? Math.round((doneHours + reviewHours) / totalHours * 100) : 0;
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:20px">
     <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Total Hours</div>
       <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${totalHours.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500;margin-left:4px">h</span></div>
@@ -5375,6 +5376,24 @@ function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, win){
           </div>
           <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
             <div style="height:100%;width:${pct}%;background:${tagColor[k]};border-radius:2px"></div>
+          </div>
+        </div>`;
+      }).join(''):'<div style="color:var(--text3);font-size:11px;font-style:italic">No tasks in window</div>'}
+    </div>
+    <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Status</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green)">${deliveredPct}% delivered</div>
+      </div>
+      ${totalHours>0?statusOrder.filter(k=>byStatus[k]>0).map(k=>{
+        const pct = Math.round(byStatus[k]/totalHours*100);
+        return `<div style="margin-bottom:6px">
+          <div style="display:flex;justify-content:space-between;font-size:10px;font-family:'DM Mono',monospace;margin-bottom:2px">
+            <span style="color:var(--text2)">${statusLabel[k]}</span>
+            <span style="color:var(--text3)">${byStatus[k].toFixed(1)}h · ${pct}%</span>
+          </div>
+          <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${statusColor[k]};border-radius:2px"></div>
           </div>
         </div>`;
       }).join(''):'<div style="color:var(--text3);font-size:11px;font-style:italic">No tasks in window</div>'}
