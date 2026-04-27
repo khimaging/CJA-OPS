@@ -5,6 +5,7 @@ const bcrypt    = require('bcryptjs');
 const jwt       = require('jsonwebtoken');
 const supabase  = require('../lib/supabase');
 const { signToken, requireAuth, requireAdmin, requireCanDelete } = require('../lib/auth');
+const totpLib = require('../lib/totp');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -120,36 +121,205 @@ app.get('/api/team', async (req, res) => {
 });
 
 // Public — PIN login
+// ─── PER-USER LOGIN PROTECTION ────────────────────────────────────────────────
+const PIN_MAX_FAILURES = 5;
+const PIN_LOCKOUT_MS   = 15 * 60 * 1000; // 15 minutes
+
+async function _registerPinFailure(memberId) {
+  const { data } = await supabase
+    .from('team_members').select('pin_failed_attempts').eq('id', memberId).single();
+  const next = (data?.pin_failed_attempts || 0) + 1;
+  const updates = { pin_failed_attempts: next };
+  if (next >= PIN_MAX_FAILURES) {
+    updates.pin_locked_until = new Date(Date.now() + PIN_LOCKOUT_MS).toISOString();
+  }
+  await supabase.from('team_members').update(updates).eq('id', memberId);
+  return { failures: next, locked: next >= PIN_MAX_FAILURES };
+}
+async function _resetPinFailures(memberId) {
+  await supabase.from('team_members').update({
+    pin_failed_attempts: 0, pin_locked_until: null,
+  }).eq('id', memberId);
+}
+
 app.post('/api/auth/login', loginRateLimit, async (req, res) => {
-  const { memberId, pin } = req.body || {};
+  const { memberId, pin, totpCode } = req.body || {};
   if (!memberId || !pin) return res.status(400).json({ error: 'memberId and pin required' });
 
   try {
     const { data: member, error } = await supabase
       .from('team_members')
-      .select('id, name, auth_role, color, active, pin_hash')
+      .select('id, name, auth_role, color, active, pin_hash, pin_failed_attempts, pin_locked_until, totp_enabled, totp_secret')
       .eq('id', memberId)
       .single();
 
     if (error || !member) return res.status(401).json({ error: 'Member not found' });
     if (!member.active)   return res.status(403).json({ error: 'Account is inactive' });
 
-    const valid = await bcrypt.compare(String(pin), member.pin_hash);
-    if (!valid) return res.status(401).json({ error: 'Incorrect PIN' });
+    // Per-user lockout
+    if (member.pin_locked_until && new Date(member.pin_locked_until) > new Date()) {
+      const minsLeft = Math.ceil((new Date(member.pin_locked_until) - new Date()) / 60000);
+      return res.status(429).json({
+        error: `Account locked. Try again in ${minsLeft} minute${minsLeft===1?'':'s'}.`,
+        lockedUntil: member.pin_locked_until,
+      });
+    }
+
+    const pinValid = await bcrypt.compare(String(pin), member.pin_hash);
+    if (!pinValid) {
+      const result = await _registerPinFailure(member.id);
+      if (result.locked) {
+        return res.status(429).json({
+          error: `Too many failed attempts. Account locked for ${PIN_LOCKOUT_MS/60000} minutes.`,
+        });
+      }
+      const left = PIN_MAX_FAILURES - result.failures;
+      return res.status(401).json({
+        error: `Incorrect PIN. ${left} attempt${left===1?'':'s'} remaining.`,
+      });
+    }
+
+    // PIN OK. If TOTP is enabled, verify the second factor.
+    if (member.totp_enabled) {
+      if (!totpCode) {
+        return res.status(401).json({
+          error: 'totp_required',
+          totpRequired: true,
+          message: 'Enter your 6-digit authenticator code',
+        });
+      }
+      const totpOk = totpLib.verifyTotp(member.totp_secret, totpCode);
+      if (!totpOk) {
+        // Treat bad TOTP as a failed attempt too
+        const result = await _registerPinFailure(member.id);
+        if (result.locked) {
+          return res.status(429).json({
+            error: `Too many failed attempts. Account locked for ${PIN_LOCKOUT_MS/60000} minutes.`,
+          });
+        }
+        const left = PIN_MAX_FAILURES - result.failures;
+        return res.status(401).json({
+          error: `Incorrect authenticator code. ${left} attempt${left===1?'':'s'} remaining.`,
+          totpRequired: true,
+        });
+      }
+      // Update last verified timestamp (best effort)
+      await supabase.from('team_members').update({ totp_verified_at: new Date().toISOString() }).eq('id', member.id);
+    }
+
+    // Success — clear failure counters
+    await _resetPinFailures(member.id);
 
     const token = signToken(member);
     res.json({
       token,
       member: {
-        id:       member.id,
-        name:     member.name,
-        authRole: member.auth_role,
-        color:    member.color,
+        id:           member.id,
+        name:         member.name,
+        authRole:     member.auth_role,
+        color:        member.color,
+        totpEnabled:  !!member.totp_enabled,
       },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── TOKEN REFRESH ────────────────────────────────────────────────────────────
+// Lets a user with a valid (non-expired) token request a fresh one with reset
+// expiry, without re-entering their PIN. If the token is already expired, this
+// fails — the user must log in again. Drives the in-app "refresh session" button.
+app.post('/api/auth/refresh', requireAuth, async (req, res) => {
+  try {
+    // Re-check member is still active and reload role from DB (in case it changed)
+    const { data: member, error } = await supabase
+      .from('team_members')
+      .select('id, name, auth_role, color, active, totp_enabled')
+      .eq('id', req.user.sub)
+      .single();
+    if (error || !member) return res.status(401).json({ error: 'Member not found' });
+    if (!member.active)   return res.status(403).json({ error: 'Account is inactive' });
+    const token = signToken(member);
+    res.json({
+      token,
+      member: {
+        id: member.id, name: member.name,
+        authRole: member.auth_role, color: member.color,
+        totpEnabled: !!member.totp_enabled,
+      },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── TOTP SETUP ───────────────────────────────────────────────────────────────
+// Generates a fresh secret and provisioning URI. Does NOT enable TOTP yet —
+// the user must verify a code first via /enable.
+app.post('/api/auth/totp/setup', requireAuth, async (req, res) => {
+  try {
+    const { data: member, error } = await supabase
+      .from('team_members')
+      .select('id, name, auth_role, totp_enabled')
+      .eq('id', req.user.sub).single();
+    if (error || !member) return res.status(404).json({ error: 'Member not found' });
+    if (member.auth_role !== 'admin') {
+      return res.status(403).json({ error: 'Two-factor authentication is only available for admin role accounts' });
+    }
+    if (member.totp_enabled) {
+      return res.status(409).json({ error: 'Two-factor is already enabled. Disable first to re-set up.' });
+    }
+    const secret = totpLib.generateSecret();
+    // Store secret immediately but keep totp_enabled = false until /enable verifies
+    await supabase.from('team_members').update({ totp_secret: secret, totp_enabled: false }).eq('id', member.id);
+    const uri = totpLib.provisioningUri(secret, member.name, 'CJA-OPS');
+    res.json({ secret, otpauthUri: uri });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Confirm setup: user enters the code from their authenticator. If valid, flip enabled to true.
+app.post('/api/auth/totp/enable', requireAuth, async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const { data: member, error } = await supabase
+      .from('team_members')
+      .select('id, totp_secret, totp_enabled, auth_role')
+      .eq('id', req.user.sub).single();
+    if (error || !member) return res.status(404).json({ error: 'Member not found' });
+    if (member.auth_role !== 'admin') {
+      return res.status(403).json({ error: 'Two-factor authentication is only available for admin role accounts' });
+    }
+    if (!member.totp_secret) return res.status(400).json({ error: 'Run setup first' });
+    if (!totpLib.verifyTotp(member.totp_secret, code)) {
+      return res.status(401).json({ error: 'Code did not match. Try again.' });
+    }
+    await supabase.from('team_members').update({
+      totp_enabled: true,
+      totp_verified_at: new Date().toISOString(),
+    }).eq('id', member.id);
+    res.json({ ok: true, totpEnabled: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Disable: requires a current code as proof of possession. Cannot be done without it.
+app.post('/api/auth/totp/disable', requireAuth, async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const { data: member, error } = await supabase
+      .from('team_members')
+      .select('id, totp_secret, totp_enabled')
+      .eq('id', req.user.sub).single();
+    if (error || !member) return res.status(404).json({ error: 'Member not found' });
+    if (!member.totp_enabled) return res.status(400).json({ error: 'Two-factor is not currently enabled' });
+    if (!totpLib.verifyTotp(member.totp_secret, code)) {
+      return res.status(401).json({ error: 'Code did not match. Try again.' });
+    }
+    await supabase.from('team_members').update({
+      totp_enabled: false, totp_secret: null, totp_verified_at: null,
+    }).eq('id', member.id);
+    res.json({ ok: true, totpEnabled: false });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── BOOTSTRAP — single call to hydrate all state after login ─────────────────
