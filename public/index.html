@@ -5281,6 +5281,7 @@ function _renderTeamUtilization(el){
     ${_utilTopMetrics(totalHours, capTotal, utilPct, byTag, byStatus, win)}
     ${_utilMemberSection(byMember, capPerMember, win)}
     ${_utilClientSection(clientList, totalHours, win)}
+    ${_utilLegacyMemberCards()}
   `;
 }
 
@@ -5453,47 +5454,170 @@ function _utilMemberSection(byMember, capPerMember, win){
   </div>`;
 }
 
-// ── Client distribution section ──
+// ── Legacy detail cards section (per-member breakdown with donut + open task list) ──
+// Note: This section is intentionally NOT filtered by the dashboard's window/member/client
+// filters above — it shows live, current-state workload for each member with the original
+// today/7d/30d caps. The sections above are window-bound; this is "right now."
+function _utilLegacyMemberCards(){
+  const now = new Date();
+  const active = (state.team||[]).filter(m => m.active !== false);
+  const periods = [
+    {id:'day',  label:'Today',   cap:WL_CAPS.day},
+    {id:'week', label:'7 Days',  cap:WL_CAPS.week},
+    {id:'month',label:'30 Days', cap:WL_CAPS.month},
+  ];
+
+  const memberStats = active.map(m => {
+    const byPeriod = {};
+    periods.forEach(p => {
+      const tasks = _calcMemberHours(m.id, p.id);
+      const hours = tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      byPeriod[p.id] = { tasks, hours, pct:Math.min(Math.round(hours/p.cap*100),100), over:hours>p.cap };
+    });
+    const openTasks = state.tasks.filter(t => t.assigneeId===m.id && t.status!=='done');
+    const overdue = openTasks.filter(t => t.due && new Date(t.due+'T23:59:59')<now);
+    return { ...m, byPeriod, openTasks, overdue };
+  });
+
+  return `<div style="margin-top:32px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Member Detail · Live Workload</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">today / 7d / 30d caps · independent of filters above</div>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.5">
+      Real-time view of each team member's open task load against their daily, weekly, and monthly capacity.
+      Useful for day-to-day workload checks separate from the historical analytics above.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+    ${memberStats.map(m => {
+      const periodBars = periods.map(p => {
+        const {hours,pct,over} = m.byPeriod[p.id];
+        const c = over ? 'var(--red)' : hours>p.cap*0.8 ? 'var(--amber)' : 'var(--green)';
+        return `<div style="flex:1;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+            <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--text3)">${p.label}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:${c};flex-shrink:0;margin-left:6px">${hours}<span style="color:var(--text3);font-size:8px">/${p.cap}h</span></span>
+          </div>
+          <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${c};border-radius:3px"></div>
+          </div>
+          ${over?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--red);margin-top:2px">+${hours-p.cap}h over</div>`:''}
+        </div>`;
+      }).join('');
+
+      return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;background:var(--bg);border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;min-width:0;flex:1">
+            <div style="flex-shrink:0">${_buildMemberDonut(m,m,160)}</div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <div class="user-avatar" style="background:${m.color};width:28px;height:28px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+                <div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text)">${m.name}</div>
+                  <div style="font-size:10px;color:var(--text3)">${m.role||''}</div>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--text3);margin-bottom:12px">${m.openTasks.length} open task${m.openTasks.length===1?'':'s'}${m.overdue.length?` · <span style="color:var(--red)">${m.overdue.length} overdue</span>`:''}</div>
+              <div style="display:flex;gap:16px">${periodBars}</div>
+              <div style="display:flex;gap:12px;margin-top:10px">
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Rings (outer→inner):</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">30d · 7d · 1d</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        ${m.openTasks.length===0
+          ?`<div style="padding:12px 20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">No open tasks</div>`
+          :`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:7px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Task</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Project</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Due</span>
+              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Hrs</span>
+            </div>
+            ${m.openTasks.slice(0,8).map(t=>{
+              const proj=state.projects.find(p=>p.id===t.projectId);
+              const isOverdue=t.due&&new Date(t.due+'T23:59:59')<now;
+              const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+              return`<div style="display:grid;grid-template-columns:1fr 120px 80px 70px;padding:8px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
+                <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                  <span class="task-tag priority-${t.priority}">${t.priority}</span>
+                  <span style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.title}</span>
+                </div>
+                <div style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${proj?.name||'—'}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${t.estHours||0}h</div>
+              </div>`;
+            }).join('')}
+            ${m.openTasks.length>8?`<div style="padding:8px 20px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">+ ${m.openTasks.length-8} more tasks</div>`:''}`
+        }
+      </div>`;
+    }).join('')}
+    </div>
+  </div>`;
+}
 function _utilClientSection(clientList, totalHours, win){
   if (!clientList.length) return '';
 
-  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+  // For each client, compute hours by member based on tasks in window
+  const tasks = _utilFilteredTasks();
+  const projClient = {};
+  (state.projects||[]).forEach(p => {
+    const deal = state.deals.find(d=>d.id===p.dealId);
+    if (deal && deal.clientId) projClient[p.id] = deal.clientId;
+  });
+
+  // For each client, sum hours per member
+  const clientMemberHours = {};
+  tasks.forEach(t => {
+    const cid = projClient[t.projectId] || '__internal__';
+    const mid = t.assigneeId || '__unassigned__';
+    if (!clientMemberHours[cid]) clientMemberHours[cid] = {};
+    clientMemberHours[cid][mid] = (clientMemberHours[cid][mid]||0) + (t.estHours||0);
+  });
+
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
     <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
       <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Client Distribution</div>
-      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${clientList.length} client${clientList.length===1?'':'s'}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${clientList.length} client${clientList.length===1?'':'s'} · share by team member</div>
     </div>
-    <table class="list-table" style="width:100%;font-size:12px">
-      <thead><tr>
-        <th>Client</th>
-        <th style="text-align:right">Hours</th>
-        <th style="text-align:right">Share</th>
-        <th>Distribution</th>
-        <th>Team</th>
-        <th style="text-align:right">Tasks</th>
-      </tr></thead>
-      <tbody>
-        ${clientList.map(c => {
-          const share = totalHours>0 ? c.hours/totalHours*100 : 0;
-          const memberAvatars = [...c.members].map(mid => {
-            const m = state.team.find(x => x.id === mid);
-            return m ? `<div class="user-avatar" style="background:${m.color};width:22px;height:22px;font-size:8px;border:1px solid var(--bg2)" title="${m.name}">${m.name.split(' ').map(n=>n[0]).join('')}</div>` : '';
-          }).join('');
-          const isInternal = c.id === '__internal__';
-          return `<tr>
-            <td><span style="color:${isInternal?'var(--text3)':'var(--text)'};font-weight:${isInternal?400:500};${isInternal?'font-style:italic':''}">${c.name}</span></td>
-            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text);font-weight:600">${c.hours.toFixed(1)}h</td>
-            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text2)">${share.toFixed(1)}%</td>
-            <td style="width:30%">
-              <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${share}%;background:linear-gradient(90deg,var(--blue),var(--purple));border-radius:3px"></div>
-              </div>
-            </td>
-            <td><div style="display:flex;gap:-4px">${memberAvatars}</div></td>
-            <td style="text-align:right;font-family:'DM Mono',monospace;color:var(--text3)">${c.taskCount}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      ${clientList.map(c => {
+        const isInternal = c.id === '__internal__';
+        const memberHours = clientMemberHours[c.id] || {};
+        const memberRows = Object.entries(memberHours)
+          .map(([mid, hrs]) => {
+            const member = mid==='__unassigned__' ? null : state.team.find(m=>m.id===mid);
+            return { mid, member, hrs, name: member?.name||'Unassigned', color: member?.color||'var(--text3)' };
+          })
+          .sort((a,b)=>b.hrs-a.hrs);
+        const segments = memberRows.map(r=>{
+          const pct = c.hours>0 ? r.hrs/c.hours*100 : 0;
+          return `<div style="height:100%;width:${pct}%;background:${r.color};border-right:1px solid rgba(0,0,0,0.3)" title="${r.name}: ${r.hrs.toFixed(1)}h (${pct.toFixed(1)}%)"></div>`;
+        }).join('');
+        const memberLegend = memberRows.map(r=>{
+          const pct = c.hours>0 ? Math.round(r.hrs/c.hours*100) : 0;
+          const initials = r.member ? r.member.name.split(' ').map(n=>n[0]).join('') : '?';
+          return `<div style="display:flex;align-items:center;gap:6px">
+            <div class="user-avatar" style="background:${r.color};width:18px;height:18px;font-size:7px;flex-shrink:0">${initials}</div>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text2);white-space:nowrap">${r.name.split(' ')[0]}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap">${r.hrs.toFixed(1)}h · ${pct}%</span>
+          </div>`;
+        }).join('');
+        return `<div style="border-top:1px solid var(--border);padding-top:14px">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;gap:10px">
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;color:${isInternal?'var(--text3)':'var(--text)'};${isInternal?'font-style:italic':''};letter-spacing:-0.015em">${c.name}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap">
+              ${c.hours.toFixed(1)}h
+              <span style="color:var(--text3);font-weight:400"> · ${totalHours>0?Math.round(c.hours/totalHours*100):0}% of team · ${c.taskCount} task${c.taskCount===1?'':'s'}</span>
+            </span>
+          </div>
+          <div style="display:flex;height:10px;background:var(--bg4);border-radius:5px;overflow:hidden;margin-bottom:8px">
+            ${segments}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:14px">${memberLegend}</div>
+        </div>`;
+      }).join('')}
+    </div>
   </div>`;
 }
 
