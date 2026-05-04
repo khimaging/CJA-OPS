@@ -2166,6 +2166,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
         due: t.due_date, publishDate: t.publish_date, projectId: t.project_id,
         tag: t.tag,
         publishable: !!t.publishable,
+        estHours: parseFloat(t.est_hours) || 0,
         updatedAt: t.updated_at || t.created_at || null,
       })),
     });
