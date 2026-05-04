@@ -348,12 +348,15 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       if (r.error) throw r.error;
     }
 
-    // Reshape payStatus into the key-value map the frontend expects
-    // Uses pay_key column (new) or falls back to project_id_member_id (legacy rows)
+    // Reshape payStatus into the key-value map the frontend expects.
+    // Profit-share rows (pay_key contains '_ps_') also expose their locked ps_pct_snapshot
+    // so the frontend can display the rate that applied at payment.
     const payStatus = {};
+    const payStatusSnapshots = {};
     (payStatusRes.data || []).forEach(r => {
       const k = r.pay_key || `${r.project_id}_${r.member_id}`;
       payStatus[k] = r.paid;
+      if (r.ps_pct_snapshot != null) payStatusSnapshots[k] = r.ps_pct_snapshot;
     });
 
     // Reshape profitSharePaidStatus — include snapshot data for paid quarters
@@ -373,6 +376,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       tasks:                tasksRes.data.map(mapTask),
       expenses:             expensesRes.data.map(mapExpense),
       payStatus,
+      payStatusSnapshots,
       profitSharePaidStatus,
       payLog:               payLogRes.data || [],
       clients:              clientsRes.data.map(mapClient),
@@ -415,15 +419,13 @@ app.get('/api/pay-status', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('pay_status').select('*');
   if (error) return res.status(500).json({ error: error.message });
   const out = {};
-  // Support both old schema (project_id + member_id) and new schema (pay_key)
+  const snapshots = {};
   data.forEach(r => {
-    if (r.pay_key) {
-      out[r.pay_key] = r.paid;
-    } else {
-      out[`${r.project_id}_${r.member_id}`] = r.paid;
-    }
+    const k = r.pay_key || `${r.project_id}_${r.member_id}`;
+    out[k] = r.paid;
+    if (r.ps_pct_snapshot != null) snapshots[k] = r.ps_pct_snapshot;
   });
-  res.json(out);
+  res.json({ payStatus: out, snapshots });
 });
 
 app.get('/api/profit-share-status', requireAuth, async (req, res) => {
@@ -689,12 +691,20 @@ app.delete('/api/expenses/:id', requireAuth, requireCanDelete, async (req, res) 
 
 app.post('/api/pay-status', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { projectId, memberId, paid } = req.body;
-    // Composite key supports both production keys (uuid_uuid) and fee keys (uuid_fee_name_uuid)
-    const payKey = `${projectId}_${memberId}`;
+    const { projectId, memberId, paid, payKey: explicitKey, psPctSnapshot } = req.body;
+    // Accept an explicit pay_key (used for fee/profit-share rows that don't follow projId_memberId)
+    // or fall back to projectId_memberId for production rows.
+    const payKey = explicitKey || `${projectId}_${memberId}`;
+    const row = { pay_key: payKey, paid };
+    // If a profit-share snapshot rate was provided, store it. If unmarking paid, clear it.
+    if (paid && psPctSnapshot !== undefined && psPctSnapshot !== null) {
+      row.ps_pct_snapshot = psPctSnapshot;
+    } else if (!paid) {
+      row.ps_pct_snapshot = null;
+    }
     const { error } = await supabase
       .from('pay_status')
-      .upsert({ pay_key: payKey, paid }, { onConflict: 'pay_key' });
+      .upsert(row, { onConflict: 'pay_key' });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
