@@ -509,15 +509,20 @@ function renderDashboard(){
   // Edit hours budget usage — show per project that has a budget set
   const projsWithBudget=projs.filter(p=>p.editHoursBudget!=null&&p.editHoursBudget>0);
 
-  // Post-production hours card — replaces "Deliverables Published" for hours-billed clients.
-  // Shows delivered (review/done tasks) vs scheduled (all tasks) vs total budget.
-  const hasHoursBudget=projsWithBudget.length>0;
+  // Show hours card when a specific project is selected AND that project has a budget.
+  // Show deliverables card when "All Projects" is selected or the selected project has no budget.
+  // This lets a single client flip between UI modes simply by changing the project filter —
+  // select an hours-billed project → hours card; select a deliverables project → deliverables card.
+  const selectedProj=state.projectFilter?projs.find(p=>p.id===state.projectFilter):null;
+  const hasHoursBudget=!!(selectedProj&&selectedProj.editHoursBudget!=null&&selectedProj.editHoursBudget>0);
+  // Budget for the hours card — scoped to the selected project only when in hours mode
+  const ppBudgetProjs=hasHoursBudget?[selectedProj]:projsWithBudget;
   const ppTasks=tasks.filter(t=>t.tag==='post-production');
   const ppDeliveredHours=ppTasks
     .filter(t=>t.status==='review'||t.status==='done')
     .reduce((s,t)=>s+(t.estHours||0),0);
   const ppScheduledHours=ppTasks.reduce((s,t)=>s+(t.estHours||0),0);
-  const ppBudget=projsWithBudget.reduce((s,p)=>s+(p.editHoursBudget||0),0);
+  const ppBudget=ppBudgetProjs.reduce((s,p)=>s+(p.editHoursBudget||0),0);
   const ppDeliveredPct=ppBudget>0?Math.min(100,Math.round(ppDeliveredHours/ppBudget*100)):0;
   const ppScheduledPct=ppBudget>0?Math.min(100,Math.round(ppScheduledHours/ppBudget*100)):0;
   const ppOver=ppScheduledHours>ppBudget;
