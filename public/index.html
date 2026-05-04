@@ -1823,7 +1823,7 @@ function updateNetRevPreview(){
 }
 
 let state={
-  deals:[],projects:[],tasks:[],payStatus:{},profitSharePaidStatus:{},payLog:[],
+  deals:[],projects:[],tasks:[],payStatus:{},payStatusSnapshots:{},profitSharePaidStatus:{},payLog:[],
   expenses:[],
   isAdmin:false,
   team:[
@@ -2003,6 +2003,7 @@ async function bootstrapState() {
   state.tasks                 = data.tasks;
   state.expenses              = data.expenses;
   state.payStatus             = data.payStatus || {};
+  state.payStatusSnapshots    = data.payStatusSnapshots || {};
   state.profitSharePaidStatus = data.profitSharePaidStatus || {};
   state.payLog = data.payLog || [];
   state.clients               = data.clients || [];
@@ -2132,11 +2133,22 @@ async function _rtPullTable(table) {
     }
     case 'payStatus': {
       const data = await api('GET', '/pay-status');
+      // /api/pay-status now returns { payStatus: {...}, snapshots: {...} }
+      const incoming = data.payStatus || {};
+      const incomingSnapshots = data.snapshots || {};
       // Preserve any keys we just wrote
       const recentKeys = _recentWrites['payStatus'] || new Set();
-      const merged = { ...data };
+      const merged = { ...incoming };
       recentKeys.forEach(k => { if (state.payStatus[k] !== undefined) merged[k] = state.payStatus[k]; });
       state.payStatus = merged;
+      // Merge snapshots similarly so locally-written snapshots survive a realtime refresh
+      const mergedSnapshots = { ...incomingSnapshots };
+      recentKeys.forEach(k => {
+        if (state.payStatusSnapshots && state.payStatusSnapshots[k] !== undefined) {
+          mergedSnapshots[k] = state.payStatusSnapshots[k];
+        }
+      });
+      state.payStatusSnapshots = mergedSnapshots;
       if (state.currentPage === 'pay') renderPayView();
       break;
     }
@@ -8423,16 +8435,36 @@ function renderPayView(){
   document.getElementById('pay-content').innerHTML=html;
 }
 
-async function togglePaid(projId,memberId,checked){
+async function togglePaid(projId,memberId,checked,explicitKey){
   if (!checked) {
     if (!confirm('⚠️ You are unmarking a payment as unpaid.\n\nThis will affect payout calculations. Are you sure?')) return;
   }
-  const key=projId+'_'+memberId;
+  // Use the explicit key when provided (profit share rows pass `${projectId}_ps_${memberId}`).
+  // Otherwise fall back to the legacy projId_memberId convention used by production payouts.
+  const key = explicitKey || (projId+'_'+memberId);
   state.payStatus[key]=checked;
+
+  // Build the API payload. Profit-share keys carry the locked rate snapshot.
+  const payload = { projectId:projId, memberId, paid:checked };
+  if (explicitKey && explicitKey.includes('_ps_')) {
+    payload.payKey = explicitKey;
+    if (checked) {
+      // Snapshot the current member rate at the moment of payment
+      const mem = state.team.find(m => m.id === memberId);
+      payload.psPctSnapshot = mem?.profitSharePct || 0;
+      // Mirror snapshot into local state so UI reflects the lock instantly
+      state.payStatusSnapshots = state.payStatusSnapshots || {};
+      state.payStatusSnapshots[key] = payload.psPctSnapshot;
+    } else {
+      // Clear snapshot on unmark
+      if (state.payStatusSnapshots) delete state.payStatusSnapshots[key];
+    }
+  }
+
   _markRecentWrite('payStatus', key);
   renderPayView();
   try {
-    await api('POST','/pay-status',{projectId:projId,memberId,paid:checked});
+    await api('POST','/pay-status',payload);
     notify(checked?'Marked as paid ✓':'Marked as unpaid');
     // Auto-log when marking paid (not when unmarking)
     if (checked) {
@@ -8444,7 +8476,6 @@ async function togglePaid(projId,memberId,checked){
         } catch(le) { console.warn('Pay log entry failed:', le.message); }
       }
     } else {
-      // Remove the matching auto log entry when unmarking
       const match = state.payLog.find(l=>l.source_key===key&&!l.is_manual);
       if (match) {
         try { await api('DELETE','/pay-log/'+match.id); } catch(e) { /* non-critical */ }
@@ -8453,6 +8484,9 @@ async function togglePaid(projId,memberId,checked){
     }
   } catch(e) {
     state.payStatus[key]=!checked;
+    if (explicitKey && explicitKey.includes('_ps_') && state.payStatusSnapshots) {
+      delete state.payStatusSnapshots[key];
+    }
     _recentWrites['payStatus']?.delete(key);
     notify('Save failed: '+e.message);
     renderPayView();
@@ -8781,33 +8815,24 @@ function calcPaidEarnings(filterFn){
     });
   });
 
-  // Profit share paid — sum across all quarters for each member
-  // Key format: YYYY-QN_memberId
-  state.team.forEach(m=>{
-    Object.entries(state.profitSharePaidStatus).forEach(([pkey,entry])=>{ const paid=_isPsPaid(pkey); if(!paid) return;
-      if(!paid) return;
-      // Extract memberId from last segment
-      const lastUnderscore=pkey.lastIndexOf('_');
-      const mid=pkey.substring(lastUnderscore+1);
-      if(mid!==m.id) return;
-      // Find the quarter key and calculate the member's share
-      const quarterKey=pkey.substring(0,lastUnderscore);
-      // Sum deals in this quarter that qualify for profit share
-      const qDeals=state.deals.filter(d=>{
-        if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
-        const proj=state.projects.find(p=>p.dealId===d.id);
-        if(!proj||proj.status!=='complete') return false;
-        if(filterFn&&!filterFn(d)) return false;
-        const dy=new Date((d.closeDate||'')+'-01');
-        const y=dy.getFullYear();
-        const mo=String(dy.getMonth()+1).padStart(2,'0');
-        return `${y}-${mo}`===quarterKey;
-      });
-      const pool=qDeals.reduce((s,d)=>{
-        const psB=d.buckets.find(b=>b.name==='Profit Share');
-        return s+netRev(d)*(psB?psB.pct:17.5)/100;
-      },0);
-      psPaid[m.id]+=(pool*(m.profitSharePct||0)/100);
+  // Profit share paid — driven by per-project pay_status rows (`projId_ps_memberId`).
+  // For each eligible deal whose project's PS row is paid for a member, add that member's
+  // share to their psPaid total. Uses the snapshotted ps_pct if present, else the live rate.
+  state.deals.forEach(deal=>{
+    if(deal.stage!=='Closed Won'||deal.invoiceStatus!=='paid') return;
+    if(filterFn&&!filterFn(deal)) return;
+    const proj=state.projects.find(p=>p.dealId===deal.id);
+    if(!proj||proj.status!=='complete') return;
+    const psB=deal.buckets.find(b=>b.name==='Profit Share');
+    const psPct=psB?psB.pct:17.5;
+    const pool=netRev(deal)*psPct/100;
+    state.team.forEach(m=>{
+      const pk=`${proj.id}_ps_${m.id}`;
+      if(!state.payStatus[pk]) return;
+      const lockedPct=state.payStatusSnapshots&&state.payStatusSnapshots[pk]!=null
+        ? state.payStatusSnapshots[pk]
+        : (m.profitSharePct||0);
+      psPaid[m.id]+=(pool*lockedPct/100);
     });
   });
 
@@ -8895,22 +8920,53 @@ function renderTeamMonthly(){
       });
     });
     // Profit share — one line per qualifying deal (actual)
+    // Uses a per-project pay_key and stores ps_pct snapshot at the moment of payment.
     eligibleDeals.forEach(d=>{
+      // Only deals with a real underlying project can have a paid checkbox (need projectId for the key).
+      const proj = state.projects.find(p => p.dealId === d.id);
       const psB=d.buckets.find(b=>b.name==='Profit Share');
       const psPct=psB?psB.pct:17.5;
       const pool=netRev(d)*psPct/100;
       const mem=state.team.find(x=>x.id===memberId);
-      const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
-      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null});
+      const payKey = proj ? `${proj.id}_ps_${memberId}` : null;
+      // If the project has been finalized AND profit share already paid, use the snapshot rate;
+      // otherwise use the current member rate.
+      const paid = payKey ? !!state.payStatus[payKey] : false;
+      const lockedPct = paid && state.payStatusSnapshots && state.payStatusSnapshots[payKey] != null
+        ? state.payStatusSnapshots[payKey]
+        : null;
+      const effectivePct = lockedPct != null ? lockedPct : (mem?.profitSharePct||0);
+      const amt=Math.round(pool*effectivePct/100*100)/100;
+      if(amt>0) lines.push({
+        label:`PS — ${d.name}`,
+        type:'actual',
+        amt,
+        detail:`${effectivePct}% of ${fmt(pool)} pool · ${d.client}${lockedPct!=null?' · locked at finalization':''}`,
+        payKey,
+        projId:proj?proj.id:null,
+        memberId,
+        kind:'profitShare',
+      });
     });
     // Profit share — one line per deal (projected)
     projectedDeals.forEach(d=>{
+      const proj = state.projects.find(p => p.dealId === d.id);
       const psB=d.buckets.find(b=>b.name==='Profit Share');
       const psPct=psB?psB.pct:17.5;
       const pool=netRev(d)*psPct/100;
       const mem=state.team.find(x=>x.id===memberId);
       const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
-      if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null});
+      // Projected lines DO NOT get a paid checkbox — only actuals (finalized projects) can be marked paid.
+      if(amt>0) lines.push({
+        label:`PS — ${d.name}`,
+        type:'projected',
+        amt,
+        detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,
+        payKey:null,
+        projId:proj?proj.id:null,
+        memberId,
+        kind:'profitShare',
+      });
     });
     return lines;
   }
@@ -9003,16 +9059,17 @@ function renderTeamMonthly(){
           ${actLines.map(l=>{
             const paid=l.payKey?!!state.payStatus[l.payKey]:false;
             const canCheck=l.payKey&&can.markPaid();
+            const isPs = l.kind === 'profitShare';
             return`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);${paid?'background:rgba(76,175,122,0.03);margin:0 -20px;padding-left:20px;padding-right:20px;':''}">
-            <div style="width:3px;height:28px;background:var(--gold);border-radius:2px;flex-shrink:0"></div>
+            <div style="width:3px;height:28px;background:${isPs?'var(--purple)':'var(--gold)'};border-radius:2px;flex-shrink:0"></div>
             <div style="flex:1;min-width:0">
               <div style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.label}</div>
               <div style="font-size:10px;color:var(--text3)">${l.detail}</div>
             </div>
-            <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:rgba(234,234,234,0.1);padding:2px 7px;border-radius:4px;white-space:nowrap">Actual</div>
-            <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:var(--gold);min-width:72px;text-align:right">${fmt(l.amt)}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;text-transform:uppercase;color:${isPs?'var(--purple)':'var(--gold)'};background:${isPs?'rgba(149,97,226,0.1)':'rgba(234,234,234,0.1)'};padding:2px 7px;border-radius:4px;white-space:nowrap">${isPs?'Profit Share':'Actual'}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:600;color:${isPs?'var(--purple)':'var(--gold)'};min-width:72px;text-align:right">${fmt(l.amt)}</div>
             ${l.payKey?`<label style="display:inline-flex;align-items:center;gap:4px;cursor:${canCheck?'pointer':'default'};min-width:60px;justify-content:flex-end">
-              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${l.projId}','${l.memberId}',this.checked)`:''}" style="width:14px;height:14px;accent-color:var(--green);cursor:${canCheck?'pointer':'default'}">
+              <input type="checkbox" ${paid?'checked':''} ${!canCheck?'disabled':''} onchange="${canCheck?`togglePaid('${l.projId}','${l.memberId}',this.checked,'${l.payKey}')`:''}" style="width:14px;height:14px;accent-color:var(--green);cursor:${canCheck?'pointer':'default'}">
               <span style="font-family:'DM Mono',monospace;font-size:9px;color:${paid?'var(--green)':'var(--text3)'}">${paid?'Paid':'Unpaid'}</span>
             </label>`:'<div style="min-width:60px"></div>'}
           </div>`;
@@ -9285,15 +9342,9 @@ function getMonthLabel(dateStr){
 function getQuarterLabel(dateStr){ return getMonthLabel(dateStr); }
 
 function renderProfitShareView(){
-  // Render topbar based on role
+  // Profit Share page is now a read-only ledger. Mark-paid happens on the Team Member page.
   const ptEl=document.getElementById('profitshare-topbar-actions');
-  if(ptEl) ptEl.innerHTML=auth.role==='admin'
-    ?`<div style="display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:6px 14px">
-        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:.08em">ADMIN MODE</span>
-        <label class="paid-toggle"><input type="checkbox" id="admin-toggle" ${state.isAdmin?'checked':''} onchange="toggleAdmin(this.checked)"><span class="toggle-slider"></span></label>
-        <span id="admin-label" style="font-family:'DM Mono',monospace;font-size:10px;color:${state.isAdmin?'var(--gold)':'var(--text3)'};letter-spacing:.08em">${state.isAdmin?'ON':'OFF'}</span>
-      </div>`
-    :`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:6px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>View only</div>`;
+  if(ptEl) ptEl.innerHTML=`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:6px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Read-only ledger · mark paid on the Team Member page</div>`;
   // Collect all deals that are: Closed Won + invoiceStatus=paid + linked project is complete
   const eligibleDeals=state.deals.filter(d=>{
     if(d.stage!=='Closed Won') return false;
@@ -9319,9 +9370,20 @@ function renderProfitShareView(){
 
   const quarters=Object.values(quarterMap).sort((a,b)=>b.year-a.year||b.month-a.month);
   const totalPs=quarters.reduce((s,q)=>s+q.profitSharePool,0);
-  const totalPaid=Object.keys(state.profitSharePaidStatus).filter(k=>_isPsPaid(k)).length;
   const totalMembers=state.team.length;
-  const totalSlots=quarters.length*totalMembers;
+  // Count paid profit-share rows across all qualifying deals × all team members
+  let totalSlots = 0, totalPaid = 0;
+  quarters.forEach(q => {
+    q.deals.forEach(d => {
+      const proj = state.projects.find(p => p.dealId === d.id);
+      if (!proj) return;
+      state.team.forEach(m => {
+        totalSlots += 1;
+        const pk = `${proj.id}_ps_${m.id}`;
+        if (state.payStatus[pk]) totalPaid += 1;
+      });
+    });
+  });
   const pctPaid=totalSlots?Math.round(totalPaid/totalSlots*100):0;
 
   const totalPsPct=state.team.reduce((s,m)=>s+(m.profitSharePct||0),0);
@@ -9329,15 +9391,10 @@ function renderProfitShareView(){
 
   let html=``;
 
-  // Admin banner
-  if(state.isAdmin){
-    html+=`<div class="admin-banner" style="margin-bottom:20px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Admin Mode — Edit profit share percentages directly on each member card below</div>`;
-  }
-
   if(!pctBalanced){
     html+=`<div style="background:rgba(224,90,90,0.08);border:1px solid rgba(224,90,90,0.3);border-radius:8px;padding:10px 16px;margin-bottom:20px;font-size:12px;color:var(--red);display:flex;align-items:center;gap:8px">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-      Profit share percentages total <strong>${Math.round(totalPsPct*10)/10}%</strong> — must total 100% for accurate distribution. ${state.isAdmin?'Edit percentages in Team Members or on the cards below.':'Contact an admin to adjust.'}
+      Profit share percentages total <strong>${Math.round(totalPsPct*10)/10}%</strong> — must total 100% for accurate distribution. Edit each member's profit share % from the Team Members page.
     </div>`;
   }
 
@@ -9384,48 +9441,61 @@ function renderProfitShareView(){
       <!-- Member allocation cards -->
       <div class="ps-member-grid">
         ${state.team.map(m=>{
-          const pkey=`${q.key}_${m.id}`;
-          const paid=_isPsPaid(pkey);
-          const snapshot=_getPsSnapshot(pkey);
+          // Compute paid status from per-project pay_status. A member's PS for this period
+          // counts as paid when ALL projects under this deal in this period have a paid PS row
+          // for this member. With one project per deal in your model, this collapses to: is the
+          // PS row for that deal's project marked paid?
+          const dealsInPeriod = q.deals;
+          // For each deal in this period, find its project and the corresponding ps pay_key
+          const psStates = dealsInPeriod.map(d => {
+            const proj = state.projects.find(p => p.dealId === d.id);
+            if (!proj) return { paid: false, hasProject: false, payKey: null, snapshot: null };
+            const payKey = `${proj.id}_ps_${m.id}`;
+            return {
+              paid: !!state.payStatus[payKey],
+              hasProject: true,
+              payKey,
+              snapshot: state.payStatusSnapshots ? state.payStatusSnapshots[payKey] : null,
+              dealName: d.name,
+            };
+          }).filter(s => s.hasProject);
+          // Aggregate state for the period: paid only if every project is paid; partial otherwise
+          const allPaid = psStates.length > 0 && psStates.every(s => s.paid);
+          const anyPaid = psStates.some(s => s.paid);
+          const partial = anyPaid && !allPaid;
+          // Use snapshot rate from the first paid row if available (all should match for same member)
+          const lockedSnapshot = psStates.find(s => s.paid && s.snapshot != null)?.snapshot;
           const livePct=m.profitSharePct||0;
-          // For paid quarters: use snapshotted % so historical figures never change
-          // For unpaid quarters: use current live %
-          const psPct = (paid && snapshot?.psPct != null) ? snapshot.psPct : livePct;
-          const allocation = (paid && snapshot?.allocationAmount != null)
-            ? snapshot.allocationAmount
-            : q.profitSharePool*psPct/100;
-          // Show a note if current % differs from the snapshotted historical %
-          const pctDrifted = paid && snapshot?.psPct != null && snapshot.psPct !== livePct;
-          return`<div class="ps-card ${paid?'paid-card':''}">
+          // Display rate: locked snapshot if any paid, else live
+          const psPct = lockedSnapshot != null ? lockedSnapshot : livePct;
+          const allocation = q.profitSharePool*psPct/100;
+          const pctDrifted = lockedSnapshot != null && lockedSnapshot !== livePct;
+          // Status badge
+          const statusBadge = allPaid
+            ? `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--green);background:rgba(76,175,122,0.12);padding:3px 8px;border-radius:4px">✓ PAID</span>`
+            : partial
+              ? `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--amber);background:rgba(212,166,90,0.14);padding:3px 8px;border-radius:4px">${psStates.filter(s=>s.paid).length}/${psStates.length} PAID</span>`
+              : `<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--text3);background:var(--bg3);padding:3px 8px;border-radius:4px">PENDING</span>`;
+          return`<div class="ps-card ${allPaid?'paid-card':''}">
             <div class="ps-card-top">
               <div class="user-avatar" style="background:${m.color};width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#0e0e0f;flex-shrink:0">${m.name.split(' ').map(n=>n[0]).join('')}</div>
               <div style="flex:1;min-width:0">
                 <div class="ps-name">${m.name}</div>
                 <div class="ps-role">${m.role}</div>
               </div>
-              <div class="ps-pct-badge" title="${paid?'Rate at time of payment':'Current rate'}">${psPct}%${pctDrifted?` <span style="font-size:8px;color:var(--text3)">(now ${livePct}%)</span>`:''}</div>
+              <div class="ps-pct-badge" title="${lockedSnapshot!=null?'Rate at time of payment':'Current rate'}">${psPct}%${pctDrifted?` <span style="font-size:8px;color:var(--text3)">(now ${livePct}%)</span>`:''}</div>
             </div>
-            ${paid?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);padding:4px 0 0;display:flex;align-items:center;gap:4px">🔒 Paid at ${psPct}%${pctDrifted?` · current ${livePct}%`:''}</div>`:''}
-            ${!paid&&state.isAdmin?`
-              <div class="ps-edit-pct">
-                <span class="ps-edit-label"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline-block;vertical-align:middle;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Share %</span>
-                ${(()=>{ const psLocked=_hasPsPaid(m.id);
-                  return psLocked
-                    ? `<span class="ps-edit-input" style="display:inline-flex;align-items:center;gap:4px;opacity:0.7" title="Locked — profit share has been paid for another quarter. Changes only take effect in new quarters.">🔒 ${livePct}%</span>`
-                    : `<input class="ps-edit-input" type="number" value="${livePct}" min="0" max="100" step="0.5" oninput="updateMemberPsPct('${m.id}',this.value)">`;
-                })()}
-              </div>`:''}
+            ${lockedSnapshot!=null?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);padding:4px 0 0;display:flex;align-items:center;gap:4px">🔒 Locked at ${psPct}%${pctDrifted?` · current ${livePct}%`:''}</div>`:''}
             <div class="ps-amount">${fmt(allocation)}</div>
             <div class="ps-bar"><div class="ps-bar-fill" style="width:${Math.min(psPct,100)}%"></div></div>
             <div class="ps-breakdown">
               <div class="ps-row"><span class="ps-row-label">Share of pool</span><span class="ps-row-val">${psPct}% × ${fmt(q.profitSharePool)}</span></div>
-              <div class="ps-row"><span class="ps-row-label">Quarter</span><span class="ps-row-val">${q.label}</span></div>
-              ${pctDrifted?`<div class="ps-row"><span class="ps-row-label" style="color:var(--text3)">Current %</span><span class="ps-row-val" style="color:var(--text3)">${livePct}% (effective next quarter)</span></div>`:''}
+              <div class="ps-row"><span class="ps-row-label">Period</span><span class="ps-row-val">${q.label}</span></div>
+              ${pctDrifted?`<div class="ps-row"><span class="ps-row-label" style="color:var(--text3)">Current %</span><span class="ps-row-val" style="color:var(--text3)">${livePct}% (effective on new projects)</span></div>`:''}
             </div>
-            <div class="paid-status">
-              <label class="paid-toggle" style="${!can.markPaid()?'opacity:0.4;pointer-events:none':''}"><input type="checkbox" ${paid?'checked':''} ${!can.markPaid()?'disabled':''} onchange="toggleProfitSharePaid('${pkey}',this.checked)"><span class="toggle-slider"></span></label>
-              <span class="paid-label ${paid?'yes':'no'}">${paid?'PAID':'UNPAID'}</span>
-              ${paid?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:auto">✓ Disbursed</span>`:''}
+            <div class="paid-status" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:10px;border-top:1px solid var(--border)">
+              ${statusBadge}
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-align:right;line-height:1.4">Mark paid on the<br/>Team Member page</span>
             </div>
           </div>`;
         }).join('')}
