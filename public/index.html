@@ -1124,7 +1124,10 @@
         <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Assigned To</span>
       </div>
       <div class="bucket-inputs" id="deal-bucket-inputs"></div>
-      <div class="pct-total" id="pct-total">Total: 0%</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <div class="pct-total" id="pct-total">Total: 0%</div>
+        <button id="deal-set-defaults-btn" class="btn btn-sm" onclick="openDefaultBucketsModal()" title="Update the default percentages used for all new deals" style="display:none;font-size:10px">⚙ Edit Defaults</button>
+      </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
       <button class="btn" onclick="closeModal('deal-modal')">Cancel</button>
@@ -1371,7 +1374,21 @@
   </div>
 </div>
 
-<!-- TOTP SETUP MODAL -->
+<!-- DEFAULT BUCKETS MODAL -->
+<div class="modal-overlay" id="default-buckets-modal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-title">Edit Default Deal Buckets<button class="modal-close" onclick="closeModal('default-buckets-modal')">✕</button></div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px;line-height:1.5">These percentages are used when creating <strong>new deals only</strong>. Existing deals are not affected.</div>
+    <div id="default-buckets-inputs"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;margin-bottom:16px">
+      <div class="pct-total" id="default-pct-total">Total: 0%</div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn" onclick="closeModal('default-buckets-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDefaultBuckets()">Save Defaults</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="totp-setup-modal">
   <div class="modal" style="max-width:420px">
     <div class="modal-title">Set Up Two-Factor Authentication<button class="modal-close" onclick="closeModal('totp-setup-modal')">✕</button></div>
@@ -1738,13 +1755,21 @@
 //  CONSTANTS & STATE
 // ============================================================
 const AVATAR_COLORS=['#d4a65a','#4caf7a','#5a8fd4','#e05a5a','#9a7fd4','#d47a3a','#4cbfc9','#c94c8a'];
-const DEFAULT_BUCKETS=[
-  {name:'Production Pool',    color:'#d4a65a',pct:60,  isPersonal:false},
-  {name:'Profit Share',       color:'#4caf7a',pct:17.5,isPersonal:false},
-  {name:'Finders Fee',        color:'#5a8fd4',pct:5,   isPersonal:true},
-  {name:'Operations Account', color:'#9a7fd4',pct:10,  isPersonal:false},
-  {name:'Project Manager Fee',color:'#d47a3a',pct:7.5, isPersonal:true},
-];
+// DEFAULT_BUCKETS — admins can edit these via the deal modal. Persisted to localStorage.
+// Non-retroactive: only affects new deal creation.
+let DEFAULT_BUCKETS=(()=>{
+  try{
+    const saved=localStorage.getItem('cja_default_buckets');
+    if(saved) return JSON.parse(saved);
+  } catch(e){}
+  return [
+    {name:'Production Pool',    color:'#d4a65a',pct:60,  isPersonal:false},
+    {name:'Profit Share',       color:'#4caf7a',pct:17.5,isPersonal:false},
+    {name:'Finders Fee',        color:'#5a8fd4',pct:5,   isPersonal:true},
+    {name:'Operations Account', color:'#9a7fd4',pct:10,  isPersonal:false},
+    {name:'Project Manager Fee',color:'#d47a3a',pct:7.5, isPersonal:true},
+  ];
+})();
 const STAGES=['Lead','Qualified','Proposal','Negotiation','Closed Won'];
 const STAGE_COLORS=['#5a5a6a','#5a8fd4','#d4a65a','#d47a3a','#4caf7a'];
 const INV_LBL={none:'Not Invoiced',sent:'Invoice Sent',deposit:'Deposit Collected',paid:'Paid in Full'};
@@ -2570,6 +2595,11 @@ async function saveTask() {
       state.deliverables = state.deliverables.filter(d => d.projectId !== projectId).concat(freshDelivs);
     }
     renderTaskView(); updateBadges();
+    // If we're currently in a project detail view, also re-render that
+    // so the kanban/list updates immediately without requiring a tab switch.
+    if (state.currentPage === 'projects' && state.activeProjectId) {
+      renderProjectDetail(state.activeProjectId);
+    }
   } catch(e) { notify('Save failed: ' + e.message); }
 }
 
@@ -3928,7 +3958,11 @@ function _renderPayrollBody(){
       <button class="btn btn-sm" onclick="_payrollToggleAll(false)">Clear</button>
       <button class="btn btn-primary" onclick="_payrollGenerateDocx()" ${selectedCount===0?'disabled':''} style="padding:9px 16px">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Generate .docx
+        Generate Pay Stubs
+      </button>
+      <button class="btn" onclick="_payrollExportAll()" style="padding:9px 16px" title="Export full pay record for all team members in this period — includes both paid and unpaid line items">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+        Export Pay Records
       </button>
       <button class="btn btn-primary" onclick="_payrollMarkPaid()" ${selectedCount===0?'disabled':''} style="padding:9px 16px;background:var(--green);border-color:var(--green)">
         Mark Selected Paid
@@ -4014,6 +4048,56 @@ async function _payrollGenerateDocx(){
     }
     notify(`Generated ${files.length} pay stub${files.length===1?'':'s'} ✓`);
   } catch(e){notify('Generation failed: '+e.message);}
+}
+
+async function _payrollExportAll(){
+  // Export complete pay records for each team member in the selected period.
+  // Includes ALL line items (paid + unpaid) — essentially a full pay statement for the period.
+  // Uses the same getMemberProjectBreakdown logic as the Team Members page.
+  const from=state.payrollFrom;
+  const to=state.payrollTo;
+  if(!from||!to){notify('Select a period first');return;}
+  notify('Building pay records…');
+  try{
+    // Build a month-scope filter matching the selected date range
+    // We scope to deals whose close_date falls within or overlaps the period
+    const fromDate=new Date(from+'T00:00:00');
+    const toDate=new Date(to+'T23:59:59');
+    const filterFn=(deal)=>{
+      if(!deal.closeDate) return false;
+      const cd=new Date(deal.closeDate+'-01');
+      return cd>=new Date(fromDate.getFullYear(),fromDate.getMonth(),1)&&
+             cd<=new Date(toDate.getFullYear(),toDate.getMonth()+1,0);
+    };
+    const members=state.team.map(m=>{
+      const lines=getMemberProjectBreakdown(m.id);
+      // Include all actual lines — both paid and unpaid
+      const allLines=lines.filter(l=>l.type==='actual'||l.type==='projected');
+      const items=allLines.map(l=>({
+        label:l.label,
+        type:l.kind||'production',
+        amount:l.amt,
+        paid:l.payKey?!!state.payStatus[l.payKey]:false,
+      }));
+      const total=items.reduce((s,it)=>s+it.amount,0);
+      return{memberId:m.id,memberName:m.name,items,total};
+    }).filter(m=>m.items.length>0);
+
+    if(!members.length){notify('No pay data found for this period');return;}
+    const {files}=await api('POST','/payroll/generate-docx',{from,to,members});
+    for(const f of files||[]){
+      const bin=atob(f.base64);
+      const bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=f.filename;
+      document.body.appendChild(a);a.click();
+      setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},200);
+    }
+    notify(`Exported ${files.length} pay record${files.length===1?'':'s'} ✓`);
+  } catch(e){notify('Export failed: '+e.message);}
 }
 
 async function _payrollMarkPaid(){
@@ -4772,14 +4856,19 @@ function renderProjectDetail(pid){
 
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:22px">
         <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-            <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:8px">
-              Deliverables
-              ${projectPublishes?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 6px;border-radius:3px;background:rgba(234,234,234,0.12);color:var(--gold)">PUBLISHING ENABLED</span>`:''}
-            </div>
-            <div style="display:flex;align-items:baseline;gap:10px">
-              <span style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
-              <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--amber)':'var(--text3)'}">${overallPct}% complete</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button onclick="(function(btn){const key='deliv-collapsed-${pid}';const cur=localStorage.getItem(key);localStorage.setItem(key,cur?'':'1');renderProjectDetail('${pid}');})(this)" style="background:transparent;border:none;cursor:pointer;color:var(--text3);padding:4px;display:flex;align-items:center" title="${(() => { try { return localStorage.getItem('deliv-collapsed-'+pid) ? 'Expand deliverables' : 'Collapse deliverables'; } catch(e) { return ''; } })()}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="transition:transform .2s;transform:${(() => { try { return localStorage.getItem('deliv-collapsed-'+pid) ? 'rotate(-90deg)' : 'rotate(0deg)'; } catch(e) { return 'rotate(0deg)'; } })()}"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div>
+              <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:3px;display:flex;align-items:center;gap:8px">
+                Deliverables
+                ${projectPublishes?`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;padding:2px 6px;border-radius:3px;background:rgba(234,234,234,0.12);color:var(--gold)">PUBLISHING ENABLED</span>`:''}
+              </div>
+              <div style="display:flex;align-items:baseline;gap:10px">
+                <span style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--text)">${completedCount} <span style="color:var(--text3);font-size:16px">of ${delivCount}</span></span>
+                <span style="font-family:'DM Mono',monospace;font-size:11px;color:${overallPct>=100?'var(--green)':overallPct>0?'var(--amber)':'var(--text3)'}">${overallPct}% complete</span>
+              </div>
             </div>
           </div>
           ${can.createProject()?`<div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4790,7 +4879,11 @@ function renderProjectDetail(pid){
         ${delivCount===0?`<div style="padding:32px 20px;text-align:center;color:var(--text3);font-size:12px">
           <div style="font-size:14px;color:var(--text2);margin-bottom:6px;font-family:'Space Grotesk',sans-serif;font-style:italic">No deliverables defined yet</div>
           <div style="margin-bottom:14px">Click <strong style="color:var(--gold)">Define Deliverables</strong> to bulk-create by quantity (e.g., 4 Sizzles, 5 Carousels).</div>
-        </div>`:`
+        </div>`:(()=>{
+          let collapsed=false;
+          try{collapsed=!!localStorage.getItem('deliv-collapsed-'+pid);}catch(e){}
+          if(collapsed) return `<div style="padding:10px 20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);font-style:italic">Deliverables collapsed · click ▾ to expand</div>`;
+          return`
           <!-- Status strip -->
           <div style="display:flex;padding:10px 20px;gap:14px;background:var(--bg);border-bottom:1px solid var(--border2);flex-wrap:wrap">
             ${[
@@ -4858,7 +4951,7 @@ function renderProjectDetail(pid){
             `;
           }).join('')}
           </div>
-        `}
+        `})()}
       </div>`;
     })()}
 
@@ -8309,9 +8402,30 @@ function renderPayView(){
 
   let html='';
 
+  // Group projects by their deal's close_date month (YYYY-MM), descending
+  const projsByMonth={};
   projects.forEach(proj=>{
     const deal=state.deals.find(d=>d.id===proj.dealId);
-    if(!deal)return;
+    if(!deal) return;
+    const monthKey=deal.closeDate?deal.closeDate.substring(0,7):'unknown';
+    if(!projsByMonth[monthKey]) projsByMonth[monthKey]=[];
+    projsByMonth[monthKey].push({proj,deal});
+  });
+  const monthKeys=Object.keys(projsByMonth).sort((a,b)=>b.localeCompare(a));
+
+  monthKeys.forEach(monthKey=>{
+    // Format month label
+    let monthLabel=monthKey;
+    if(monthKey!=='unknown'){
+      const [y,m]=monthKey.split('-');
+      const d=new Date(parseInt(y),parseInt(m)-1,1);
+      monthLabel=d.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    }
+    html+=`<div style="margin-bottom:8px;padding:6px 0 4px">
+      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:16px">${monthLabel}</div>
+    </div>`;
+
+    projsByMonth[monthKey].forEach(({proj,deal})=>{
     const pb=deal.buckets.find(b=>b.name==='Production Pool');
     const pool=pb?netRev(deal)*pb.pct/100:0;
     const tasks=state.tasks.filter(t=>t.projectId===proj.id);
@@ -8429,7 +8543,8 @@ function renderPayView(){
 
     if(!totH&&!specials.length)html+=`<div style="color:var(--text3);font-size:12px;padding:12px 0">No tasks or fee assignments yet.</div>`;
     html+='</div>';
-  });
+    }); // end projsByMonth[monthKey].forEach
+  }); // end monthKeys.forEach
 
   if(!html)html=`<div class="empty-state"><div class="empty-title">No projects with linked deals</div><div class="empty-sub">Link a deal to a project to see pay calculations</div></div>`;
   document.getElementById('pay-content').innerHTML=html;
@@ -8723,7 +8838,22 @@ function renderTeamOverview(){
           <div style="flex:1;min-width:0"><div class="user-name">${m.name}</div><div class="user-role">${m.role}</div></div>
           <span class="member-status-badge ${inactive?'status-inactive':'status-active'}">${inactive?'Inactive':'Active'}</span>
         </div>
-        ${inactive?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);text-align:center;padding:12px 0">Member is inactive</div>`:`
+        ${inactive?`
+        <div style="opacity:0.45;pointer-events:none">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div class="pay-row"><span class="pay-row-label">Hours allocated</span><span class="pay-row-value">${totH[m.id]||0}h</span></div>
+            <div style="background:rgba(234,234,234,0.06);border:1px solid rgba(234,234,234,0.15);border-radius:7px;padding:10px 12px;margin-top:8px">
+              <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:8px">Actual Earned (historical)</div>
+              <div class="pay-row"><span class="pay-row-label">Production</span><span class="pay-row-value" style="color:var(--gold)">${fmt(prodPay[m.id]||0)}</span></div>
+              <div class="pay-row"><span class="pay-row-label">Fees</span><span class="pay-row-value" style="color:var(--teal)">${fmt(feePay[m.id]||0)}</span></div>
+              <div class="pay-row"><span class="pay-row-label">Profit share</span><span class="pay-row-value" style="color:var(--green)">${fmt(psPay[m.id]||0)}</span></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid rgba(234,234,234,0.2)">
+                <span style="font-family:'DM Mono',monospace;font-size:10px;font-weight:600;color:var(--gold)">Total Actual</span>
+                <span style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--gold)">${fmt((prodPay[m.id]||0)+(feePay[m.id]||0)+(psPay[m.id]||0))}</span>
+              </div>
+            </div>
+          </div>
+        </div>`:`
         ${can.adminFinance()
           ?`<div style="background:var(--bg3);border:1px solid var(--gold-dim2);border-radius:6px;padding:8px 12px;margin-bottom:12px">
               <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Profit Share %</div>
@@ -9566,7 +9696,48 @@ function openDealModal(editId){
         :`<span></span>`}
     </div>`).join('');
   updatePctTotal();
+  // Show the Edit Defaults button for admin users only, and only on new deals
+  const defBtn=document.getElementById('deal-set-defaults-btn');
+  if(defBtn) defBtn.style.display=(auth.role==='admin'&&!editId)?'inline-flex':'none';
   document.getElementById('deal-modal').classList.add('open');
+}
+
+function openDefaultBucketsModal(){
+  const inp=document.getElementById('default-buckets-inputs');
+  inp.innerHTML=DEFAULT_BUCKETS.map((b,i)=>`
+    <div class="bucket-input-row">
+      <span style="background:${b.color};width:10px;height:10px;border-radius:2px;display:inline-block;flex-shrink:0"></span>
+      <span style="font-size:12px;color:var(--text2)">${b.name}</span>
+      <input class="form-input" style="padding:6px 10px;text-align:right;font-size:12px" type="number" id="dbpct-${i}" value="${b.pct}" min="0" max="100" step="0.5" oninput="updateDefaultPctTotal()">
+      <span></span>
+    </div>`).join('');
+  updateDefaultPctTotal();
+  document.getElementById('default-buckets-modal').classList.add('open');
+}
+
+function updateDefaultPctTotal(){
+  let t=0;
+  DEFAULT_BUCKETS.forEach((_,i)=>{const v=parseFloat(document.getElementById('dbpct-'+i)?.value||0);t+=v;});
+  const el=document.getElementById('default-pct-total');
+  el.textContent=`Total: ${Math.round(t*10)/10}%`;
+  el.className='pct-total '+(Math.abs(t-100)<0.15?'valid':'invalid');
+}
+
+function saveDefaultBuckets(){
+  let total=0;
+  const updated=DEFAULT_BUCKETS.map((b,i)=>{
+    const pct=parseFloat(document.getElementById('dbpct-'+i)?.value||b.pct);
+    total+=pct;
+    return {...b,pct};
+  });
+  if(Math.abs(total-100)>0.5){
+    notify('Percentages must total 100% before saving');
+    return;
+  }
+  DEFAULT_BUCKETS=updated;
+  try{localStorage.setItem('cja_default_buckets',JSON.stringify(DEFAULT_BUCKETS));}catch(e){}
+  closeModal('default-buckets-modal');
+  notify('Default bucket percentages updated ✓ — applies to new deals only');
 }
 function toggleInvoiceStatus(){
   document.getElementById('d-invoice-group').style.display=document.getElementById('d-stage').value==='Closed Won'?'block':'none';
