@@ -1462,8 +1462,9 @@ app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, re
     for (const mem of members) {
       const rows = [new TableRow({
         children: [
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Description', bold: true })] })], width: { size: 70, type: WidthType.PERCENTAGE } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Description', bold: true })] })], width: { size: 60, type: WidthType.PERCENTAGE } }),
           new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Type', bold: true })] })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Status', bold: true })] })], width: { size: 10, type: WidthType.PERCENTAGE } }),
           new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Amount', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
         ],
       })];
@@ -1472,6 +1473,7 @@ app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, re
           children: [
             new TableCell({ children: [new Paragraph(it.label || '')] }),
             new TableCell({ children: [new Paragraph(it.type || '')] }),
+            new TableCell({ children: [new Paragraph(it.paid === false ? 'Unpaid' : it.paid === true ? 'Paid' : '')] }),
             new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun(`$${Number(it.amount || 0).toFixed(2)}`)] })] }),
           ],
         }));
@@ -1958,21 +1960,50 @@ async function _recomputeDeliverableStatus(deliverableId) {
     return;
   }
   const ids = links.map(l => l.task_id);
-  const { data: tasks } = await supabase.from('tasks').select('id,status').in('id', ids);
-  const allDone = tasks.every(t => t.status === 'done');
-  const anyActive = tasks.some(t => t.status === 'progress' || t.status === 'review');
+  const { data: tasks } = await supabase.from('tasks').select('id,status,publish_date,publishable').in('id', ids);
+
+  // "Complete" means every task is in review or done — review counts because
+  // it means the work is delivered and waiting on client, not waiting on us.
+  const allDelivered = tasks.every(t => t.status === 'done' || t.status === 'review');
+  const anyActive    = tasks.some(t => t.status === 'progress' || t.status === 'review');
+  const anyProgress  = tasks.some(t => t.status === 'progress');
+
   let newStatus = deliv.status;
-  if (allDone) {
-    if (!deliv.publish_date) newStatus = 'published';
-    else {
-      const today = new Date().toISOString().split('T')[0];
-      newStatus = deliv.publish_date <= today ? 'published' : 'in_review';
+  const today = new Date().toISOString().split('T')[0];
+
+  if (allDelivered) {
+    // For publishable deliverables: check if the earliest linked task's publish date has passed
+    // If yes → published. If no → in_review (delivered but waiting for live date).
+    const publishDates = tasks.map(t => t.publish_date).filter(Boolean);
+    const earliestPublish = publishDates.length > 0
+      ? publishDates.sort()[0]
+      : null;
+
+    if (deliv.publishable) {
+      // Published when: no publish date, OR publish date has passed
+      if (!earliestPublish || earliestPublish <= today) {
+        newStatus = 'published';
+      } else {
+        newStatus = 'in_review';
+      }
+    } else {
+      // Non-publishable: check the deliverable-level publish_date
+      if (!deliv.publish_date || deliv.publish_date <= today) {
+        newStatus = 'published';
+      } else {
+        newStatus = 'in_review';
+      }
     }
-  } else if (anyActive || tasks.some(t => t.status === 'todo')) {
-    newStatus = tasks.some(t => t.status === 'todo' && !tasks.some(x => x.status !== 'todo')) ? 'planned' : 'in_progress';
-    // Simpler: if any task has moved past todo, it's in_progress
-    newStatus = tasks.some(t => t.status !== 'todo') ? 'in_progress' : 'planned';
+  } else if (anyProgress) {
+    newStatus = 'in_progress';
+  } else if (anyActive) {
+    // Some in review, some still todo — in_progress
+    newStatus = 'in_progress';
+  } else {
+    // All todo
+    newStatus = 'planned';
   }
+
   if (newStatus !== deliv.status) {
     await supabase.from('deliverables').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', deliverableId);
   }
