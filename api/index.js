@@ -1459,30 +1459,41 @@ app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, re
     const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, WidthType } = docx;
 
     const files = [];
+    // Table column widths in DXA (twips). Page width ~9360 minus margins ~1440 = ~7920 usable.
+    // Cols: Description 55%, Type 15%, Status 12%, Amount 18%
+    const COL = { desc: 4356, type: 1188, status: 950, amt: 1426 };
+    const totalWidth = COL.desc + COL.type + COL.status + COL.amt;
+
     for (const mem of members) {
-      const rows = [new TableRow({
+      const headerRow = new TableRow({
+        tableHeader: true,
         children: [
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Description', bold: true })] })], width: { size: 60, type: WidthType.PERCENTAGE } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Type', bold: true })] })], width: { size: 15, type: WidthType.PERCENTAGE } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Status', bold: true })] })], width: { size: 10, type: WidthType.PERCENTAGE } }),
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Amount', bold: true })], alignment: AlignmentType.RIGHT })], width: { size: 15, type: WidthType.PERCENTAGE } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Description', bold: true })] })], width: { size: COL.desc, type: WidthType.DXA }, shading: { fill: 'F2F2F2' } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Type', bold: true })] })], width: { size: COL.type, type: WidthType.DXA }, shading: { fill: 'F2F2F2' } }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Status', bold: true })] })], width: { size: COL.status, type: WidthType.DXA }, shading: { fill: 'F2F2F2' } }),
+          new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: 'Amount', bold: true })] })], width: { size: COL.amt, type: WidthType.DXA }, shading: { fill: 'F2F2F2' } }),
         ],
-      })];
+      });
+      const rows = [headerRow];
+
       for (const it of (mem.items || [])) {
         rows.push(new TableRow({
           children: [
-            new TableCell({ children: [new Paragraph(it.label || '')] }),
-            new TableCell({ children: [new Paragraph(it.type || '')] }),
-            new TableCell({ children: [new Paragraph(it.paid === false ? 'Unpaid' : it.paid === true ? 'Paid' : '')] }),
-            new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun(`$${Number(it.amount || 0).toFixed(2)}`)] })] }),
+            new TableCell({ children: [new Paragraph(it.label || '')], width: { size: COL.desc, type: WidthType.DXA } }),
+            new TableCell({ children: [new Paragraph(it.type || '')], width: { size: COL.type, type: WidthType.DXA } }),
+            new TableCell({ children: [new Paragraph(it.paid === false ? 'Unpaid' : it.paid === true ? 'Paid' : '—')], width: { size: COL.status, type: WidthType.DXA } }),
+            new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun(`$${Number(it.amount || 0).toFixed(2)}`)] })], width: { size: COL.amt, type: WidthType.DXA } }),
           ],
         }));
       }
+
+      // Total row — must have same 4 columns as the header
       rows.push(new TableRow({
         children: [
-          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Total', bold: true })] })] }),
-          new TableCell({ children: [new Paragraph('')] }),
-          new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `$${Number(mem.total || 0).toFixed(2)}`, bold: true })] })] }),
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Total', bold: true })] })], width: { size: COL.desc, type: WidthType.DXA }, shading: { fill: 'F9F9F9' } }),
+          new TableCell({ children: [new Paragraph('')], width: { size: COL.type, type: WidthType.DXA }, shading: { fill: 'F9F9F9' } }),
+          new TableCell({ children: [new Paragraph('')], width: { size: COL.status, type: WidthType.DXA }, shading: { fill: 'F9F9F9' } }),
+          new TableCell({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `$${Number(mem.total || 0).toFixed(2)}`, bold: true })] })], width: { size: COL.amt, type: WidthType.DXA }, shading: { fill: 'F9F9F9' } }),
         ],
       }));
 
@@ -1496,7 +1507,11 @@ app.post('/api/payroll/generate-docx', requireAuth, requireAdmin, async (req, re
             new Paragraph({ children: [new TextRun({ text: `Period: ${from || ''} to ${to || ''}` })] }),
             new Paragraph({ children: [new TextRun({ text: `Generated: ${new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' })}` })] }),
             new Paragraph({ children: [new TextRun({ text: ' ' })] }),
-            new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE } }),
+            new Table({
+              rows,
+              width: { size: totalWidth, type: WidthType.DXA },
+              columnWidths: [COL.desc, COL.type, COL.status, COL.amt],
+            }),
             new Paragraph({ children: [new TextRun({ text: ' ' })] }),
             new Paragraph({ children: [new TextRun({ text: 'Thank you for your work.', italics: true })] }),
           ],
