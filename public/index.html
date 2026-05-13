@@ -4051,40 +4051,54 @@ async function _payrollGenerateDocx(){
 }
 
 async function _payrollExportAll(){
-  // Export complete pay records for each team member in the selected period.
-  // Includes ALL line items (paid + unpaid) — essentially a full pay statement for the period.
-  // Uses the same getMemberProjectBreakdown logic as the Team Members page.
   const from=state.payrollFrom;
   const to=state.payrollTo;
   if(!from||!to){notify('Select a period first');return;}
   notify('Building pay records…');
   try{
-    // Build a month-scope filter matching the selected date range
-    // We scope to deals whose close_date falls within or overlaps the period
-    const fromDate=new Date(from+'T00:00:00');
-    const toDate=new Date(to+'T23:59:59');
-    const filterFn=(deal)=>{
-      if(!deal.closeDate) return false;
-      const cd=new Date(deal.closeDate+'-01');
-      return cd>=new Date(fromDate.getFullYear(),fromDate.getMonth(),1)&&
-             cd<=new Date(toDate.getFullYear(),toDate.getMonth()+1,0);
+    // Build the same month context that renderTeamMonthly uses so totals match the team page.
+    // The period filter spans all months covered by the from→to range.
+    const fromYM=from.substring(0,7);
+    const toYM=to.substring(0,7);
+    const monthFilter=d=>{
+      if(!d.closeDate) return false;
+      const ym=d.closeDate.substring(0,7);
+      return ym>=fromYM&&ym<=toYM;
     };
+
+    // Eligible deals: Closed Won, paid invoice, complete project — same as team monthly
+    const eligibleDeals=state.deals.filter(d=>{
+      if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+      if(!monthFilter(d)) return false;
+      const proj=state.projects.find(p=>p.dealId===d.id);
+      return proj&&proj.status==='complete';
+    });
+    const projectedDeals=state.deals.filter(d=>{
+      if(d.stage!=='Closed Won') return false;
+      if(!monthFilter(d)) return false;
+      const proj=state.projects.find(p=>p.dealId===d.id);
+      if(!proj||proj.archived) return false;
+      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+      const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+      if(d.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return false;
+      return true;
+    });
+
     const members=state.team.map(m=>{
-      const lines=getMemberProjectBreakdown(m.id);
-      // Include all actual lines — both paid and unpaid
-      const allLines=lines.filter(l=>l.type==='actual'||l.type==='projected');
-      const items=allLines.map(l=>({
+      const lines=_getMemberProjectBreakdown(m.id, monthFilter, eligibleDeals, projectedDeals);
+      const items=lines.map(l=>({
         label:l.label,
-        type:l.kind||'production',
+        type:l.kind==='profitShare'?'Profit Share':(l.type==='actual'?'Actual':'Projected'),
         amount:l.amt,
-        paid:l.payKey?!!state.payStatus[l.payKey]:false,
+        paid:l.payKey?!!state.payStatus[l.payKey]:null,
+        detail:l.detail||'',
       }));
       const total=items.reduce((s,it)=>s+it.amount,0);
       return{memberId:m.id,memberName:m.name,items,total};
     }).filter(m=>m.items.length>0);
 
     if(!members.length){notify('No pay data found for this period');return;}
-    const {files}=await api('POST','/payroll/generate-docx',{from,to,members});
+    const{files}=await api('POST','/payroll/generate-docx',{from,to,members});
     for(const f of files||[]){
       const bin=atob(f.base64);
       const bytes=new Uint8Array(bin.length);
@@ -8969,6 +8983,95 @@ function calcPaidEarnings(filterFn){
   return{prodPaid,feePaid,psPaid};
 }
 
+// Global version of getMemberProjectBreakdown — accepts explicit context instead of
+// relying on renderTeamMonthly's closure vars. Called by _payrollExportAll and the
+// local wrapper inside renderTeamMonthly.
+function _getMemberProjectBreakdown(memberId, monthFilter, eligibleDeals, projectedDeals){
+  const lines=[];
+  // Actual projects
+  state.projects.forEach(proj=>{
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal||deal.stage!=='Closed Won'||deal.invoiceStatus!=='paid') return;
+    if(proj.status!=='complete') return;
+    if(!monthFilter(deal)) return;
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return;
+    const pb=deal.buckets.find(b=>b.name==='Production Pool');
+    if(pb){
+      const pool=netRev(deal)*pb.pct/100;
+      const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
+      if(tH>0&&myH>0){
+        const amt=pool*(myH/tH);
+        const payKey=proj.id+'_'+memberId;
+        lines.push({label:proj.name,type:'actual',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
+      }
+    }
+    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
+      const amt=netRev(deal)*b.pct/100;
+      if(amt>0){
+        const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
+        const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
+        lines.push({label:`${proj.name} — ${b.name}`,type:'actual',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
+      }
+    });
+  });
+  // Projected projects
+  state.projects.forEach(proj=>{
+    const deal=state.deals.find(d=>d.id===proj.dealId);
+    if(!deal||deal.stage!=='Closed Won') return;
+    if(proj.archived) return;
+    if(!monthFilter(deal)) return;
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+    if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
+    const pb=deal.buckets.find(b=>b.name==='Production Pool');
+    if(pb){
+      const pool=netRev(deal)*pb.pct/100;
+      const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
+      if(tH>0&&myH>0){
+        const amt=pool*(myH/tH);
+        const payKey=proj.id+'_'+memberId;
+        lines.push({label:proj.name,type:'projected',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
+      }
+    }
+    deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
+      const amt=netRev(deal)*b.pct/100;
+      if(amt>0){
+        const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
+        const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
+        lines.push({label:`${proj.name} — ${b.name}`,type:'projected',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
+      }
+    });
+  });
+  // Profit share — actual
+  eligibleDeals.forEach(d=>{
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    const psB=d.buckets.find(b=>b.name==='Profit Share');
+    const psPct=psB?psB.pct:17.5;
+    const pool=netRev(d)*psPct/100;
+    const mem=state.team.find(x=>x.id===memberId);
+    const payKey=proj?`${proj.id}_ps_${memberId}`:null;
+    const paid=payKey?!!state.payStatus[payKey]:false;
+    const lockedPct=paid&&state.payStatusSnapshots&&state.payStatusSnapshots[payKey]!=null?state.payStatusSnapshots[payKey]:null;
+    const effectivePct=lockedPct!=null?lockedPct:(mem?.profitSharePct||0);
+    const amt=Math.round(pool*effectivePct/100*100)/100;
+    if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${effectivePct}% of ${fmt(pool)} pool · ${d.client}`,payKey,projId:proj?proj.id:null,memberId,kind:'profitShare'});
+  });
+  // Profit share — projected
+  projectedDeals.forEach(d=>{
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    const psB=d.buckets.find(b=>b.name==='Profit Share');
+    const psPct=psB?psB.pct:17.5;
+    const pool=netRev(d)*psPct/100;
+    const mem=state.team.find(x=>x.id===memberId);
+    const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
+    if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null,projId:proj?proj.id:null,memberId,kind:'profitShare'});
+  });
+  return lines;
+}
+
 function renderTeamMonthly(){
   const now=new Date();
   const vd=new Date(now.getFullYear(),now.getMonth()+state.teamMonthOffset,1);
@@ -8987,118 +9090,7 @@ function renderTeamMonthly(){
 
   // Build per-member per-project breakdown for this month
   function getMemberProjectBreakdown(memberId){
-    const lines=[];
-    // Actual projects
-    state.projects.forEach(proj=>{
-      const deal=state.deals.find(d=>d.id===proj.dealId);
-      if(!deal||deal.stage!=='Closed Won'||deal.invoiceStatus!=='paid') return;
-      if(proj.status!=='complete') return;
-      if(!monthFilter(deal)) return;
-      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
-      if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return;
-      // Production line
-      const pb=deal.buckets.find(b=>b.name==='Production Pool');
-      if(pb){
-        const pool=netRev(deal)*pb.pct/100;
-        const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
-        const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
-        if(tH>0&&myH>0){
-          const amt=pool*(myH/tH);
-          const payKey=proj.id+'_'+memberId;
-          lines.push({label:proj.name,type:'actual',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
-        }
-      }
-      // Individual fee lines
-      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
-        const amt=netRev(deal)*b.pct/100;
-        if(amt>0){
-          const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
-          const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
-          lines.push({label:`${proj.name} — ${b.name}`,type:'actual',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
-        }
-      });
-    });
-    // Projected projects — Closed Won, not yet fully earned
-    state.projects.forEach(proj=>{
-      const deal=state.deals.find(d=>d.id===proj.dealId);
-      if(!deal||deal.stage!=='Closed Won') return;
-      if(proj.archived) return;
-      if(!monthFilter(deal)) return;
-      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
-      const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
-      if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
-      // Production line
-      const pb=deal.buckets.find(b=>b.name==='Production Pool');
-      if(pb){
-        const pool=netRev(deal)*pb.pct/100;
-        const tH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
-        const myH=tasks.filter(t=>t.assigneeId===memberId).reduce((s,t)=>s+(t.estHours||0),0);
-        if(tH>0&&myH>0){
-          const amt=pool*(myH/tH);
-          const payKey=proj.id+'_'+memberId;
-          lines.push({label:proj.name,type:'projected',amt,detail:`${deal.client} · Production`,payKey,projId:proj.id,memberId});
-        }
-      }
-      // Individual fee lines
-      deal.buckets.filter(b=>b.isPersonal&&b.assignedTo===memberId).forEach(b=>{
-        const amt=netRev(deal)*b.pct/100;
-        if(amt>0){
-          const payKey=proj.id+'_fee_'+b.name.replace(/\s/g,'_')+'_'+memberId;
-          const projIdFee=proj.id+'_fee_'+b.name.replace(/\s/g,'_');
-          lines.push({label:`${proj.name} — ${b.name}`,type:'projected',amt,detail:`${deal.client} · Fee`,payKey,projId:projIdFee,memberId});
-        }
-      });
-    });
-    // Profit share — one line per qualifying deal (actual)
-    // Uses a per-project pay_key and stores ps_pct snapshot at the moment of payment.
-    eligibleDeals.forEach(d=>{
-      // Only deals with a real underlying project can have a paid checkbox (need projectId for the key).
-      const proj = state.projects.find(p => p.dealId === d.id);
-      const psB=d.buckets.find(b=>b.name==='Profit Share');
-      const psPct=psB?psB.pct:17.5;
-      const pool=netRev(d)*psPct/100;
-      const mem=state.team.find(x=>x.id===memberId);
-      const payKey = proj ? `${proj.id}_ps_${memberId}` : null;
-      // If the project has been finalized AND profit share already paid, use the snapshot rate;
-      // otherwise use the current member rate.
-      const paid = payKey ? !!state.payStatus[payKey] : false;
-      const lockedPct = paid && state.payStatusSnapshots && state.payStatusSnapshots[payKey] != null
-        ? state.payStatusSnapshots[payKey]
-        : null;
-      const effectivePct = lockedPct != null ? lockedPct : (mem?.profitSharePct||0);
-      const amt=Math.round(pool*effectivePct/100*100)/100;
-      if(amt>0) lines.push({
-        label:`PS — ${d.name}`,
-        type:'actual',
-        amt,
-        detail:`${effectivePct}% of ${fmt(pool)} pool · ${d.client}${lockedPct!=null?' · locked at finalization':''}`,
-        payKey,
-        projId:proj?proj.id:null,
-        memberId,
-        kind:'profitShare',
-      });
-    });
-    // Profit share — one line per deal (projected)
-    projectedDeals.forEach(d=>{
-      const proj = state.projects.find(p => p.dealId === d.id);
-      const psB=d.buckets.find(b=>b.name==='Profit Share');
-      const psPct=psB?psB.pct:17.5;
-      const pool=netRev(d)*psPct/100;
-      const mem=state.team.find(x=>x.id===memberId);
-      const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
-      // Projected lines DO NOT get a paid checkbox — only actuals (finalized projects) can be marked paid.
-      if(amt>0) lines.push({
-        label:`PS — ${d.name}`,
-        type:'projected',
-        amt,
-        detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,
-        payKey:null,
-        projId:proj?proj.id:null,
-        memberId,
-        kind:'profitShare',
-      });
-    });
-    return lines;
+    return _getMemberProjectBreakdown(memberId, monthFilter, eligibleDeals, projectedDeals);
   }
 
   // Sparkline (6 months)
