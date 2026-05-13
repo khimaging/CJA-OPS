@@ -1960,52 +1960,58 @@ async function _recomputeDeliverableStatus(deliverableId) {
     return;
   }
   const ids = links.map(l => l.task_id);
-  const { data: tasks } = await supabase.from('tasks').select('id,status,publish_date,publishable').in('id', ids);
+  const { data: tasks } = await supabase.from('tasks').select('id,status,publish_date,due_date,publishable').in('id', ids);
 
-  // "Complete" means every task is in review or done — review counts because
-  // it means the work is delivered and waiting on client, not waiting on us.
+  // "Delivered" means every task is done or in review — review counts because
+  // it means work is in client's hands, not waiting on us.
   const allDelivered = tasks.every(t => t.status === 'done' || t.status === 'review');
-  const anyActive    = tasks.some(t => t.status === 'progress' || t.status === 'review');
   const anyProgress  = tasks.some(t => t.status === 'progress');
 
   let newStatus = deliv.status;
   const today = new Date().toISOString().split('T')[0];
 
   if (allDelivered) {
-    // For publishable deliverables: check if the earliest linked task's publish date has passed
-    // If yes → published. If no → in_review (delivered but waiting for live date).
-    const publishDates = tasks.map(t => t.publish_date).filter(Boolean);
-    const earliestPublish = publishDates.length > 0
-      ? publishDates.sort()[0]
-      : null;
+    // Use the LATEST task publish date as the authoritative publish date.
+    // Task dates are actively maintained; deliverable dates may be stale defaults.
+    // If no tasks have a publish date, fall back to due dates, then deliverable's own date.
+    const taskPublishDates = tasks.map(t => t.publish_date).filter(Boolean);
+    const taskDueDates     = tasks.map(t => t.due_date).filter(Boolean);
 
-    if (deliv.publishable) {
-      // Published when: no publish date, OR publish date has passed
-      if (!earliestPublish || earliestPublish <= today) {
-        newStatus = 'published';
-      } else {
-        newStatus = 'in_review';
-      }
+    let effectivePublishDate = null;
+    if (taskPublishDates.length > 0) {
+      // Latest task publish date — if the most recent has passed, work is live
+      effectivePublishDate = taskPublishDates.sort().slice(-1)[0];
+    } else if (taskDueDates.length > 0) {
+      effectivePublishDate = taskDueDates.sort().slice(-1)[0];
     } else {
-      // Non-publishable: check the deliverable-level publish_date
-      if (!deliv.publish_date || deliv.publish_date <= today) {
-        newStatus = 'published';
-      } else {
-        newStatus = 'in_review';
-      }
+      effectivePublishDate = deliv.publish_date || null;
+    }
+
+    // Update the deliverable's publish_date to match so it stays in sync
+    if (effectivePublishDate && effectivePublishDate !== deliv.publish_date) {
+      await supabase.from('deliverables')
+        .update({ publish_date: effectivePublishDate, updated_at: new Date().toISOString() })
+        .eq('id', deliverableId);
+    }
+
+    // Published when: no publish date set, OR the effective date has passed
+    if (!effectivePublishDate || effectivePublishDate <= today) {
+      newStatus = 'published';
+    } else {
+      newStatus = 'in_review'; // work done, waiting for publish date
     }
   } else if (anyProgress) {
     newStatus = 'in_progress';
-  } else if (anyActive) {
-    // Some in review, some still todo — in_progress
+  } else if (tasks.some(t => t.status !== 'todo')) {
     newStatus = 'in_progress';
   } else {
-    // All todo
     newStatus = 'planned';
   }
 
   if (newStatus !== deliv.status) {
-    await supabase.from('deliverables').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', deliverableId);
+    await supabase.from('deliverables')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', deliverableId);
   }
 }
 
