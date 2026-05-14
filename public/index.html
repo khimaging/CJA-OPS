@@ -1530,7 +1530,7 @@
 
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
         <button class="btn" onclick="closeModal('bulk-import-modal')">Cancel</button>
-        <button class="btn btn-primary" onclick="_bulkImportPreview()">Preview Folder</button>
+        <button class="btn btn-primary" onclick="_bulkImportPreview(this)">Preview Folder</button>
       </div>
     </div>
 
@@ -3709,14 +3709,15 @@ function _bulkImportReset(){
   _bulkPreviewCache=null;
 }
 
-async function _bulkImportPreview(){
+async function _bulkImportPreview(btn){
   const folderUrl=document.getElementById('bi-folder-url').value.trim();
   if(!folderUrl){ notify('Paste a Drive folder URL or ID'); return; }
 
-  // Show loading state inline on button
-  const previewBtn=event?.target;
-  const originalText=previewBtn?.textContent;
-  if(previewBtn){ previewBtn.disabled=true; previewBtn.textContent='Loading…'; }
+  // Guard against double-submission — if already in flight, do nothing
+  if(btn&&btn.disabled) return;
+
+  const originalText=btn?.textContent||'Preview Folder';
+  if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
 
   try{
     const result=await api('POST','/expenses/bulk-preview',{folderUrl});
@@ -3724,7 +3725,7 @@ async function _bulkImportPreview(){
     _renderBulkPreview(result);
   } catch(e){
     notify('Preview failed: '+e.message);
-    if(previewBtn){ previewBtn.disabled=false; previewBtn.textContent=originalText||'Preview Folder'; }
+    if(btn){ btn.disabled=false; btn.textContent=originalText; }
   }
 }
 
