@@ -665,6 +665,10 @@
   <div class="nav">
     <div class="nav-section">
       <div class="nav-label">Dashboards</div>
+      <div class="nav-item" onclick="switchView('you')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        You
+      </div>
       <div class="nav-item" onclick="switchView('financial')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
         Financial
@@ -824,8 +828,17 @@
     </div>
   </div>
 
+  <!-- YOU — PERSONAL DASHBOARD -->
+  <div id="view-you" class="view active">
+    <div class="topbar">
+      <div><div class="page-title" id="you-title">You</div><div class="page-sub" id="you-sub">Your tasks, hours, and earnings</div></div>
+      <div class="topbar-actions" id="you-topbar-actions"></div>
+    </div>
+    <div class="content"><div id="you-board"></div></div>
+  </div>
+
   <!-- FINANCIAL DASHBOARD -->
-  <div id="view-financial" class="view active">
+  <div id="view-financial" class="view">
     <div class="topbar">
       <div><div class="page-title">Financial Dashboard</div><div class="page-sub" id="fin-sub">Revenue, margins, and client performance</div></div>
       <div class="topbar-actions" id="fin-topbar-actions"></div>
@@ -1048,6 +1061,7 @@
       <div class="crm-tabs" style="margin-bottom:24px">
         <button class="crm-tab active" id="ttab-overview" onclick="setTeamTab('overview')">Overview</button>
         <button class="crm-tab" id="ttab-monthly" onclick="setTeamTab('monthly')">Monthly Earnings</button>
+        <button class="crm-tab" id="ttab-clients" onclick="setTeamTab('clients')">Pay by Client</button>
         <button class="crm-tab" id="ttab-manage" onclick="setTeamTab('manage')">Manage Profiles</button>
       </div>
       <div id="team-content"></div>
@@ -1865,7 +1879,7 @@ let state={
     {id:uid(),name:'Nathan Blumberg',    role:'Lead Designer',    color:AVATAR_COLORS[1],profitSharePct:35,active:true},
     {id:uid(),name:'Blaise Freeman',  role:'Copywriter',       color:AVATAR_COLORS[2],profitSharePct:25,active:true},
   ],
-  taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'financial',
+  taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'you',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
   finYear: new Date().getFullYear(), finTargetRate: (()=>{ try{ const s=localStorage.getItem('cja_fin_target_rate'); return s?parseInt(s):150; }catch(e){return 150;} })(),
@@ -2981,6 +2995,7 @@ function renderPage(name){
   if(name==='payroll'){renderPayrollView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
+  if(name==='you'){renderYouDashboard();}
   if(name==='financial'){renderFinancialDashboard();}
   if(name==='health'){renderHealthDashboard();}
   if(name==='workload')renderStandaloneWorkload();
@@ -4660,7 +4675,7 @@ function renderProjectDetail(pid){
       </div>
 
       <!-- Stat strip — same pattern as pay section sub-header -->
-      <div style="display:grid;grid-template-columns:repeat(${deal?6:2},1fr);border-bottom:1px solid var(--border)">
+      <div style="display:grid;grid-template-columns:repeat(${deal?7:2},1fr);border-bottom:1px solid var(--border)">
         <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${tasks.length}</span></div>
@@ -4682,7 +4697,7 @@ function renderProjectDetail(pid){
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Prod. Pool</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--teal)">${fmt(pool)}</div>
         </div>
-        <div style="padding:12px 20px">
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Eff. Rate/hr</div>
           ${(()=>{
             const effRate=totH>0?Math.round(netRev(deal)/totH*100)/100:null;
@@ -4690,6 +4705,19 @@ function renderProjectDetail(pid){
             const col=effRate===null?'var(--text3)':effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
             return`<div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:${col}">${effRate?'$'+effRate.toFixed(0):'—'}</div>
             <div style="font-size:9px;color:var(--text3);margin-top:2px">Net ÷ ${totH}h</div>`;
+          })()}
+        </div>
+        <div style="padding:12px 20px">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Prod. Rate/hr</div>
+          ${(()=>{
+            const pb=deal.buckets?.find(b=>b.name==='Production Pool');
+            const prodPool=pb?netRev(deal)*pb.pct/100:0;
+            const prodHours=tasks.filter(t=>t.projectId===proj.id&&t.tag==='production').reduce((s,t)=>s+(t.estHours||0),0);
+            const prodRate=prodHours>0?Math.round(prodPool/prodHours*100)/100:null;
+            const tgt=state.finTargetRate||150;
+            const col=prodRate===null?'var(--text3)':prodRate>=tgt?'var(--green)':prodRate>=tgt*0.75?'var(--amber)':'var(--red)';
+            return`<div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:${col}">${prodRate?'$'+prodRate.toFixed(0):'—'}</div>
+            <div style="font-size:9px;color:var(--text3);margin-top:2px">Pool ÷ ${prodHours}h prod</div>`;
           })()}
         </div>`:''}
       </div>
@@ -5386,6 +5414,201 @@ function renderHealthDashboard(){
 // ============================================================
 //  WORKLOAD VIEW
 // ============================================================
+//  YOU — PERSONAL DASHBOARD
+// ============================================================
+function renderYouDashboard(){
+  const el=document.getElementById('you-board');
+  if(!el) return;
+
+  const me=auth?.user;
+  const myId=me?.id;
+  if(!myId){ el.innerHTML=`<div class="empty-state"><div class="empty-title">Not logged in</div></div>`; return; }
+
+  const member=state.team.find(m=>m.id===myId);
+  const now=new Date();
+  const today=now.toISOString().split('T')[0];
+  const in7=new Date(now.getTime()+7*86400000).toISOString().split('T')[0];
+  const in14=new Date(now.getTime()+14*86400000).toISOString().split('T')[0];
+  const thisMonthKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+
+  // Update page title with member name
+  const titleEl=document.getElementById('you-title');
+  if(titleEl&&member) titleEl.textContent=member.name.split(' ')[0];
+
+  const allTasks=state.tasks||[];
+  const myTasks=allTasks.filter(t=>t.assigneeId===myId);
+
+  // Status buckets
+  const openTasks=myTasks.filter(t=>t.status!=='done');
+  const overdue=myTasks.filter(t=>isTaskOverdue(t));
+  const inReviewTasks=myTasks.filter(t=>t.status==='review');
+  const upcoming=myTasks.filter(t=>t.due&&t.due>=today&&t.due<=in7&&t.status!=='done'&&t.status!=='review').sort((a,b)=>a.due.localeCompare(b.due));
+  const publishableSoon=myTasks.filter(t=>t.publishable&&t.status!=='done'&&effectivePublishDate(t)&&effectivePublishDate(t)>=today&&effectivePublishDate(t)<=in14).sort((a,b)=>effectivePublishDate(a).localeCompare(effectivePublishDate(b)));
+
+  // Hours capacity (current month tasks by due date)
+  const monthTasks=myTasks.filter(t=>(t.due||'').startsWith(thisMonthKey));
+  const monthHours=monthTasks.reduce((s,t)=>s+(t.estHours||0),0);
+  const cap=WL_CAPS.month;
+  const utilPct=Math.min(Math.round(monthHours/cap*100),100);
+  const utilColor=monthHours>=cap?'var(--red)':monthHours>=cap*0.85?'var(--amber)':monthHours>=cap*0.5?'var(--green)':'var(--text2)';
+
+  // Work mix
+  const tagHours={production:0,'post-production':0,admin:0,untagged:0};
+  monthTasks.forEach(t=>{const k=t.tag||'untagged';tagHours[k]=(tagHours[k]||0)+(t.estHours||0);});
+  const tagColor={'production':'var(--blue)','post-production':'var(--purple)','admin':'var(--text3)','untagged':'var(--text3)'};
+
+  // Earnings this month
+  const monthFilter=d=>(d.closeDate||'').startsWith(thisMonthKey);
+  const {prodPay,feePay,psPay}=calcActualEarnings(monthFilter);
+  const myProd=prodPay[myId]||0;
+  const myFee=feePay[myId]||0;
+  const myPs=psPay[myId]||0;
+  const myTotal=myProd+myFee+myPs;
+
+  // Workload donut (reuse existing)
+  const memberStats=_calcMemberHours(myId,'month');
+  const donutHtml=_buildMemberDonut(member,{id:myId},160);
+
+  // Per-project assignments this month
+  const myProjects=[...new Set(monthTasks.map(t=>t.projectId))].map(pid=>{
+    const p=state.projects.find(x=>x.id===pid);
+    const d=p?state.deals.find(x=>x.id===p.dealId):null;
+    const pTasks=monthTasks.filter(t=>t.projectId===pid);
+    const done=pTasks.filter(t=>t.status==='done').length;
+    const hours=pTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    return{p,d,pTasks,done,hours,pct:pTasks.length?Math.round(done/pTasks.length*100):0};
+  }).filter(x=>x.p).sort((a,b)=>b.hours-a.hours);
+
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
+      ${[
+        {label:'Open Tasks', val:openTasks.length, color:openTasks.length>10?'var(--amber)':'var(--text)'},
+        {label:'Overdue', val:overdue.length, color:overdue.length>0?'var(--red)':'var(--text3)'},
+        {label:'In Review', val:inReviewTasks.length, color:inReviewTasks.length>0?'var(--blue)':'var(--text3)'},
+        {label:'Due This Week', val:upcoming.length, color:upcoming.length>0?'var(--amber)':'var(--text3)'},
+        {label:'Month Hours', val:`${monthHours}h`, sub:`of ${cap}h cap`, color:utilColor},
+        {label:'Month Earnings', val:fmt(myTotal), sub:'production + fees', color:'var(--gold)'},
+      ].map(k=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${k.label}</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:${k.color};letter-spacing:-0.02em">${k.val}</div>
+        ${k.sub?`<div style="font-size:10px;color:var(--text3);margin-top:3px">${k.sub}</div>`:''}
+      </div>`).join('')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <!-- Workload + work mix -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">My Workload · ${MONTHS[now.getMonth()]}</div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+          <div style="flex-shrink:0">${donutHtml}</div>
+          <div style="flex:1;min-width:0">
+            <!-- Utilization bar -->
+            <div style="margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:10px;margin-bottom:4px">
+                <span style="color:var(--text2)">Month Utilization</span>
+                <span style="color:${utilColor};font-weight:600">${utilPct}%</span>
+              </div>
+              <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${utilPct}%;background:${utilColor};border-radius:3px"></div>
+              </div>
+            </div>
+            <!-- Work mix -->
+            ${Object.entries(tagHours).filter(([,h])=>h>0).map(([tag,h])=>{
+              const pct=monthHours>0?Math.round(h/monthHours*100):0;
+              const label=tag==='untagged'?'Untagged':tag.replace('-',' ').replace(/\b\w/g,c=>c.toUpperCase());
+              return`<div style="margin-bottom:6px">
+                <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9px;margin-bottom:2px">
+                  <span style="color:var(--text2)">${label}</span>
+                  <span style="color:var(--text3)">${h}h · ${pct}%</span>
+                </div>
+                <div style="height:3px;background:var(--bg4);border-radius:2px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:${tagColor[tag]};border-radius:2px"></div>
+                </div>
+              </div>`;
+            }).join('')}
+            <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:8px">Rings: 30d · 7d · 1d</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upcoming this week -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Due This Week (${upcoming.length})</div>
+        ${upcoming.length===0?`<div style="color:var(--text3);font-size:12px;font-style:italic;padding:12px 0">Nothing due in the next 7 days</div>`:`
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${upcoming.slice(0,8).map(t=>{
+            const proj=state.projects.find(p=>p.id===t.projectId);
+            const daysLeft=Math.ceil((new Date(t.due+'T12:00:00')-now)/86400000);
+            const dc=daysLeft<=1?'var(--red)':daysLeft<=3?'var(--amber)':'var(--text3)';
+            return`<div onclick="openEditTaskModal('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;cursor:pointer;transition:all .1s"
+              onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(t.title)}</div>
+                <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${_escapeHtml(proj?.name||'')}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc}">${daysLeft===0?'Today':daysLeft===1?'Tomorrow':daysLeft+'d'}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">${t.estHours||0}h</div>
+              </div>
+            </div>`;
+          }).join('')}
+          ${upcoming.length>8?`<div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;text-align:center">+ ${upcoming.length-8} more</div>`:''}
+        </div>`}
+      </div>
+    </div>
+
+    <!-- Projects this month -->
+    ${myProjects.length>0?`
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">My Projects This Month (${myProjects.length})</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${myProjects.map(({p,d,pTasks,done,hours,pct})=>`
+          <div onclick="goToProjectTasks('${p.id}')" style="display:flex;align-items:center;gap:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .1s"
+            onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
+              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${_escapeHtml(d?.client||'')} · ${done}/${pTasks.length} tasks</div>
+            </div>
+            <div style="width:80px">
+              <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
+                <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:2px"></div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-align:right">${pct}%</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);min-width:36px;text-align:right">${hours}h</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`:''}
+
+    <!-- Publishable tasks coming up -->
+    ${publishableSoon.length>0?`
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Publishable Tasks · Next 14 Days (${publishableSoon.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+        ${publishableSoon.map(t=>{
+          const proj=state.projects.find(p=>p.id===t.projectId);
+          const pubDate=effectivePublishDate(t);
+          return`<div onclick="openEditTaskModal('${t.id}')" style="padding:10px 14px;background:var(--bg3);border:1px solid rgba(149,97,226,0.25);border-radius:8px;cursor:pointer;transition:all .1s"
+            onmouseover="this.style.borderColor='var(--purple)'" onmouseout="this.style.borderColor='rgba(149,97,226,0.25)'">
+            <div style="font-size:12px;color:var(--text);font-weight:500;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(t.title)}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${_escapeHtml(proj?.name||'')}</span>
+              <span class="task-type-tag tag-publishable">${pubDate?new Date(pubDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):''}</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`:''}
+  `;
+}
+
+// Helper: get effective publish date (reuse from codebase)
+function effectivePublishDate(task){
+  return task.publishDate||task.due||null;
+}
+
+// ============================================================
 //  FINANCIAL DASHBOARD
 // ============================================================
 function renderFinancialDashboard(){
@@ -5460,55 +5683,65 @@ function renderFinancialDashboard(){
   const yearOpts=[];
   for(let y=maxYear;y>=minYear;y--) yearOpts.push(y);
 
-  // ── SVG Bar Chart ─────────────────────────────────────────
-  const chartW=760, chartH=200, padL=50, padR=20, padT=10, padB=35;
+  // ── SVG Bar Chart — side-by-side gross/net with pipeline overlay ─────────────────────────
+  const chartW=760, chartH=220, padL=52, padR=20, padT=24, padB=35;
   const innerW=chartW-padL-padR, innerH=chartH-padT-padB;
-  const barW=Math.floor(innerW/12*0.65);
+  const slotW=innerW/12;
+  const barW=Math.floor(slotW*0.28); // each bar; two fit side-by-side with a gap
+  const pipeW=Math.floor(slotW*0.62); // pipeline overlay spans full slot
   const maxVal=Math.max(...monthlyData.map(m=>Math.max(m.gross,m.net,m.pipelineGross)),1);
   const yScale=v=>padT+innerH-(v/maxVal*innerH);
-  const xScale=i=>padL+i*(innerW/12)+innerW/12*0.175;
+  const xLeft=i=>padL+i*slotW+slotW*0.05;  // gross bar x
+  const xRight=i=>xLeft(i)+barW+2;          // net bar x
 
-  // Y-axis gridlines
   const gridLines=4;
   let gridSvg='';
   for(let g=0;g<=gridLines;g++){
     const gv=maxVal*g/gridLines;
     const gy=yScale(gv);
-    const label=gv>=1000?`${Math.round(gv/1000)}k`:`${Math.round(gv)}`;
+    const label=gv>=1000?`$${Math.round(gv/1000)}k`:`$${Math.round(gv)}`;
     gridSvg+=`<line x1="${padL}" y1="${gy}" x2="${chartW-padR}" y2="${gy}" stroke="rgba(234,234,234,0.06)" stroke-width="1"/>
     <text x="${padL-6}" y="${gy+4}" text-anchor="end" fill="rgba(234,234,234,0.35)" font-family="DM Mono,monospace" font-size="9">${label}</text>`;
   }
 
-  // Bars
   let barsSvg='';
   monthlyData.forEach((m,i)=>{
-    const x=xScale(i);
     const isFuture=new Date(yr,i,1)>now&&yr>=now.getFullYear();
-    const hasData=m.gross>0||m.pipelineGross>0;
+    const isCurrentMo=yr===now.getFullYear()&&i===now.getMonth();
 
-    // Pipeline overlay (lighter, full bar behind)
+    // Pipeline overlay (behind, spans full slot width)
     if(m.pipelineGross>0){
       const ph=Math.max(2,m.pipelineGross/maxVal*innerH);
-      const py=yScale(m.pipelineGross);
-      barsSvg+=`<rect x="${x}" y="${py}" width="${barW}" height="${ph}" rx="2" fill="rgba(102,126,234,0.18)" />`;
+      barsSvg+=`<rect x="${xLeft(i)}" y="${yScale(m.pipelineGross)}" width="${pipeW}" height="${ph}" rx="2" fill="rgba(102,126,234,0.15)"/>`;
     }
+
     // Gross bar
     if(m.gross>0){
       const gh=Math.max(2,m.gross/maxVal*innerH);
       const gy2=yScale(m.gross);
-      barsSvg+=`<rect x="${x}" y="${gy2}" width="${barW}" height="${gh}" rx="2" fill="${isFuture?'rgba(212,166,90,0.2)':'rgba(212,166,90,0.55)'}">
-        <title>${m.label}: Gross $${m.gross.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})}</title>
-      </rect>`;
-      // Net bar on top
+      barsSvg+=`<rect x="${xLeft(i)}" y="${gy2}" width="${barW}" height="${gh}" rx="2" fill="${isFuture?'rgba(212,166,90,0.25)':'rgba(212,166,90,0.65)'}">
+        <title>${m.label} Gross: $${m.gross.toLocaleString()}</title></rect>`;
+      // Value label above gross bar
+      if(!isFuture&&m.gross>=500){
+        const lbl=m.gross>=1000?`$${(m.gross/1000).toFixed(1)}k`:`$${Math.round(m.gross)}`;
+        barsSvg+=`<text x="${xLeft(i)+barW/2}" y="${gy2-3}" text-anchor="middle" fill="rgba(212,166,90,0.8)" font-family="DM Mono,monospace" font-size="7">${lbl}</text>`;
+      }
+    }
+
+    // Net bar
+    if(m.net>0){
       const nh=Math.max(2,m.net/maxVal*innerH);
       const ny=yScale(m.net);
-      barsSvg+=`<rect x="${x+barW*0.2}" y="${ny}" width="${barW*0.6}" height="${nh}" rx="1.5" fill="${isFuture?'rgba(76,175,122,0.3)':'rgba(76,175,122,0.85)'}">
-        <title>${m.label}: Net $${m.net.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})}</title>
-      </rect>`;
+      barsSvg+=`<rect x="${xRight(i)}" y="${ny}" width="${barW}" height="${nh}" rx="2" fill="${isFuture?'rgba(76,175,122,0.25)':'rgba(76,175,122,0.85)'}">
+        <title>${m.label} Net: $${m.net.toLocaleString()}</title></rect>`;
+      if(!isFuture&&m.net>=500){
+        const lbl=m.net>=1000?`$${(m.net/1000).toFixed(1)}k`:`$${Math.round(m.net)}`;
+        barsSvg+=`<text x="${xRight(i)+barW/2}" y="${ny-3}" text-anchor="middle" fill="rgba(76,175,122,0.85)" font-family="DM Mono,monospace" font-size="7">${lbl}</text>`;
+      }
     }
+
     // Month label
-    const isCurrentMo=yr===now.getFullYear()&&i===now.getMonth();
-    barsSvg+=`<text x="${x+barW/2}" y="${chartH-8}" text-anchor="middle" fill="${isCurrentMo?'rgba(212,166,90,0.9)':'rgba(234,234,234,0.4)'}" font-family="DM Mono,monospace" font-size="9" font-weight="${isCurrentMo?'700':'400'}">${m.label}</text>`;
+    barsSvg+=`<text x="${xLeft(i)+slotW*0.31}" y="${chartH-8}" text-anchor="middle" fill="${isCurrentMo?'rgba(212,166,90,0.9)':'rgba(234,234,234,0.4)'}" font-family="DM Mono,monospace" font-size="9" font-weight="${isCurrentMo?'700':'400'}">${m.label}</text>`;
   });
 
   // ── Effective rate color ──────────────────────────────────
@@ -5682,10 +5915,26 @@ function renderFinancialDashboard(){
           const pendingGross=pendingDeals.reduce((s,d)=>s+d.value,0);
           return`
           <div style="margin-bottom:16px">
-            <div style="font-size:11px;color:var(--text3);margin-bottom:3px">Overall Studio Rate</div>
+            <div style="font-size:11px;color:var(--text3);margin-bottom:3px">Overall Studio Rate <span style="font-size:9px;font-family:'DM Mono',monospace">(net ÷ all hours)</span></div>
             <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:${rateCol};letter-spacing:-0.03em">${studioRate?'$'+studioRate.toFixed(0)+'/hr':'—'}</div>
-            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:3px">Total net ÷ total estimated hours · ${totalHours}h tracked</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:3px">${totalHours}h total estimated hours</div>
           </div>
+          ${(()=>{
+            // Production-only rate: production pool earnings ÷ production-tagged hours
+            const prodHours=tasks.filter(t=>t.tag==='production').reduce((s,t)=>s+(t.estHours||0),0);
+            let totalProdPool=0;
+            closed.forEach(d=>{
+              const pb=d.buckets?.find(b=>b.name==='Production Pool');
+              if(pb) totalProdPool+=netRev(d)*pb.pct/100;
+            });
+            const prodRate=prodHours>0?Math.round(totalProdPool/prodHours*100)/100:null;
+            const prodRateCol=rateColor(prodRate);
+            return`<div style="margin-bottom:16px;padding:10px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)">
+              <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Production Pool Rate <span style="font-size:9px;font-family:'DM Mono',monospace">(pool ÷ production hrs)</span></div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:${prodRateCol};letter-spacing:-0.02em">${prodRate?'$'+prodRate.toFixed(0)+'/hr':'—'}</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${prodHours}h production tasks · ${fmt(totalProdPool)} total pool</div>
+            </div>`;
+          })()}
           <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
               <span style="font-size:11px;color:var(--text2)">Collected</span>
@@ -9116,7 +9365,7 @@ function renderBucketsView(){
 // ============================================================
 function setTeamTab(tab){
   state.teamTab=tab;
-  ['overview','monthly','manage'].forEach(t=>{
+  ['overview','monthly','clients','manage'].forEach(t=>{
     const el=document.getElementById('ttab-'+t);
     if(el) el.classList.toggle('active',t===tab);
   });
@@ -9137,6 +9386,7 @@ function renderTeamView(){
 
   if(state.teamTab==='overview') renderTeamOverview();
   else if(state.teamTab==='monthly') renderTeamMonthly();
+  else if(state.teamTab==='clients') renderTeamPayByClient();
   else if(state.teamTab==='manage') renderTeamManage();
 }
 
@@ -9322,6 +9572,22 @@ function renderTeamOverview(){
           </div>
 
           <div class="pay-row" style="margin-top:4px"><span class="pay-row-label">Active tasks</span><span class="pay-row-value">${state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done').length}</span></div>
+
+          ${can.adminFinance()?(()=>{
+            // Effective production rate: production pay ÷ production hours (all time)
+            const myProdTasks=state.tasks.filter(t=>t.assigneeId===m.id&&t.tag==='production');
+            const myProdHours=myProdTasks.reduce((s,t)=>s+(t.estHours||0),0);
+            const effRate=myProdHours>0?Math.round((prodPay[m.id]||0)/myProdHours*100)/100:null;
+            const tgt=state.finTargetRate||150;
+            const rateCol=effRate===null?'var(--text3)':effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
+            return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg3);border-radius:6px;margin-top:6px;border:1px solid var(--border)">
+              <div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Production Eff. Rate</div>
+                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:1px">${myProdHours}h production tasks</div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:${rateCol}">${effRate?'$'+effRate.toFixed(0)+'/hr':'—'}</div>
+            </div>`;
+          })():''}
         </div>`}
       </div>`;
     }).join('')}
@@ -9634,6 +9900,90 @@ function renderTeamMonthly(){
 function changeTeamMonth(delta){
   state.teamMonthOffset+=delta;
   renderTeamMonthly();
+}
+
+function renderTeamPayByClient(){
+  const el=document.getElementById('team-content');
+  if(!el) return;
+
+  const tasks=state.tasks||[];
+  const deals=state.deals||[];
+  const projects=state.projects||[];
+  const activeMembers=state.team.filter(m=>m.active!==false);
+
+  // Build per-member × per-client earnings (production pool only, all time)
+  const memberClientData=activeMembers.map(m=>{
+    const clientEarnings={};
+    let totalEarnings=0;
+    let totalHours=0;
+
+    deals.filter(d=>d.stage==='Closed Won'&&d.invoiceStatus==='paid').forEach(d=>{
+      const proj=projects.find(p=>p.dealId===d.id);
+      if(!proj||proj.status!=='complete') return;
+      const projTasks=tasks.filter(t=>t.projectId===proj.id);
+      const myTasks=projTasks.filter(t=>t.assigneeId===m.id);
+      if(!myTasks.length) return;
+      const pb=d.buckets?.find(b=>b.name==='Production Pool');
+      if(!pb) return;
+      const pool=netRev(d)*pb.pct/100;
+      const tH=projTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const myH=myTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      if(!tH||!myH) return;
+      const myEarnings=pool*(myH/tH);
+      const cname=d.client||'Unknown';
+      if(!clientEarnings[cname])clientEarnings[cname]={name:cname,earnings:0,hours:0,deals:0};
+      clientEarnings[cname].earnings+=myEarnings;
+      clientEarnings[cname].hours+=myH;
+      clientEarnings[cname].deals++;
+      totalEarnings+=myEarnings;
+      totalHours+=myH;
+    });
+
+    const sorted=Object.values(clientEarnings).sort((a,b)=>b.earnings-a.earnings);
+    return{member:m, clients:sorted, totalEarnings, totalHours};
+  }).filter(x=>x.totalEarnings>0).sort((a,b)=>b.totalEarnings-a.totalEarnings);
+
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px">
+      ${memberClientData.map(({member,clients,totalEarnings,totalHours})=>`
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+            <div class="user-avatar" style="background:${member.color};width:34px;height:34px;font-size:12px">${member.name.split(' ').map(n=>n[0]).join('')}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:600;color:var(--text)">${member.name}</div>
+              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${member.role}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700;color:var(--gold)">${fmt(totalEarnings)}</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">${totalHours}h total</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${clients.map(c=>{
+              const pct=totalEarnings>0?Math.round(c.earnings/totalEarnings*100):0;
+              const effRate=c.hours>0?Math.round(c.earnings/c.hours*100)/100:null;
+              const tgt=state.finTargetRate||150;
+              const rateCol=effRate===null?'var(--text3)':effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
+              return`<div>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                  <span style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:50%">${_escapeHtml(c.name)}</span>
+                  <div style="display:flex;gap:10px;align-items:baseline;flex-shrink:0;margin-left:8px">
+                    <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600">${fmt(c.earnings)}</span>
+                    <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${pct}%</span>
+                    <span style="font-family:'DM Mono',monospace;font-size:9px;color:${rateCol}">${effRate?'$'+effRate.toFixed(0)+'/hr':'—'}</span>
+                  </div>
+                </div>
+                <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:${member.color};opacity:0.8;border-radius:2px"></div>
+                </div>
+                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.hours}h · ${c.deals} deal${c.deals===1?'':'s'}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 function renderTeamManage(){
