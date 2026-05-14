@@ -804,26 +804,11 @@
   <!-- PROJECTS -->
   <div id="view-projects" class="view">
     <div class="topbar">
-      <div><div class="page-title">Projects</div><div class="page-sub" id="proj-sub">Active engagements</div></div>
+      <div><div class="page-title">Projects</div><div class="page-sub" id="proj-sub">Monthly overview</div></div>
       <div class="topbar-actions" id="proj-topbar-actions"></div>
     </div>
     <div class="content">
-      <div class="crm-tabs" style="margin-bottom:24px">
-        <button class="crm-tab active" id="ptab-grid" onclick="setProjTab('grid')">All Projects</button>
-        <button class="crm-tab" id="ptab-monthly" onclick="setProjTab('monthly')">Monthly View</button>
-      </div>
-      <!-- Status filter pills -->
-      <div id="proj-filter-bar" style="display:flex;gap:8px;margin-bottom:20px;align-items:center">
-        <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-right:4px">Status</span>
-        <button class="filter-pill active" id="pf-active"   onclick="setProjFilter('active')">Active</button>
-        <button class="filter-pill"        id="pf-complete" onclick="setProjFilter('complete')">Complete</button>
-        <button class="filter-pill"        id="pf-all"      onclick="setProjFilter('all')">All</button>
-        <button class="filter-pill"        id="pf-archived" onclick="setProjFilter('archived')" style="margin-left:8px">Archived</button>
-      </div>
-      <div class="crm-tab-content active" id="ptc-grid">
-        <div class="projects-grid" id="projects-grid"></div>
-      </div>
-      <div class="crm-tab-content" id="ptc-monthly">
+      <div id="ptc-monthly" class="crm-tab-content active">
         <div id="proj-monthly-board"></div>
       </div>
       <div class="crm-tab-content" id="ptc-detail">
@@ -2514,7 +2499,6 @@ async function setProjectStatusInline(pid, status) {
     notify('Update failed: ' + e.message);
   }
   renderProjMonthly();
-  if (state.projectTab === 'grid') renderProjects();
   if (state.currentPage === 'pay') renderPayView();
 }
 
@@ -2955,9 +2939,8 @@ function closeMobileNav(){
 function renderPage(name){
   if(name==='crm')renderCRM();
   if(name==='projects'){
-    if(state.projectTab==='monthly') renderProjMonthly();
-    else if(state.projectTab==='detail') renderProjectDetail(state.activeProjectId);
-    else renderProjects();
+    if(state.projectTab==='detail') renderProjectDetail(state.activeProjectId);
+    else { state.projectTab='monthly'; renderProjMonthly(); }
   }
   if(name==='tasks'){
     const msel=document.getElementById('task-member-filter');
@@ -4325,17 +4308,12 @@ function changeMonth(dir){state.monthOffset+=dir;renderMonthly();}
 // ============================================================
 function setProjTab(tab){
   state.projectTab=tab;
-  ['grid','monthly','detail'].forEach(t=>{
-    const btn=document.getElementById('ptab-'+t);
+  ['monthly','detail'].forEach(t=>{
     const pane=document.getElementById('ptc-'+t);
-    if(btn) btn.classList.toggle('active',t===tab);
     if(pane) pane.classList.toggle('active',t===tab);
   });
-  const filterBar=document.getElementById('proj-filter-bar');
-  filterBar.style.display=(tab==='grid')?'flex':'none';
-  if(tab==='monthly') renderProjMonthly();
-  else if(tab==='detail') renderProjectDetail(state.activeProjectId);
-  else renderProjects();
+  if(tab==='detail') renderProjectDetail(state.activeProjectId);
+  else renderProjMonthly();
 }
 
 function setProjFilter(f){
@@ -7086,16 +7064,11 @@ function renderProdCal(){
 
   el.innerHTML=`
     <div style="display:flex;align-items:center;gap:0;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-      <div class="crm-tabs" style="margin-bottom:0">
-        <button class="crm-tab ${tab==='calendar'?'active':''}" onclick="state.prodCalTab='calendar';state.prodCalOffset=0;renderProdCal()">Calendar</button>
-        <button class="crm-tab ${tab==='gantt'?'active':''}" onclick="state.prodCalTab='gantt';state.prodCalOffset=0;renderProdCal()">Gantt Chart</button>
-      </div>
       ${viewPicker(tab)}
     </div>
     <div id="prodcal-inner"></div>
   `;
-  if(tab==='calendar') _renderProdCalCalendar(view);
-  else _renderProdCalGantt(view);
+  _renderProdCalCalendar(view);
 }
 
 function _prodCalNavLabel(view){
@@ -7650,33 +7623,57 @@ function deleteCurrentTemplate(){
 
 function renderProjMonthly(){
   const now=new Date();
-  const vd=new Date(now.getFullYear(),now.getMonth()+state.projMonthOffset,1);
-  const lbl=MONTHS[vd.getMonth()]+' '+vd.getFullYear();
-  const vYM=vd.getFullYear()+'-'+String(vd.getMonth()+1).padStart(2,'0');
+  // Year toggle — default to current year, stored in state
+  if(!state.projYear) state.projYear=now.getFullYear();
+  const yr=state.projYear;
 
-  // A project "belongs" to a month if its start month matches.
-  // If no start date, fall back to checking if it spans the month.
+  // Month offset still used for the selected month within the year
+  // Clamp projMonthOffset so selected month stays in the selected year
+  const selectedDate=new Date(yr, now.getMonth()+(state.projMonthOffset||0), 1);
+  // If year changed, reset offset to 0 (current month)
+  const selYM=selectedDate.getFullYear()===yr
+    ? selectedDate.getFullYear()+'-'+String(selectedDate.getMonth()+1).padStart(2,'0')
+    : yr+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const [selYear, selMonthStr]=selYM.split('-');
+  const selMonth=parseInt(selMonthStr)-1;
+  const lbl=MONTHS[selMonth]+' '+selYear;
+
+  // Build year options — from earliest deal year to current year + 1
+  const dealYears=state.deals.map(d=>(d.closeDate||'').substring(0,4)).filter(Boolean).map(Number);
+  const minYear=dealYears.length?Math.min(...dealYears):yr;
+  const maxYear=yr+1;
+  const yearOptions=[];
+  for(let y=maxYear;y>=minYear;y--) yearOptions.push(y);
+
+  // Projects for the selected month
   const monthly=state.projects.filter(p=>{
-    if(!!state.archivedProjects[p.id]) return false;
+    if(!!p.archived) return false;
     const s=(p.startDate||p.start||'').substring(0,7);
     const e=(p.endDate||p.end||'').substring(0,7);
-    if(s) return s===vYM; // primary: start month
-    if(e) return e===vYM; // fallback: end month
+    if(s) return s===selYM;
+    if(e) return e===selYM;
     return false;
   });
 
   const board=document.getElementById('proj-monthly-board');
   board.innerHTML=`
-    <div class="month-nav">
+    <div class="month-nav" style="flex-wrap:wrap;gap:8px">
       <button class="month-nav-btn" onclick="changeProjMonth(-1)">‹</button>
       <div class="month-title">${lbl}</div>
       <button class="month-nav-btn" onclick="changeProjMonth(1)">›</button>
+      <button class="btn btn-sm" onclick="state.projMonthOffset=0;state.projYear=${now.getFullYear()};renderProjMonthly()" style="font-family:'DM Mono',monospace;font-size:9px">Today</button>
+      <!-- Year dropdown -->
+      <select onchange="state.projYear=parseInt(this.value);state.projMonthOffset=0;renderProjMonthly()" style="margin-left:8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">
+        ${yearOptions.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('')}
+      </select>
       <div style="margin-left:auto;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);letter-spacing:.08em">Projects started this month</div>
+      ${auth.role==='admin'?`<button class="btn btn-sm btn-primary" onclick="openProjectModal()">+ New Project</button>`:''}
     </div>
     <div class="month-summary" style="margin-bottom:24px">
       <div class="stat-card"><div class="stat-label">Started This Month</div><div class="stat-value">${monthly.length}</div><div class="stat-delta" style="color:var(--blue)">new projects</div></div>
       <div class="stat-card"><div class="stat-label">Active</div><div class="stat-value" style="color:var(--blue)">${monthly.filter(p=>(p.status||'active')==='active').length}</div><div class="stat-delta" style="color:var(--blue)">in progress</div></div>
       <div class="stat-card"><div class="stat-label">Complete</div><div class="stat-value" style="color:var(--green)">${monthly.filter(p=>p.status==='complete').length}</div><div class="stat-delta" style="color:var(--green)">finished</div></div>
+      <div class="stat-card"><div class="stat-label">Finalized</div><div class="stat-value" style="color:var(--green)">${monthly.filter(p=>p.payoutsFinalized).length}</div><div class="stat-delta" style="color:var(--green)">locked</div></div>
     </div>
     ${monthly.length===0
       ?`<div class="empty-state"><div class="empty-title">No projects started in ${lbl}</div><div class="empty-sub">Projects appear here in the month their linked deal closed (or their start date).</div></div>`
@@ -7712,16 +7709,26 @@ function renderProjMonthly(){
                 </div>
               </div>
               <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${totH}h</div>
-              <div style="display:flex;gap:6px">
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
                 <button class="btn btn-sm" onclick="goToProjectTasks('${p.id}')">Tasks</button>
-                ${auth.role==='admin'&&pStatus==='complete'&&!isFinalized?`<button class="btn btn-sm" onclick="finalizePayouts('${p.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.3)" title="Lock everything permanently">⚑</button>`:''}
+                ${auth.role==='admin'&&!isFinalized?`<button class="btn btn-sm" onclick="openProjectModal('${p.id}')" title="Edit project">Edit</button>`:''}
+                ${auth.role==='admin'&&pStatus==='complete'&&!isFinalized
+                  ?`<button class="btn btn-sm" onclick="finalizePayouts('${p.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.3)" title="Finalize and lock payouts">⚑ Finalize</button>`
+                  :''}
               </div>
             </div>`;
           }).join('')}
         </div>`}`;
 }
 
-function changeProjMonth(dir){state.projMonthOffset+=dir;renderProjMonthly();}
+function changeProjMonth(dir){
+  const now=new Date();
+  state.projMonthOffset=(state.projMonthOffset||0)+dir;
+  // Sync year to match the new selected month
+  const selectedDate=new Date(now.getFullYear(),now.getMonth()+state.projMonthOffset,1);
+  state.projYear=selectedDate.getFullYear();
+  renderProjMonthly();
+}
 
 
 // ============================================================
