@@ -5465,9 +5465,20 @@ function renderYouDashboard(){
   const myPs=psPay[myId]||0;
   const myTotal=myProd+myFee+myPs;
 
-  // Workload donut (reuse existing)
-  const memberStats=_calcMemberHours(myId,'month');
-  const donutHtml=_buildMemberDonut(member,{id:myId},160);
+  // Workload donut — build the byPeriod structure _buildMemberDonut expects
+  const periods=[
+    {id:'day',  cap:WL_CAPS.day},
+    {id:'week', cap:WL_CAPS.week},
+    {id:'month',cap:WL_CAPS.month},
+  ];
+  const byPeriod={};
+  periods.forEach(p=>{
+    const pTasks=_calcMemberHours(myId,p.id);
+    const hours=pTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    byPeriod[p.id]={tasks:pTasks,hours,pct:Math.min(Math.round(hours/p.cap*100),100),over:hours>p.cap};
+  });
+  const memberStats={...member,byPeriod};
+  const donutHtml=_buildMemberDonut(member,memberStats,160);
 
   // Per-project assignments this month
   const myProjects=[...new Set(monthTasks.map(t=>t.projectId))].map(pid=>{
@@ -5724,7 +5735,7 @@ function renderFinancialDashboard(){
       // Value label above gross bar
       if(!isFuture&&m.gross>=500){
         const lbl=m.gross>=1000?`$${(m.gross/1000).toFixed(1)}k`:`$${Math.round(m.gross)}`;
-        barsSvg+=`<text x="${xLeft(i)+barW/2}" y="${gy2-3}" text-anchor="middle" fill="rgba(212,166,90,0.8)" font-family="DM Mono,monospace" font-size="7">${lbl}</text>`;
+        barsSvg+=`<text x="${xLeft(i)+barW/2}" y="${gy2-3}" text-anchor="middle" fill="rgba(234,234,234,0.35)" font-family="DM Mono,monospace" font-size="6">${lbl}</text>`;
       }
     }
 
@@ -5736,7 +5747,7 @@ function renderFinancialDashboard(){
         <title>${m.label} Net: $${m.net.toLocaleString()}</title></rect>`;
       if(!isFuture&&m.net>=500){
         const lbl=m.net>=1000?`$${(m.net/1000).toFixed(1)}k`:`$${Math.round(m.net)}`;
-        barsSvg+=`<text x="${xRight(i)+barW/2}" y="${ny-3}" text-anchor="middle" fill="rgba(76,175,122,0.85)" font-family="DM Mono,monospace" font-size="7">${lbl}</text>`;
+        barsSvg+=`<text x="${xRight(i)+barW/2}" y="${ny-3}" text-anchor="middle" fill="rgba(234,234,234,0.35)" font-family="DM Mono,monospace" font-size="6">${lbl}</text>`;
       }
     }
 
@@ -9911,7 +9922,7 @@ function renderTeamPayByClient(){
   const projects=state.projects||[];
   const activeMembers=state.team.filter(m=>m.active!==false);
 
-  // Build per-member × per-client earnings (production pool only, all time)
+  // Build per-member × per-client earnings — all sources: production, fees, profit share
   const memberClientData=activeMembers.map(m=>{
     const clientEarnings={};
     let totalEarnings=0;
@@ -9922,24 +9933,47 @@ function renderTeamPayByClient(){
       if(!proj||proj.status!=='complete') return;
       const projTasks=tasks.filter(t=>t.projectId===proj.id);
       const myTasks=projTasks.filter(t=>t.assigneeId===m.id);
-      if(!myTasks.length) return;
-      const pb=d.buckets?.find(b=>b.name==='Production Pool');
-      if(!pb) return;
-      const pool=netRev(d)*pb.pct/100;
-      const tH=projTasks.reduce((s,t)=>s+(t.estHours||0),0);
-      const myH=myTasks.reduce((s,t)=>s+(t.estHours||0),0);
-      if(!tH||!myH) return;
-      const myEarnings=pool*(myH/tH);
       const cname=d.client||'Unknown';
-      if(!clientEarnings[cname])clientEarnings[cname]={name:cname,earnings:0,hours:0,deals:0};
-      clientEarnings[cname].earnings+=myEarnings;
-      clientEarnings[cname].hours+=myH;
-      clientEarnings[cname].deals++;
-      totalEarnings+=myEarnings;
-      totalHours+=myH;
+      let myEarnings=0;
+      let myH=0;
+
+      // Production pool (proportional to hours)
+      const pb=d.buckets?.find(b=>b.name==='Production Pool');
+      if(pb&&myTasks.length){
+        const pool=netRev(d)*pb.pct/100;
+        const tH=projTasks.reduce((s,t)=>s+(t.estHours||0),0);
+        myH=myTasks.reduce((s,t)=>s+(t.estHours||0),0);
+        if(tH>0&&myH>0) myEarnings+=pool*(myH/tH);
+      }
+
+      // Personal fee buckets assigned to this member
+      d.buckets?.filter(b=>b.isPersonal&&b.assignedTo===m.id).forEach(b=>{
+        myEarnings+=netRev(d)*b.pct/100;
+      });
+
+      // Profit share — check per-project pay_status key
+      const psKey=`${proj.id}_ps_${m.id}`;
+      const psPaid=!!state.payStatus[psKey];
+      if(psPaid){
+        const psB=d.buckets?.find(b=>b.name==='Profit Share');
+        const psPct=psB?psB.pct:17.5;
+        const pool=netRev(d)*psPct/100;
+        const lockedPct=state.payStatusSnapshots&&state.payStatusSnapshots[psKey]!=null
+          ?state.payStatusSnapshots[psKey]:(m.profitSharePct||0);
+        myEarnings+=pool*lockedPct/100;
+      }
+
+      if(myEarnings>0||myH>0){
+        if(!clientEarnings[cname])clientEarnings[cname]={name:cname,earnings:0,hours:0,deals:0};
+        clientEarnings[cname].earnings+=myEarnings;
+        clientEarnings[cname].hours+=myH;
+        clientEarnings[cname].deals++;
+        totalEarnings+=myEarnings;
+        totalHours+=myH;
+      }
     });
 
-    const sorted=Object.values(clientEarnings).sort((a,b)=>b.earnings-a.earnings);
+    const sorted=Object.values(clientEarnings).filter(c=>c.earnings>0).sort((a,b)=>b.earnings-a.earnings);
     return{member:m, clients:sorted, totalEarnings, totalHours};
   }).filter(x=>x.totalEarnings>0).sort((a,b)=>b.totalEarnings-a.totalEarnings);
 
@@ -9955,7 +9989,7 @@ function renderTeamPayByClient(){
             </div>
             <div style="text-align:right">
               <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700;color:var(--gold)">${fmt(totalEarnings)}</div>
-              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">${totalHours}h total</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">all sources · ${totalHours}h</div>
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px">
