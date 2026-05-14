@@ -1723,6 +1723,14 @@
       <input class="form-input" id="cli-pin" type="text" autocomplete="off" placeholder="Leave blank to keep existing PIN">
       <button type="button" class="btn btn-sm" style="margin-top:6px" onclick="_generateClientPin()">Generate random PIN</button>
     </div>
+    <div class="form-group">
+      <label class="form-label">
+        Portal Quick Links
+        <span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);font-weight:normal">shown at the top of the client portal</span>
+      </label>
+      <div id="cli-links-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px"></div>
+      <button type="button" class="btn btn-sm" onclick="_cliAddLink()">+ Add Link</button>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center">
       <div id="cli-delete-wrap" style="display:none;margin-right:auto">
         <button class="btn" style="color:var(--red);border-color:rgba(224,90,90,0.35)" onclick="deleteClient()">Deactivate</button>
@@ -6502,9 +6510,50 @@ function openClientModal(editId){
   document.getElementById('cli-pin-wrap').style.display=(c&&c.portalActive)?'':'none';
   document.getElementById('cli-fuzzy-warning').style.display='none';
   document.getElementById('cli-delete-wrap').style.display=(editId&&can.delete())?'':'none';
-  // Hot-check fuzzy match on blur
   document.getElementById('cli-name').onblur=_checkClientNameFuzzy;
+  // Populate portal links
+  _cliRenderLinks(c?(c.portalLinks||[]):[]);
   document.getElementById('client-modal').classList.add('open');
+}
+
+function _cliRenderLinks(links){
+  const list=document.getElementById('cli-links-list');
+  list.innerHTML=links.map((lk,i)=>`
+    <div style="display:flex;gap:8px;align-items:center" id="cli-link-row-${i}">
+      <input class="form-input" placeholder="Label (e.g. Drive Folder)" value="${escapeHtmlAttr(lk.label||'')}" id="cli-link-label-${i}" style="flex:1;padding:6px 10px;font-size:12px">
+      <input class="form-input" placeholder="URL" value="${escapeHtmlAttr(lk.url||'')}" id="cli-link-url-${i}" style="flex:2;padding:6px 10px;font-size:12px">
+      <button type="button" class="btn btn-sm" onclick="_cliRemoveLink(${i})" style="color:var(--red);border-color:rgba(224,90,90,0.3);flex-shrink:0">✕</button>
+    </div>`).join('');
+}
+
+function _cliGetLinks(){
+  const list=document.getElementById('cli-links-list');
+  const rows=list.querySelectorAll('[id^="cli-link-row-"]');
+  const links=[];
+  rows.forEach((_, i)=>{
+    const label=document.getElementById('cli-link-label-'+i)?.value.trim()||'';
+    const url=document.getElementById('cli-link-url-'+i)?.value.trim()||'';
+    if(label||url) links.push({label, url});
+  });
+  return links;
+}
+
+function _cliAddLink(){
+  const existing=_cliGetLinks();
+  _cliRenderLinks([...existing,{label:'',url:''}]);
+  // Focus the new label input
+  const idx=existing.length;
+  setTimeout(()=>document.getElementById('cli-link-label-'+idx)?.focus(),30);
+}
+
+function _cliRemoveLink(idx){
+  const existing=_cliGetLinks();
+  existing.splice(idx,1);
+  _cliRenderLinks(existing);
+}
+
+function escapeHtmlAttr(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 async function _checkClientNameFuzzy(){
@@ -6541,6 +6590,7 @@ async function saveClient(){
     name,
     notes: document.getElementById('cli-notes').value||null,
     portalActive: document.getElementById('cli-portal-active').checked,
+    portalLinks: _cliGetLinks(),
   };
   const pinVal=document.getElementById('cli-pin').value.trim();
   if(pinVal){
