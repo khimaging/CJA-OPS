@@ -1587,10 +1587,11 @@ app.post('/api/clients/validate-name', requireAuth, async (req, res) => {
 
 app.post('/api/clients', requireAuth, async (req, res) => {
   try {
-    const { name, notes } = req.body;
+    const { name, notes, portalLinks } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
     const { data, error } = await supabase.from('clients').insert({
       name: name.trim(), notes: notes || null, active: true,
+      portal_links: Array.isArray(portalLinks) ? portalLinks : [],
     }).select().single();
     if (error) {
       if (error.code === '23505') return res.status(409).json({ error: 'Client with this name already exists' });
@@ -1608,6 +1609,7 @@ app.patch('/api/clients/:id', requireAuth, async (req, res) => {
     if (req.body.notes        !== undefined) updates.notes         = req.body.notes;
     if (req.body.active       !== undefined) updates.active        = req.body.active;
     if (req.body.portalActive !== undefined) updates.portal_active = req.body.portalActive;
+    if (req.body.portalLinks  !== undefined) updates.portal_links  = Array.isArray(req.body.portalLinks) ? req.body.portalLinks : [];
     if (req.body.pin !== undefined) {
       if (req.body.pin === null || req.body.pin === '') {
         updates.pin_hash = null;
@@ -2158,11 +2160,15 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
   try {
     const clientId = req.portalClient.clientId;
 
+    // Fetch the full client record to get portal_links
+    const { data: clientRow } = await supabase.from('clients').select('id,name,portal_links').eq('id', clientId).single();
+    const portalLinks = Array.isArray(clientRow?.portal_links) ? clientRow.portal_links : [];
+
     // Find all deals for this client → then projects for those deals
     const { data: deals } = await supabase.from('deals').select('id,name').eq('client_id', clientId);
     const dealIds = (deals || []).map(d => d.id);
     if (!dealIds.length) {
-      return res.json({ client: { id: clientId, name: req.portalClient.clientName }, projects: [], deliverables: [], deliverableTypes: [] });
+      return res.json({ client: { id: clientId, name: req.portalClient.clientName, portalLinks }, projects: [], deliverables: [], deliverableTypes: [] });
     }
 
     const { data: projects } = await supabase.from('projects').select('id,name,start_date,end_date,status,deal_id,publishes_content,edit_hours_budget')
@@ -2199,7 +2205,7 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
     });
 
     res.json({
-      client: { id: clientId, name: req.portalClient.clientName },
+      client: { id: clientId, name: req.portalClient.clientName, portalLinks },
       projects: (projects || []).map(p => ({
         id: p.id, name: p.name,
         startDate: p.start_date, endDate: p.end_date,
@@ -2300,6 +2306,7 @@ function mapClient(c) {
     notes:        c.notes,
     portalActive: c.portal_active || false,
     hasPin:       !!c.pin_hash,
+    portalLinks:  Array.isArray(c.portal_links) ? c.portal_links : [],
     createdAt:    c.created_at,
   };
 }
