@@ -721,15 +721,22 @@
       </div>
     </div>
     <div class="nav-section">
-      <div class="nav-label">Project Management</div>
+      <div class="nav-label">Dashboards</div>
+      <div class="nav-item" onclick="switchView('financial')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        Financial
+      </div>
       <div class="nav-item" onclick="switchView('health')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        Health Dashboard
+        Health
       </div>
       <div class="nav-item" onclick="switchView('workload')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
         Team Utilization
       </div>
+    </div>
+    <div class="nav-section">
+      <div class="nav-label">Project Management</div>
       <div class="nav-item" onclick="switchView('prodcal')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
         Production Calendar
@@ -815,6 +822,15 @@
         <div id="proj-detail-content"></div>
       </div>
     </div>
+  </div>
+
+  <!-- FINANCIAL DASHBOARD -->
+  <div id="view-financial" class="view">
+    <div class="topbar">
+      <div><div class="page-title">Financial Dashboard</div><div class="page-sub" id="fin-sub">Revenue, margins, and client performance</div></div>
+      <div class="topbar-actions" id="fin-topbar-actions"></div>
+    </div>
+    <div class="content"><div id="fin-board"></div></div>
   </div>
 
   <!-- HEALTH DASHBOARD -->
@@ -1852,6 +1868,7 @@ let state={
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'crm',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
+  finYear: new Date().getFullYear(), finTargetRate: 150,
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',pubCalClient:'',
   lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
@@ -2964,6 +2981,7 @@ function renderPage(name){
   if(name==='payroll'){renderPayrollView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
+  if(name==='financial'){renderFinancialDashboard();}
   if(name==='health'){renderHealthDashboard();}
   if(name==='workload')renderStandaloneWorkload();
   if(name==='prodcal')renderProdCal();
@@ -4642,7 +4660,7 @@ function renderProjectDetail(pid){
       </div>
 
       <!-- Stat strip — same pattern as pay section sub-header -->
-      <div style="display:grid;grid-template-columns:repeat(${deal?5:2},1fr);border-bottom:1px solid var(--border)">
+      <div style="display:grid;grid-template-columns:repeat(${deal?6:2},1fr);border-bottom:1px solid var(--border)">
         <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${tasks.length}</span></div>
@@ -4660,9 +4678,19 @@ function renderProjectDetail(pid){
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Net Revenue</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--green)">${fmt(netRev(deal))}</div>
         </div>
-        <div style="padding:12px 20px">
+        <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Prod. Pool</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--teal)">${fmt(pool)}</div>
+        </div>
+        <div style="padding:12px 20px">
+          <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Eff. Rate/hr</div>
+          ${(()=>{
+            const effRate=totH>0?Math.round(netRev(deal)/totH*100)/100:null;
+            const tgt=state.finTargetRate||150;
+            const col=effRate===null?'var(--text3)':effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
+            return`<div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:${col}">${effRate?'$'+effRate.toFixed(0):'—'}</div>
+            <div style="font-size:9px;color:var(--text3);margin-top:2px">Net ÷ ${totH}h</div>`;
+          })()}
         </div>`:''}
       </div>
 
@@ -5357,6 +5385,323 @@ function renderHealthDashboard(){
 
 // ============================================================
 //  WORKLOAD VIEW
+// ============================================================
+//  FINANCIAL DASHBOARD
+// ============================================================
+function renderFinancialDashboard(){
+  const el=document.getElementById('fin-board');
+  if(!el) return;
+
+  const yr=state.finYear||new Date().getFullYear();
+  const targetRate=state.finTargetRate||150;
+  const now=new Date();
+
+  // ── Data preparation ──────────────────────────────────────
+  const allDeals=state.deals||[];
+  const closed=allDeals.filter(d=>d.stage==='Closed Won');
+  const pipeline=allDeals.filter(d=>d.stage!=='Closed Won'&&d.stage!=='Lost');
+  const tasks=state.tasks||[];
+  const projects=state.projects||[];
+
+  // Hours per project
+  const hoursByProj={};
+  tasks.forEach(t=>{hoursByProj[t.projectId]=(hoursByProj[t.projectId]||0)+(t.estHours||0);});
+
+  // Build 12-month grid for selected year
+  const months=['01','02','03','04','05','06','07','08','09','10','11','12'];
+  const monthLabels=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthlyData=months.map((mo,i)=>{
+    const key=`${yr}-${mo}`;
+    const mDeals=closed.filter(d=>(d.closeDate||'').startsWith(key));
+    const mPipe=pipeline.filter(d=>(d.closeDate||'').startsWith(key));
+    const gross=mDeals.reduce((s,d)=>s+d.value,0);
+    const net=mDeals.reduce((s,d)=>s+netRev(d),0);
+    const pipelineGross=mPipe.reduce((s,d)=>s+(d.value||0)*(d.prob||50)/100,0);
+    return{key,label:monthLabels[i],gross,net,pipelineGross,deals:mDeals.length};
+  });
+
+  // YTD totals
+  const ytdMonths=monthlyData.filter(m=>parseInt(m.key.split('-')[1])-1<=now.getMonth()||(yr<now.getFullYear()));
+  const ytdGross=ytdMonths.reduce((s,m)=>s+m.gross,0);
+  const ytdNet=ytdMonths.reduce((s,m)=>s+m.net,0);
+  const ytdMargin=ytdGross>0?Math.round(ytdNet/ytdGross*100):0;
+  const ytdDeals=ytdMonths.reduce((s,m)=>s+m.deals,0);
+  const avgDeal=ytdDeals>0?ytdGross/ytdDeals:0;
+
+  // MoM change
+  const currentMo=monthlyData[now.getMonth()];
+  const prevMo=now.getMonth()>0?monthlyData[now.getMonth()-1]:null;
+  const momChange=prevMo&&prevMo.net>0?Math.round((currentMo.net-prevMo.net)/prevMo.net*100):null;
+
+  // Per-client breakdown
+  const clientMap={};
+  closed.forEach(d=>{
+    const cname=d.client||'Unknown';
+    if(!clientMap[cname])clientMap[cname]={name:cname,gross:0,net:0,hours:0,deals:0,expenses:0};
+    clientMap[cname].gross+=d.value;
+    clientMap[cname].net+=netRev(d);
+    clientMap[cname].expenses+=(d.expenses||0);
+    clientMap[cname].deals++;
+    const proj=projects.find(p=>p.dealId===d.id);
+    if(proj) clientMap[cname].hours+=hoursByProj[proj.id]||0;
+  });
+  const clientList=Object.values(clientMap).sort((a,b)=>b.gross-a.gross);
+  const totalGrossAllTime=clientList.reduce((s,c)=>s+c.gross,0);
+  const totalNetAllTime=clientList.reduce((s,c)=>s+c.net,0);
+
+  // Revenue concentration
+  const topClientShare=totalGrossAllTime>0&&clientList.length?Math.round(clientList[0].gross/totalGrossAllTime*100):0;
+  const top3Share=totalGrossAllTime>0?Math.round(clientList.slice(0,3).reduce((s,c)=>s+c.gross,0)/totalGrossAllTime*100):0;
+
+  // Year selector range
+  const dealYears=[...new Set(allDeals.map(d=>(d.closeDate||'').substring(0,4)).filter(Boolean).map(Number))];
+  const minYear=dealYears.length?Math.min(...dealYears):yr;
+  const maxYear=Math.max(yr+1,now.getFullYear()+1);
+  const yearOpts=[];
+  for(let y=maxYear;y>=minYear;y--) yearOpts.push(y);
+
+  // ── SVG Bar Chart ─────────────────────────────────────────
+  const chartW=760, chartH=200, padL=50, padR=20, padT=10, padB=35;
+  const innerW=chartW-padL-padR, innerH=chartH-padT-padB;
+  const barW=Math.floor(innerW/12*0.65);
+  const maxVal=Math.max(...monthlyData.map(m=>Math.max(m.gross,m.net,m.pipelineGross)),1);
+  const yScale=v=>padT+innerH-(v/maxVal*innerH);
+  const xScale=i=>padL+i*(innerW/12)+innerW/12*0.175;
+
+  // Y-axis gridlines
+  const gridLines=4;
+  let gridSvg='';
+  for(let g=0;g<=gridLines;g++){
+    const gv=maxVal*g/gridLines;
+    const gy=yScale(gv);
+    const label=gv>=1000?`${Math.round(gv/1000)}k`:`${Math.round(gv)}`;
+    gridSvg+=`<line x1="${padL}" y1="${gy}" x2="${chartW-padR}" y2="${gy}" stroke="rgba(234,234,234,0.06)" stroke-width="1"/>
+    <text x="${padL-6}" y="${gy+4}" text-anchor="end" fill="rgba(234,234,234,0.35)" font-family="DM Mono,monospace" font-size="9">${label}</text>`;
+  }
+
+  // Bars
+  let barsSvg='';
+  monthlyData.forEach((m,i)=>{
+    const x=xScale(i);
+    const isFuture=new Date(yr,i,1)>now&&yr>=now.getFullYear();
+    const hasData=m.gross>0||m.pipelineGross>0;
+
+    // Pipeline overlay (lighter, full bar behind)
+    if(m.pipelineGross>0){
+      const ph=Math.max(2,m.pipelineGross/maxVal*innerH);
+      const py=yScale(m.pipelineGross);
+      barsSvg+=`<rect x="${x}" y="${py}" width="${barW}" height="${ph}" rx="2" fill="rgba(102,126,234,0.18)" />`;
+    }
+    // Gross bar
+    if(m.gross>0){
+      const gh=Math.max(2,m.gross/maxVal*innerH);
+      const gy2=yScale(m.gross);
+      barsSvg+=`<rect x="${x}" y="${gy2}" width="${barW}" height="${gh}" rx="2" fill="${isFuture?'rgba(212,166,90,0.2)':'rgba(212,166,90,0.55)'}">
+        <title>${m.label}: Gross $${m.gross.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})}</title>
+      </rect>`;
+      // Net bar on top
+      const nh=Math.max(2,m.net/maxVal*innerH);
+      const ny=yScale(m.net);
+      barsSvg+=`<rect x="${x+barW*0.2}" y="${ny}" width="${barW*0.6}" height="${nh}" rx="1.5" fill="${isFuture?'rgba(76,175,122,0.3)':'rgba(76,175,122,0.85)'}">
+        <title>${m.label}: Net $${m.net.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0})}</title>
+      </rect>`;
+    }
+    // Month label
+    const isCurrentMo=yr===now.getFullYear()&&i===now.getMonth();
+    barsSvg+=`<text x="${x+barW/2}" y="${chartH-8}" text-anchor="middle" fill="${isCurrentMo?'rgba(212,166,90,0.9)':'rgba(234,234,234,0.4)'}" font-family="DM Mono,monospace" font-size="9" font-weight="${isCurrentMo?'700':'400'}">${m.label}</text>`;
+  });
+
+  // ── Effective rate color ──────────────────────────────────
+  const rateColor=r=>r===null?'var(--text3)':r>=targetRate?'var(--green)':r>=targetRate*0.75?'var(--amber)':'var(--red)';
+
+  el.innerHTML=`
+    <!-- Controls bar -->
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px">
+      <select onchange="state.finYear=parseInt(this.value);renderFinancialDashboard()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:7px;font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">
+        ${yearOpts.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('')}
+      </select>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto;background:var(--bg3);border:1px solid var(--border);padding:6px 12px;border-radius:7px">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Effective Rate Target</span>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">$</span>
+        <input type="number" value="${targetRate}" min="50" max="500" step="5"
+          onchange="state.finTargetRate=parseInt(this.value)||150;renderFinancialDashboard()"
+          style="background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;width:52px;padding:0 2px;outline:none">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">/hr</span>
+      </div>
+    </div>
+
+    <!-- KPI strip -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
+      ${[
+        {label:'YTD Gross', val:fmt(ytdGross), sub:`${ytdDeals} deal${ytdDeals===1?'':'s'}`, color:'var(--gold)'},
+        {label:'YTD Net', val:fmt(ytdNet), sub:`After expenses`, color:'var(--green)'},
+        {label:'Net Margin', val:`${ytdMargin}%`, sub:'YTD average', color:ytdMargin>=75?'var(--green)':ytdMargin>=60?'var(--amber)':'var(--red)'},
+        {label:'Avg Deal Size', val:fmt(avgDeal), sub:'Closed Won', color:'var(--blue)'},
+        {label:'Active Clients', val:clientList.filter(c=>c.deals>0).length, sub:'All time', color:'var(--purple)'},
+        {label:'MoM Change', val:momChange===null?'—':`${momChange>0?'+':''}${momChange}%`, sub:'Net revenue', color:momChange===null?'var(--text3)':momChange>=0?'var(--green)':'var(--red)'},
+      ].map(k=>`
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${k.label}</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:${k.color};letter-spacing:-0.02em;line-height:1">${k.val}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:5px">${k.sub}</div>
+        </div>`).join('')}
+    </div>
+
+    <!-- Revenue chart -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Revenue ${yr}</div>
+        <div style="display:flex;gap:16px;align-items:center">
+          <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(212,166,90,0.55)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Gross</span></div>
+          <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(76,175,122,0.85)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Net</span></div>
+          <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(102,126,234,0.28)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Pipeline (weighted)</span></div>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <svg viewBox="0 0 ${chartW} ${chartH}" style="width:100%;min-width:480px;display:block">
+          ${gridSvg}
+          ${barsSvg}
+        </svg>
+      </div>
+    </div>
+
+    <!-- Two-column: client revenue + effective rates -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+      <!-- Client revenue bars -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Revenue by Client</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${clientList.slice(0,10).map(c=>{
+            const pct=totalGrossAllTime>0?Math.round(c.gross/totalGrossAllTime*100):0;
+            const margin=c.gross>0?Math.round(c.net/c.gross*100):0;
+            return`<div>
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+                <span style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%">${escapeHtml(c.name)}</span>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text2);white-space:nowrap;margin-left:8px">${fmt(c.gross)} <span style="color:var(--text3)">${pct}%</span></span>
+              </div>
+              <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--gold),rgba(212,166,90,0.5));border-radius:3px"></div>
+              </div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.deals} deal${c.deals===1?'':'s'} · margin ${margin}%</div>
+            </div>`;
+          }).join('')}
+          ${clientList.length>10?`<div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;text-align:center;padding-top:4px">+ ${clientList.length-10} more clients</div>`:''}
+        </div>
+      </div>
+
+      <!-- Effective hourly rate table -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
+          <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Effective Rate by Client</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Net ÷ Hours</div>
+        </div>
+        <table class="list-table" style="width:100%">
+          <thead><tr>
+            <th>Client</th>
+            <th style="text-align:right">Rate/hr</th>
+            <th style="text-align:right">Hours</th>
+            <th style="text-align:right">Net</th>
+          </tr></thead>
+          <tbody>
+            ${clientList.filter(c=>c.hours>0).sort((a,b)=>{
+              const ra=a.hours>0?a.net/a.hours:0;
+              const rb=b.hours>0?b.net/b.hours:0;
+              return rb-ra;
+            }).map(c=>{
+              const rate=c.hours>0?Math.round(c.net/c.hours*100)/100:null;
+              const col=rateColor(rate);
+              return`<tr>
+                <td style="font-size:11px;color:var(--text);font-weight:500">${escapeHtml(c.name)}</td>
+                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${col}">${rate?'$'+rate.toFixed(0)+'':'—'}</td>
+                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${c.hours}h</td>
+                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text2)">${fmt(c.net)}</td>
+              </tr>`;
+            }).join('')}
+            ${clientList.filter(c=>c.hours===0).length?`
+              <tr><td colspan="4" style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;padding-top:8px">${clientList.filter(c=>c.hours===0).length} clients with no hours tracked</td></tr>`:''}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Bottom row: concentration risk + expense analysis + studio rate -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+
+      <!-- Revenue concentration -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Revenue Concentration</div>
+        ${[
+          {label:`Top client (${clientList[0]?.name||'—'})`, val:`${topClientShare}%`, risk:topClientShare>=60?'high':topClientShare>=40?'moderate':'low', color:topClientShare>=60?'var(--red)':topClientShare>=40?'var(--amber)':'var(--green)'},
+          {label:'Top 3 clients', val:`${top3Share}%`, risk:top3Share>=75?'high':top3Share>=60?'moderate':'low', color:top3Share>=75?'var(--red)':top3Share>=60?'var(--amber)':'var(--green)'},
+        ].map(row=>`
+          <div style="margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
+              <span style="font-size:12px;color:var(--text2)">${row.label}</span>
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;color:${row.color}">${row.val}</span>
+            </div>
+            <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:${Math.min(100,parseInt(row.val))}%;background:${row.color};border-radius:3px"></div>
+            </div>
+            <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:3px;text-transform:uppercase;letter-spacing:.06em">${row.risk} concentration</div>
+          </div>`).join('')}
+        <div style="font-size:10px;color:var(--text3);line-height:1.5;border-top:1px solid var(--border);padding-top:10px;margin-top:4px">Healthy target: single client below 30%, top 3 below 50%.</div>
+      </div>
+
+      <!-- Monthly expense ratio -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Expense Ratio by Month</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${monthlyData.filter(m=>m.gross>0).map(m=>{
+            const exp=m.gross-m.net;
+            const expPct=m.gross>0?Math.round(exp/m.gross*100):0;
+            const barColor=expPct>=25?'var(--red)':expPct>=15?'var(--amber)':'var(--green)';
+            return`<div>
+              <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:10px;margin-bottom:2px">
+                <span style="color:var(--text2)">${m.label}</span>
+                <span style="color:${barColor}">${expPct}% <span style="color:var(--text3)">of gross</span></span>
+              </div>
+              <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${Math.min(100,expPct)}%;background:${barColor};border-radius:2px"></div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Studio effective rate -->
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Studio Metrics</div>
+        ${(()=>{
+          const totalHours=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+          const studioRate=totalHours>0?Math.round(totalNetAllTime/totalHours*100)/100:null;
+          const rateCol=rateColor(studioRate);
+          const invoicedDeals=closed.filter(d=>d.invoiceStatus==='paid');
+          const invoicedGross=invoicedDeals.reduce((s,d)=>s+d.value,0);
+          const pendingDeals=closed.filter(d=>d.invoiceStatus!=='paid');
+          const pendingGross=pendingDeals.reduce((s,d)=>s+d.value,0);
+          return`
+          <div style="margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text3);margin-bottom:3px">Overall Studio Rate</div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:${rateCol};letter-spacing:-0.03em">${studioRate?'$'+studioRate.toFixed(0)+'/hr':'—'}</div>
+            <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:3px">Total net ÷ total estimated hours · ${totalHours}h tracked</div>
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:11px;color:var(--text2)">Collected</span>
+              <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green);font-weight:600">${fmt(invoicedGross)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline">
+              <span style="font-size:11px;color:var(--text2)">Pending invoices</span>
+              <span style="font-family:'DM Mono',monospace;font-size:12px;color:${pendingGross>0?'var(--amber)':'var(--text3)'};font-weight:600">${fmt(pendingGross)}${pendingGross>0?` · ${pendingDeals.length} deal${pendingDeals.length===1?'':'s'}`:''}</span>
+            </div>
+          </div>`;
+        })()}
+      </div>
+    </div>
+  `;
+}
+
 // ============================================================
 //  TEAM UTILIZATION DASHBOARD (replaces legacy Workload page)
 // ============================================================
