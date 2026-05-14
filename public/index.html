@@ -786,7 +786,7 @@
 
 <div class="main">
   <!-- CRM -->
-  <div id="view-crm" class="view active">
+  <div id="view-crm" class="view">
     <div class="topbar">
       <div><div class="page-title">CRM Pipeline</div><div class="page-sub">Deal tracking & fund allocation</div></div>
       <div class="topbar-actions" id="crm-topbar-actions">
@@ -825,7 +825,7 @@
   </div>
 
   <!-- FINANCIAL DASHBOARD -->
-  <div id="view-financial" class="view">
+  <div id="view-financial" class="view active">
     <div class="topbar">
       <div><div class="page-title">Financial Dashboard</div><div class="page-sub" id="fin-sub">Revenue, margins, and client performance</div></div>
       <div class="topbar-actions" id="fin-topbar-actions"></div>
@@ -2007,7 +2007,7 @@ async function attemptLogin() {
     document.getElementById('login-totp-block').style.display = 'none';
     if (document.getElementById('login-totp')) document.getElementById('login-totp').value = '';
     updateNavChip();
-    renderPage(state.currentPage);
+    switchView(state.currentPage);
   } catch(e) {
     // 2FA-required signal: server returns totpRequired:true with status 401
     if (e?.totpRequired || e.message === 'totp_required') {
