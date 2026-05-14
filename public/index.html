@@ -4714,11 +4714,13 @@ function renderProjectDetail(pid){
             const pb=deal.buckets?.find(b=>b.name==='Production Pool');
             const prodPool=pb?netRev(deal)*pb.pct/100:0;
             const prodHours=tasks.filter(t=>t.projectId===proj.id&&t.tag==='production').reduce((s,t)=>s+(t.estHours||0),0);
-            const prodRate=prodHours>0?Math.round(prodPool/prodHours*100)/100:null;
+            const postProdHours=tasks.filter(t=>t.projectId===proj.id&&t.tag==='post-production').reduce((s,t)=>s+(t.estHours||0),0);
+            const billedHours=prodHours+postProdHours;
+            const prodRate=billedHours>0?Math.round(prodPool/billedHours*100)/100:null;
             const tgt=state.finTargetRate||150;
             const col=prodRate===null?'var(--text3)':prodRate>=tgt?'var(--green)':prodRate>=tgt*0.75?'var(--amber)':'var(--red)';
             return`<div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:${col}">${prodRate?'$'+prodRate.toFixed(0):'—'}</div>
-            <div style="font-size:9px;color:var(--text3);margin-top:2px">Pool ÷ ${prodHours}h prod</div>`;
+            <div style="font-size:9px;color:var(--text3);margin-top:2px">Pool ÷ ${billedHours}h (p+pp)</div>`;
           })()}
         </div>`:''}
       </div>
@@ -5428,8 +5430,6 @@ function renderYouDashboard(){
   const member=state.team.find(m=>m.id===myId);
   const now=new Date();
   const today=now.toISOString().split('T')[0];
-  const in7=new Date(now.getTime()+7*86400000).toISOString().split('T')[0];
-  const in14=new Date(now.getTime()+14*86400000).toISOString().split('T')[0];
   const thisMonthKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 
   // Update page title with member name
@@ -5443,8 +5443,6 @@ function renderYouDashboard(){
   const openTasks=myTasks.filter(t=>t.status!=='done');
   const overdue=myTasks.filter(t=>isTaskOverdue(t));
   const inReviewTasks=myTasks.filter(t=>t.status==='review');
-  const upcoming=myTasks.filter(t=>t.due&&t.due>=today&&t.due<=in7&&t.status!=='done'&&t.status!=='review').sort((a,b)=>a.due.localeCompare(b.due));
-  const publishableSoon=myTasks.filter(t=>t.publishable&&t.status!=='done'&&effectivePublishDate(t)&&effectivePublishDate(t)>=today&&effectivePublishDate(t)<=in14).sort((a,b)=>effectivePublishDate(a).localeCompare(effectivePublishDate(b)));
 
   // Hours capacity (current month tasks by due date)
   const monthTasks=myTasks.filter(t=>(t.due||'').startsWith(thisMonthKey));
@@ -5543,56 +5541,30 @@ function renderYouDashboard(){
         </div>
       </div>
 
-      <!-- Upcoming this week -->
+      <!-- My Projects This Month -->
+      ${myProjects.length>0?`
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
-        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Due This Week (${upcoming.length})</div>
-        ${upcoming.length===0?`<div style="color:var(--text3);font-size:12px;font-style:italic;padding:12px 0">Nothing due in the next 7 days</div>`:`
-        <div style="display:flex;flex-direction:column;gap:8px">
-          ${upcoming.slice(0,8).map(t=>{
-            const proj=state.projects.find(p=>p.id===t.projectId);
-            const daysLeft=Math.ceil((new Date(t.due+'T12:00:00')-now)/86400000);
-            const dc=daysLeft<=1?'var(--red)':daysLeft<=3?'var(--amber)':'var(--text3)';
-            return`<div onclick="openEditTaskModal('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;cursor:pointer;transition:all .1s"
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">My Projects This Month (${myProjects.length})</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${myProjects.map(({p,d,pTasks,done,hours,pct})=>`
+            <div onclick="goToProjectTasks('${p.id}')" style="display:flex;align-items:center;gap:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .1s"
               onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
               <div style="flex:1;min-width:0">
-                <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(t.title)}</div>
-                <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${_escapeHtml(proj?.name||'')}</div>
+                <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
+                <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${_escapeHtml(d?.client||'')} · ${done}/${pTasks.length} tasks</div>
               </div>
-              <div style="text-align:right;flex-shrink:0">
-                <div style="font-family:'DM Mono',monospace;font-size:10px;color:${dc}">${daysLeft===0?'Today':daysLeft===1?'Tomorrow':daysLeft+'d'}</div>
-                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">${t.estHours||0}h</div>
+              <div style="width:80px">
+                <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
+                  <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:2px"></div>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-align:right">${pct}%</div>
               </div>
-            </div>`;
-          }).join('')}
-          ${upcoming.length>8?`<div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;text-align:center">+ ${upcoming.length-8} more</div>`:''}
-        </div>`}
-      </div>
+              <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);min-width:36px;text-align:right">${hours}h</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`:`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:12px;font-style:italic">No projects assigned this month</div>`}
     </div>
-
-    <!-- Projects this month -->
-    ${myProjects.length>0?`
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
-      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">My Projects This Month (${myProjects.length})</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        ${myProjects.map(({p,d,pTasks,done,hours,pct})=>`
-          <div onclick="goToProjectTasks('${p.id}')" style="display:flex;align-items:center;gap:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .1s"
-            onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
-              <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${_escapeHtml(d?.client||'')} · ${done}/${pTasks.length} tasks</div>
-            </div>
-            <div style="width:80px">
-              <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden;margin-bottom:3px">
-                <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:2px"></div>
-              </div>
-              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);text-align:right">${pct}%</div>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);min-width:36px;text-align:right">${hours}h</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>`:''}
-
     <!-- Personal production calendar -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
       <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -5929,19 +5901,22 @@ function renderFinancialDashboard(){
             <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:3px">${totalHours}h total estimated hours</div>
           </div>
           ${(()=>{
-            // Production-only rate: production pool earnings ÷ production-tagged hours
+            // Production-only rate: production pool earnings ÷ production + post-production hours
+            // Post-production is the other billable creative category alongside production
             const prodHours=tasks.filter(t=>t.tag==='production').reduce((s,t)=>s+(t.estHours||0),0);
+            const postProdHours=tasks.filter(t=>t.tag==='post-production').reduce((s,t)=>s+(t.estHours||0),0);
+            const billabledHours=prodHours+postProdHours;
             let totalProdPool=0;
             closed.forEach(d=>{
               const pb=d.buckets?.find(b=>b.name==='Production Pool');
               if(pb) totalProdPool+=netRev(d)*pb.pct/100;
             });
-            const prodRate=prodHours>0?Math.round(totalProdPool/prodHours*100)/100:null;
+            const prodRate=billabledHours>0?Math.round(totalProdPool/billabledHours*100)/100:null;
             const prodRateCol=rateColor(prodRate);
             return`<div style="margin-bottom:16px;padding:10px 12px;background:var(--bg3);border-radius:8px;border:1px solid var(--border)">
-              <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Production Pool Rate <span style="font-size:9px;font-family:'DM Mono',monospace">(pool ÷ production hrs)</span></div>
+              <div style="font-size:10px;color:var(--text3);margin-bottom:4px">Production Pool Rate <span style="font-size:9px;font-family:'DM Mono',monospace">(pool ÷ prod + post-prod hrs)</span></div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:${prodRateCol};letter-spacing:-0.02em">${prodRate?'$'+prodRate.toFixed(0)+'/hr':'—'}</div>
-              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${prodHours}h production tasks · ${fmt(totalProdPool)} total pool</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${billabledHours}h billable (${prodHours}h prod + ${postProdHours}h post) · ${fmt(totalProdPool)} pool</div>
             </div>`;
           })()}
           <div style="border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px">
@@ -7878,9 +7853,9 @@ function _renderYouCal(view){
     }
 
     el.innerHTML=nav+`<div style="padding:0 12px 16px">
-      <div class="cal-grid" style="margin-top:0">
-        <div class="cal-header">${DAY_NAMES.map(d=>`<div>${d}</div>`).join('')}</div>
-        <div class="cal-body">${cells}</div>
+      <div class="calendar-grid" style="margin-top:0">
+        ${DAY_NAMES.map(d=>`<div class="cal-header">${d}</div>`).join('')}
+        ${cells}
       </div>
     </div>`;
   }
@@ -9794,16 +9769,18 @@ function renderTeamOverview(){
           <div class="pay-row" style="margin-top:4px"><span class="pay-row-label">Active tasks</span><span class="pay-row-value">${state.tasks.filter(t=>t.assigneeId===m.id&&t.status!=='done').length}</span></div>
 
           ${can.adminFinance()?(()=>{
-            // Effective production rate: production pay ÷ production hours (all time)
-            const myProdTasks=state.tasks.filter(t=>t.assigneeId===m.id&&t.tag==='production');
-            const myProdHours=myProdTasks.reduce((s,t)=>s+(t.estHours||0),0);
-            const effRate=myProdHours>0?Math.round((prodPay[m.id]||0)/myProdHours*100)/100:null;
+            // Effective rate: combined total pay ÷ all task hours (production + post-production + any other)
+            // This reflects what the team member actually earns per hour of their time
+            const myAllTasks=state.tasks.filter(t=>t.assigneeId===m.id);
+            const myAllHours=myAllTasks.reduce((s,t)=>s+(t.estHours||0),0);
+            const myTotalPay=(prodPay[m.id]||0)+(feePay[m.id]||0)+(psPay[m.id]||0);
+            const effRate=myAllHours>0?Math.round(myTotalPay/myAllHours*100)/100:null;
             const tgt=state.finTargetRate||150;
             const rateCol=effRate===null?'var(--text3)':effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
             return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg3);border-radius:6px;margin-top:6px;border:1px solid var(--border)">
               <div>
-                <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Production Eff. Rate</div>
-                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:1px">${myProdHours}h production tasks</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Effective Rate</div>
+                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:1px">${myAllHours}h total · all sources</div>
               </div>
               <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:${rateCol}">${effRate?'$'+effRate.toFixed(0)+'/hr':'—'}</div>
             </div>`;
