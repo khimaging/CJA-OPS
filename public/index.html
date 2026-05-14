@@ -1868,7 +1868,7 @@ let state={
   taskView:'kanban',crmTab:'pipeline',monthOffset:0,currentPage:'financial',
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
-  finYear: new Date().getFullYear(), finTargetRate: 150,
+  finYear: new Date().getFullYear(), finTargetRate: (()=>{ try{ const s=localStorage.getItem('cja_fin_target_rate'); return s?parseInt(s):150; }catch(e){return 150;} })(),
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',pubCalClient:'',
   lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
@@ -5280,6 +5280,54 @@ function renderHealthDashboard(){
       </div>
     </div>
 
+    <!-- PER-PROJECT GRID -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:26px">
+      <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Active Projects (${activeProjects.length})</div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+        ${['Project','Health','Progress','In Review','Overdue','Hours Budget','Team'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+      </div>
+      ${projRows.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No active projects</div>`:
+        projRows.map(({p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName,budgetInfo})=>{
+          const ragColor={'green':'var(--green)','amber':'var(--amber)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
+          const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(212,166,90,0.12)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
+          const budgetBarColor=budgetInfo?(budgetInfo.over?'var(--red)':budgetInfo.pct>=85?'var(--amber)':'var(--green)'):null;
+          return`<div onclick="goToProjectTasks('${p.id}')" style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer"
+            onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+            <div style="min-width:0">
+              <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
+              ${clientName?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${_escapeHtml(clientName)}</div>`:''}
+            </div>
+            <div>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};font-weight:600">${rag.label.toUpperCase()}</span>
+            </div>
+            <div>
+              <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+                <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:3px"></div>
+              </div>
+              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${progressLabel}</div>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${inReview>0?'var(--blue)':'var(--text3)'};font-weight:${inReview>0?'600':'400'}">${inReview}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${overdueCount>0?'var(--red)':'var(--text3)'};font-weight:${overdueCount>0?'600':'400'}">${overdueCount}</div>
+            <div>
+              ${budgetInfo?`
+                <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+                  <div style="height:100%;width:${Math.min(budgetInfo.pct,100)}%;background:${budgetBarColor};border-radius:3px"></div>
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:9px;color:${budgetInfo.over?'var(--red)':'var(--text3)'};font-weight:${budgetInfo.over?'600':'400'}">${budgetInfo.used.toFixed(1)} / ${budgetInfo.budget}h${budgetInfo.over?' ⚠':''}</div>
+              `:`<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">—</span>`}
+            </div>
+            <div style="display:flex;align-items:center">
+              ${memberIds.slice(0,4).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
+              ${memberIds.length>4?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:10px">+${memberIds.length-4}</span>`:''}
+              ${memberIds.length===0?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">No team</span>`:''}
+            </div>
+          </div>`;
+        }).join('')
+      }
+    </div>
+
     <!-- NEEDS ATTENTION -->
     ${attentionShown.length>0?`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:26px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -5332,54 +5380,6 @@ function renderHealthDashboard(){
         </div>`;
       }).join('')}
     </div>`:''}
-
-    <!-- PER-PROJECT GRID -->
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-      <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
-        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Active Projects (${activeProjects.length})</div>
-      </div>
-      <div style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
-        ${['Project','Health','Progress','In Review','Overdue','Hours Budget','Team'].map(h=>`<span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
-      </div>
-      ${projRows.length===0?`<div style="padding:32px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No active projects</div>`:
-        projRows.map(({p,pct,progressLabel,inReview,overdueCount,memberIds,rag,clientName,budgetInfo})=>{
-          const ragColor={'green':'var(--green)','amber':'var(--amber)','red':'var(--red)','grey':'var(--text3)'}[rag.rag];
-          const ragBg={'green':'rgba(76,175,122,0.1)','amber':'rgba(212,166,90,0.12)','red':'rgba(224,90,90,0.1)','grey':'var(--bg3)'}[rag.rag];
-          const budgetBarColor=budgetInfo?(budgetInfo.over?'var(--red)':budgetInfo.pct>=85?'var(--amber)':'var(--green)'):null;
-          return`<div onclick="goToProjectTasks('${p.id}')" style="display:grid;grid-template-columns:2fr 120px 1fr 90px 90px 130px 130px;padding:14px 20px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer"
-            onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
-            <div style="min-width:0">
-              <div style="font-size:13px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(p.name)}</div>
-              ${clientName?`<div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-top:2px">${_escapeHtml(clientName)}</div>`:''}
-            </div>
-            <div>
-              <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 8px;border-radius:4px;background:${ragBg};color:${ragColor};font-weight:600">${rag.label.toUpperCase()}</span>
-            </div>
-            <div>
-              <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
-                <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--green)':'var(--amber)'};border-radius:3px"></div>
-              </div>
-              <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${progressLabel}</div>
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${inReview>0?'var(--blue)':'var(--text3)'};font-weight:${inReview>0?'600':'400'}">${inReview}</div>
-            <div style="font-family:'DM Mono',monospace;font-size:13px;color:${overdueCount>0?'var(--red)':'var(--text3)'};font-weight:${overdueCount>0?'600':'400'}">${overdueCount}</div>
-            <div>
-              ${budgetInfo?`
-                <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
-                  <div style="height:100%;width:${Math.min(budgetInfo.pct,100)}%;background:${budgetBarColor};border-radius:3px"></div>
-                </div>
-                <div style="font-family:'DM Mono',monospace;font-size:9px;color:${budgetInfo.over?'var(--red)':'var(--text3)'};font-weight:${budgetInfo.over?'600':'400'}">${budgetInfo.used.toFixed(1)} / ${budgetInfo.budget}h${budgetInfo.over?' ⚠':''}</div>
-              `:`<span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">—</span>`}
-            </div>
-            <div style="display:flex;align-items:center">
-              ${memberIds.slice(0,4).map(mid=>{const mem=state.team.find(m=>m.id===mid);return mem?`<div class="user-avatar" style="background:${mem.color};width:22px;height:22px;font-size:8px;margin-right:-5px;border:2px solid var(--bg2)">${mem.name.split(' ').map(n=>n[0]).join('')}</div>`:''}).join('')}
-              ${memberIds.length>4?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:10px">+${memberIds.length-4}</span>`:''}
-              ${memberIds.length===0?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">No team</span>`:''}
-            </div>
-          </div>`;
-        }).join('')
-      }
-    </div>
   `;
 }
 
@@ -5524,7 +5524,7 @@ function renderFinancialDashboard(){
         <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Effective Rate Target</span>
         <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">$</span>
         <input type="number" value="${targetRate}" min="50" max="500" step="5"
-          onchange="state.finTargetRate=parseInt(this.value)||150;renderFinancialDashboard()"
+          onchange="state.finTargetRate=parseInt(this.value)||150;try{localStorage.setItem('cja_fin_target_rate',state.finTargetRate);}catch(e){}renderFinancialDashboard()"
           style="background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;width:52px;padding:0 2px;outline:none">
         <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">/hr</span>
       </div>
@@ -5570,20 +5570,20 @@ function renderFinancialDashboard(){
 
       <!-- Client revenue bars -->
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
-        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Revenue by Client</div>
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Net Revenue by Client</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          ${clientList.slice(0,10).map(c=>{
-            const pct=totalGrossAllTime>0?Math.round(c.gross/totalGrossAllTime*100):0;
+          ${[...clientList].sort((a,b)=>b.net-a.net).slice(0,10).map(c=>{
+            const pct=totalNetAllTime>0?Math.round(c.net/totalNetAllTime*100):0;
             const margin=c.gross>0?Math.round(c.net/c.gross*100):0;
             return`<div>
               <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
                 <span style="font-size:12px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%">${_escapeHtml(c.name)}</span>
-                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text2);white-space:nowrap;margin-left:8px">${fmt(c.gross)} <span style="color:var(--text3)">${pct}%</span></span>
+                <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text2);white-space:nowrap;margin-left:8px">${fmt(c.net)} <span style="color:var(--text3)">${pct}%</span></span>
               </div>
               <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--gold),rgba(212,166,90,0.5));border-radius:3px"></div>
+                <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--green),rgba(76,175,122,0.5));border-radius:3px"></div>
               </div>
-              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.deals} deal${c.deals===1?'':'s'} · margin ${margin}%</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.deals} deal${c.deals===1?'':'s'} · gross ${fmt(c.gross)} · margin ${margin}%</div>
             </div>`;
           }).join('')}
           ${clientList.length>10?`<div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;text-align:center;padding-top:4px">+ ${clientList.length-10} more clients</div>`:''}
