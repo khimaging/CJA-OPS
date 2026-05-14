@@ -1883,6 +1883,7 @@ let state={
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
   finYear: new Date().getFullYear(), finTargetRate: (()=>{ try{ const s=localStorage.getItem('cja_fin_target_rate'); return s?parseInt(s):150; }catch(e){return 150;} })(),
+  youCalOffset:0, youCalView:'week',
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',pubCalClient:'',
   lastUsedDeliverable:{}, // { [projectId]: deliverableId } — remembers default for new tasks per project
@@ -5457,12 +5458,12 @@ function renderYouDashboard(){
   monthTasks.forEach(t=>{const k=t.tag||'untagged';tagHours[k]=(tagHours[k]||0)+(t.estHours||0);});
   const tagColor={'production':'var(--blue)','post-production':'var(--purple)','admin':'var(--text3)','untagged':'var(--text3)'};
 
-  // Earnings this month
+  // Earnings this month — projected (includes in-progress deals, not just paid/complete)
   const monthFilter=d=>(d.closeDate||'').startsWith(thisMonthKey);
-  const {prodPay,feePay,psPay}=calcActualEarnings(monthFilter);
-  const myProd=prodPay[myId]||0;
-  const myFee=feePay[myId]||0;
-  const myPs=psPay[myId]||0;
+  const {prodPay:projProdPay,feePay:projFeePay,psPay:projPsPay}=calcProjectedEarnings(monthFilter);
+  const myProd=projProdPay[myId]||0;
+  const myFee=projFeePay[myId]||0;
+  const myPs=projPsPay[myId]||0;
   const myTotal=myProd+myFee+myPs;
 
   // Workload donut — build the byPeriod structure _buildMemberDonut expects
@@ -5498,7 +5499,7 @@ function renderYouDashboard(){
         {label:'In Review', val:inReviewTasks.length, color:inReviewTasks.length>0?'var(--blue)':'var(--text3)'},
         {label:'Due This Week', val:upcoming.length, color:upcoming.length>0?'var(--amber)':'var(--text3)'},
         {label:'Month Hours', val:`${monthHours}h`, sub:`of ${cap}h cap`, color:utilColor},
-        {label:'Month Earnings', val:fmt(myTotal), sub:'production + fees', color:'var(--gold)'},
+        {label:'Month Earnings', val:fmt(myTotal), sub:'projected · prod + fees', color:'var(--gold)'},
       ].map(k=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${k.label}</div>
         <div style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:${k.color};letter-spacing:-0.02em">${k.val}</div>
@@ -5592,26 +5593,23 @@ function renderYouDashboard(){
       </div>
     </div>`:''}
 
-    <!-- Publishable tasks coming up -->
-    ${publishableSoon.length>0?`
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
-      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">Publishable Tasks · Next 14 Days (${publishableSoon.length})</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
-        ${publishableSoon.map(t=>{
-          const proj=state.projects.find(p=>p.id===t.projectId);
-          const pubDate=effectivePublishDate(t);
-          return`<div onclick="openEditTaskModal('${t.id}')" style="padding:10px 14px;background:var(--bg3);border:1px solid rgba(149,97,226,0.25);border-radius:8px;cursor:pointer;transition:all .1s"
-            onmouseover="this.style.borderColor='var(--purple)'" onmouseout="this.style.borderColor='rgba(149,97,226,0.25)'">
-            <div style="font-size:12px;color:var(--text);font-weight:500;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(t.title)}</div>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${_escapeHtml(proj?.name||'')}</span>
-              <span class="task-type-tag tag-publishable">${pubDate?new Date(pubDate+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):''}</span>
-            </div>
-          </div>`;
-        }).join('')}
+    <!-- Personal production calendar -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+      <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">My Schedule</div>
+        <div style="display:flex;gap:4px">
+          ${['day','week','month'].map(v=>`<button onclick="state.youCalView='${v}';state.youCalOffset=0;_renderYouCal('${v}')"
+            style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:5px;border:1px solid ${state.youCalView===v?'var(--gold)':'var(--border)'};background:${state.youCalView===v?'rgba(234,234,234,0.1)':'var(--bg3)'};color:${state.youCalView===v?'var(--gold)':'var(--text3)'};cursor:pointer">
+            ${v.charAt(0).toUpperCase()+v.slice(1)}
+          </button>`).join('')}
+        </div>
       </div>
-    </div>`:''}
+      <div id="you-cal-inner" style="padding:0"></div>
+    </div>
   `;
+
+  // Render the calendar after setting innerHTML
+  _renderYouCal(state.youCalView||'week');
 }
 
 // Helper: get effective publish date (reuse from codebase)
@@ -7701,6 +7699,217 @@ async function _pcDropMember(e,memberId,dateStr){
     task.assigneeId=prevAssignee;task.due=prevDue;
     notify('Update failed: '+ex.message);
     renderProdCal();
+  }
+}
+
+// ============================================================
+//  YOU — PERSONAL CALENDAR (mirrors production calendar, filtered to current user)
+// ============================================================
+function _renderYouCalNavLabel(view){
+  const now=new Date();
+  const offset=state.youCalOffset||0;
+  if(view==='day'){
+    const d=new Date(now);d.setDate(now.getDate()+offset);
+    return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  }
+  if(view==='week'){
+    const ws=new Date(now);ws.setDate(now.getDate()-now.getDay()+1+offset*7);ws.setHours(0,0,0,0);
+    const we=new Date(ws);we.setDate(ws.getDate()+6);
+    return ws.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' — '+we.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  }
+  const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  return MONTHS[base.getMonth()]+' '+base.getFullYear();
+}
+
+function _renderYouCal(view){
+  const el=document.getElementById('you-cal-inner');
+  if(!el) return;
+
+  const myId=auth?.user?.id;
+  if(!myId) return;
+  const member=state.team.find(m=>m.id===myId);
+
+  const now=new Date();
+  const offset=state.youCalOffset||0;
+  const ts=now.toISOString().split('T')[0];
+  const DAY_CAP=WL_CAPS.day;
+
+  const navLabel=_renderYouCalNavLabel(view);
+  const todayBtn=offset!==0?`<button class="btn btn-sm" onclick="state.youCalOffset=0;_renderYouCal('${view}')">Today</button>`:'';
+
+  const nav=`<div style="display:flex;align-items:center;gap:12px;padding:12px 20px;flex-wrap:wrap">
+    <button class="month-nav-btn" onclick="state.youCalOffset=(state.youCalOffset||0)-1;_renderYouCal('${view}')">‹</button>
+    <span style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:var(--text)">${navLabel}</span>
+    <button class="month-nav-btn" onclick="state.youCalOffset=(state.youCalOffset||0)+1;_renderYouCal('${view}')">›</button>
+    ${todayBtn}
+  </div>`;
+
+  // ── DAY VIEW ──────────────────────────────────────────────────
+  if(view==='day'){
+    const d=new Date(now);d.setDate(now.getDate()+offset);d.setHours(0,0,0,0);
+    const ds=d.toISOString().split('T')[0];
+    const dayTasks=state.tasks.filter(t=>t.assigneeId===myId&&t.due===ds&&t.tag!=='admin');
+    const hours=dayTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    const over=hours>DAY_CAP;
+    const hColor=over?'var(--red)':hours>DAY_CAP*0.8?'var(--gold)':'var(--green)';
+    el.innerHTML=nav+`<div style="padding:0 20px 16px">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px;font-family:'DM Mono',monospace;font-size:11px;color:${hColor}">${hours}h / ${DAY_CAP}h cap</div>
+      ${dayTasks.length===0?`<div style="padding:20px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:10px">No tasks scheduled for this day</div>`:''}
+      ${dayTasks.map(t=>{
+        const proj=state.projects.find(p=>p.id===t.projectId);
+        const isDone=t.status==='done';
+        return`<div draggable="true"
+          ondragstart="_calGlobalDragStart(event,'${t.id}')" ondragend="_calGlobalDragEnd(event)"
+          style="display:grid;grid-template-columns:1fr 140px 60px;padding:9px 0;border-bottom:1px solid var(--border);align-items:center;cursor:grab;opacity:${isDone?'0.6':'1'}"
+          onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''"
+          onclick="openEditTaskModal('${t.id}')">
+          <div style="display:flex;align-items:center;gap:7px"><span class="task-tag priority-${t.priority}">${t.priority}</span><span style="font-size:12px;color:${isDone?'var(--text3)':'var(--text)'}">${isDone?'✓ ':''}${_escapeHtml(t.title)}</span></div>
+          <div style="font-size:10px;color:var(--text3)">${_escapeHtml(proj?.name||'')}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isDone?'var(--green)':'var(--gold)'}">${t.estHours||0}h</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+    return;
+  }
+
+  // ── WEEK VIEW ─────────────────────────────────────────────────
+  if(view==='week'){
+    const ws=new Date(now);ws.setDate(now.getDate()-now.getDay()+1+offset*7);ws.setHours(0,0,0,0);
+    const weekDays=Array.from({length:7},(_,i)=>{
+      const d=new Date(ws);d.setDate(ws.getDate()+i);
+      return{date:d,ds:d.toISOString().split('T')[0],label:d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}),isToday:d.toDateString()===now.toDateString()};
+    });
+    const weekTasks=state.tasks.filter(t=>t.assigneeId===myId&&t.due&&t.due>=weekDays[0].ds&&t.due<=weekDays[6].ds&&t.tag!=='admin');
+    const weekH=weekTasks.reduce((s,t)=>s+(t.estHours||0),0);
+    const over=weekH>WL_CAPS.week;
+    const hColor=over?'var(--red)':weekH>WL_CAPS.week*0.8?'var(--gold)':'var(--green)';
+
+    const dayCols=weekDays.map(wd=>{
+      const dTasks=weekTasks.filter(t=>t.due===wd.ds);
+      const dH=dTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const dOver=dH>DAY_CAP;
+      const dColor=dOver?'var(--red)':dH>DAY_CAP*0.8?'var(--gold)':dH>0?'var(--green)':'var(--text3)';
+      return`<td style="vertical-align:top;border-right:1px solid var(--border);padding:0;min-width:120px"
+          ondragover="event.preventDefault();this.classList.add('cal-day-dz-over')"
+          ondragleave="this.classList.remove('cal-day-dz-over')"
+          ondrop="this.classList.remove('cal-day-dz-over');_youCalDrop(event,'${wd.ds}')">
+          <div style="padding:8px 10px;background:${wd.isToday?'rgba(212,166,90,0.08)':'var(--bg)'};border-bottom:1px solid var(--border)">
+            <div style="font-family:'DM Mono',monospace;font-size:9px;color:${wd.isToday?'var(--gold)':'var(--text3)'};font-weight:${wd.isToday?'700':'400'}">${wd.label}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:${dColor};margin-top:1px">${dH>0?dH+'h':''}</div>
+          </div>
+          <div style="padding:6px 8px;display:flex;flex-direction:column;gap:4px">
+            ${dTasks.map(t=>{
+              const proj=state.projects.find(p=>p.id===t.projectId);
+              const isDone=t.status==='done';
+              const isOver=isTaskOverdue(t);
+              return`<div draggable="true"
+                ondragstart="_calGlobalDragStart(event,'${t.id}')" ondragend="_calGlobalDragEnd(event)"
+                onclick="openEditTaskModal('${t.id}')"
+                style="background:${isDone?'var(--bg4)':isOver?'rgba(224,90,90,0.15)':member?member.color:'var(--blue)'};border-radius:5px;padding:5px 8px;cursor:grab;${isDone?'opacity:0.6;border:1.5px solid var(--green)':''}"
+                title="${_escapeHtml(t.title)} · ${proj?.name||''} · ${t.estHours||0}h">
+                <div style="font-family:'DM Mono',monospace;font-size:9px;font-weight:600;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${_escapeHtml(t.title)}</div>
+                <div style="font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.6)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(proj?.name||'')}</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.5)'}">${t.estHours||0}h</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </td>`;
+    }).join('');
+
+    el.innerHTML=nav+`
+      <div style="padding:0 20px 8px;display:flex;justify-content:flex-end;font-family:'DM Mono',monospace;font-size:10px;color:${hColor}">${weekH}h this week / ${WL_CAPS.week}h cap</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;border-top:1px solid var(--border)">
+          <tbody><tr>${dayCols}</tr></tbody>
+        </table>
+      </div>`;
+    return;
+  }
+
+  // ── MONTH VIEW ────────────────────────────────────────────────
+  {
+    const base=new Date(now.getFullYear(),now.getMonth()+offset,1);
+    const yr=base.getFullYear(),mo=base.getMonth();
+    const dim=new Date(yr,mo+1,0).getDate();
+    const fd=(base.getDay()||7)-1; // Mon-based
+    const prevDim=new Date(yr,mo,0).getDate();
+    const DAY_NAMES=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    const monthTasks=state.tasks.filter(t=>{
+      if(t.assigneeId!==myId||t.tag==='admin') return false;
+      if(!t.due) return false;
+      const d=new Date(t.due+'T12:00:00');
+      return d.getFullYear()===yr&&d.getMonth()===mo;
+    });
+
+    let cells='';
+    let totalCells=Math.ceil((fd+dim)/7)*7;
+    for(let i=0;i<totalCells;i++){
+      let day,ds,isCurrentMonth=true;
+      if(i<fd){day=prevDim-fd+i+1;const dd=new Date(yr,mo-1,day);ds=dd.toISOString().split('T')[0];isCurrentMonth=false;}
+      else if(i>=fd+dim){day=i-fd-dim+1;const dd=new Date(yr,mo+1,day);ds=dd.toISOString().split('T')[0];isCurrentMonth=false;}
+      else{day=i-fd+1;ds=`${yr}-${String(mo+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;}
+      const isToday=ds===ts;
+      const dTasks=monthTasks.filter(t=>t.due===ds);
+      const dH=dTasks.reduce((s,t)=>s+(t.estHours||0),0);
+      const dColor=dH>DAY_CAP?'var(--red)':dH>DAY_CAP*0.8?'var(--gold)':dH>0?'var(--green)':'var(--text3)';
+      const MAX_SHOWN=3;
+      cells+=`<div class="${isCurrentMonth?'cal-day':'cal-day other-month'}"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="this.classList.remove('drag-over');_youCalDrop(event,'${ds}')">
+          <div class="cal-day-num" style="${isToday?'color:var(--gold);font-weight:700':''}">
+            ${day}${dH>0?`<span style="font-family:'DM Mono',monospace;font-size:8px;color:${dColor};margin-left:4px">${dH}h</span>`:''}
+          </div>
+          ${dTasks.slice(0,MAX_SHOWN).map(t=>{
+            const proj=state.projects.find(p=>p.id===t.projectId);
+            const isDone=t.status==='done';
+            return`<div draggable="true"
+              ondragstart="_calGlobalDragStart(event,'${t.id}')" ondragend="_calGlobalDragEnd(event)"
+              onclick="event.stopPropagation();openEditTaskModal('${t.id}')"
+              style="margin-bottom:2px;padding:2px 5px;border-radius:3px;background:${isDone?'var(--bg4)':member?member.color:'var(--blue)'};cursor:grab;overflow:hidden;${isDone?'opacity:0.6;border:1px solid var(--green)':''}"
+              title="${_escapeHtml(t.title)} · ${proj?.name||''} · ${t.estHours||0}h">
+              <div style="font-family:'DM Mono',monospace;font-size:8px;color:${isDone?'var(--text2)':'#0e0e0f'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isDone?'✓ ':''}${_escapeHtml(t.title)}</div>
+              <div style="font-size:7px;color:${isDone?'var(--text3)':'rgba(0,0,0,0.55)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtml(proj?.name||'')}</div>
+            </div>`;
+          }).join('')}
+          ${dTasks.length>MAX_SHOWN?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">+${dTasks.length-MAX_SHOWN} more</div>`:''}
+        </div>`;
+    }
+
+    el.innerHTML=nav+`<div style="padding:0 12px 16px">
+      <div class="cal-grid" style="margin-top:0">
+        <div class="cal-header">${DAY_NAMES.map(d=>`<div>${d}</div>`).join('')}</div>
+        <div class="cal-body">${cells}</div>
+      </div>
+    </div>`;
+  }
+}
+
+// Drop handler for the You calendar — updates task due date and re-renders
+async function _youCalDrop(event, dateStr){
+  event.preventDefault();
+  const taskId=event.dataTransfer?.getData('text/plain')||_calGlobalDragId;
+  if(!taskId||!dateStr) return;
+  const task=state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+
+  // Check if project is finalized
+  if(isProjectLocked(task.projectId)){
+    if(!confirm('This project\'s payouts are finalized. Move the due date anyway?')) return;
+  }
+
+  const prev=task.due;
+  task.due=dateStr;
+  _renderYouCal(state.youCalView||'week');
+  try{
+    await api('PATCH','/tasks/'+taskId,{dueDate:dateStr});
+    notify('Due date updated ✓');
+    if(state.currentPage==='projects'&&state.activeProjectId) renderProjectDetail(state.activeProjectId);
+  } catch(e){
+    task.due=prev;
+    notify('Update failed: '+e.message);
+    _renderYouCal(state.youCalView||'week');
   }
 }
 
