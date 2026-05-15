@@ -64,7 +64,7 @@
   .crm-tab-content{display:none;} .crm-tab-content.active{display:block;}
 
   /* PIPELINE */
-  .pipeline{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:28px;}
+  .pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:28px;}
   .pipeline-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:160px;transition:border-color .15s,background .15s;}
   .pipeline-col.drag-over{border-color:var(--gold);background:rgba(234,234,234,0.05);}
   .pipeline-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
@@ -1114,6 +1114,7 @@
           <option value="Qualified">Qualified</option>
           <option value="Proposal">Proposal</option>
           <option value="Negotiation">Negotiation</option>
+          <option value="Retainer">Retainer</option>
           <option value="Closed Won">Closed Won</option>
         </select>
       </div>
@@ -1793,8 +1794,8 @@ let DEFAULT_BUCKETS=(()=>{
     {name:'Project Manager Fee',color:'#d47a3a',pct:7.5, isPersonal:true},
   ];
 })();
-const STAGES=['Lead','Qualified','Proposal','Negotiation','Closed Won'];
-const STAGE_COLORS=['#5a5a6a','#5a8fd4','#d4a65a','#d47a3a','#4caf7a'];
+const STAGES=['Lead','Qualified','Proposal','Negotiation','Retainer','Closed Won'];
+const STAGE_COLORS=['#5a5a6a','#5a8fd4','#d4a65a','#d47a3a','#9561e2','#4caf7a'];
 const INV_LBL={none:'Not Invoiced',sent:'Invoice Sent',deposit:'Deposit Collected',paid:'Paid in Full'};
 const INV_CLS={none:'inv-none',sent:'inv-sent',deposit:'inv-deposit',paid:'inv-paid'};
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -5625,10 +5626,13 @@ function renderFinancialDashboard(){
   const monthlyData=months.map((mo,i)=>{
     const key=`${yr}-${mo}`;
     const mDeals=closed.filter(d=>(d.closeDate||'').startsWith(key));
-    const mPipe=pipeline.filter(d=>(d.closeDate||'').startsWith(key));
+    // Pipeline overlay: open Retainer deals for this month (future committed revenue)
+    const mRetainer=allDeals.filter(d=>d.stage==='Retainer'&&(d.closeDate||'').startsWith(key));
+    const mPipe=allDeals.filter(d=>d.stage!=='Closed Won'&&d.stage!=='Retainer'&&d.stage!=='Lost'&&(d.closeDate||'').startsWith(key));
     const gross=mDeals.reduce((s,d)=>s+d.value,0);
     const net=mDeals.reduce((s,d)=>s+netRev(d),0);
-    const pipelineGross=mPipe.reduce((s,d)=>s+(d.value||0)*(d.prob||50)/100,0);
+    // Retainer deals show at full value (committed); pipeline uses probability weighting
+    const pipelineGross=mRetainer.reduce((s,d)=>s+(d.value||0),0)+mPipe.reduce((s,d)=>s+(d.value||0)*(d.prob||50)/100,0);
     return{key,label:monthLabels[i],gross,net,pipelineGross,deals:mDeals.length};
   });
 
@@ -9718,15 +9722,28 @@ function calcProjectedEarnings(filterFn){
   const prodPay={},feePay={},psPay={};
   state.team.forEach(m=>{prodPay[m.id]=0;feePay[m.id]=0;psPay[m.id]=0;});
 
-  // Projected = Closed Won deals where payout hasn't been fully earned yet:
-  // either not yet paid, OR paid but project not complete / tasks not all done
+  const now=new Date();
+  const currentYM=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+
+  // Helper: is this deal eligible as projected?
+  // Closed Won: standard projection (project not fully earned yet)
+  // Retainer: only eligible once its closeDate month has arrived — prevents future months bleeding in
+  const isProjectionEligible=(deal)=>{
+    if(deal.stage==='Closed Won') return true;
+    if(deal.stage==='Retainer'){
+      const dm=(deal.closeDate||'').substring(0,7);
+      return dm&&dm<=currentYM; // only current or past months
+    }
+    return false;
+  };
+
+  // Projected = eligible deals where payout hasn't been fully earned yet
   state.projects.forEach(proj=>{
     const deal=state.deals.find(d=>d.id===proj.dealId);
     if(!deal) return;
-    if(deal.stage!=='Closed Won') return;
+    if(!isProjectionEligible(deal)) return;
     if(proj.archived) return;
     if(filterFn&&!filterFn(deal)) return;
-    // Exclude only if fully earned (paid + complete + all tasks done)
     const tasks=state.tasks.filter(t=>t.projectId===proj.id);
     const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
     if(deal.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return;
@@ -9739,13 +9756,12 @@ function calcProjectedEarnings(filterFn){
     deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
   });
 
-  // Projected profit share — Closed Won where not yet fully earned
+  // Projected profit share — eligible deals not yet fully earned
   const projectedDeals=state.deals.filter(d=>{
-    if(d.stage!=='Closed Won') return false;
+    if(!isProjectionEligible(d)) return false;
     const proj=state.projects.find(p=>p.dealId===d.id);
     const tasks=proj?state.tasks.filter(t=>t.projectId===proj.id):[];
     const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
-    // Exclude if fully earned
     if(d.invoiceStatus==='paid'&&proj?.status==='complete'&&allDone) return false;
     return filterFn?filterFn(d):true;
   });
@@ -10191,54 +10207,60 @@ function renderTeamPayByClient(){
   const projects=state.projects||[];
   const activeMembers=state.team.filter(m=>m.active!==false);
 
-  // Build per-member × per-client earnings — all sources: production, fees, profit share
+  // Build per-member × per-client earnings — all sources, actual + projected
   const memberClientData=activeMembers.map(m=>{
     const clientEarnings={};
     let totalEarnings=0;
     let totalHours=0;
 
-    deals.filter(d=>d.stage==='Closed Won'&&d.invoiceStatus==='paid').forEach(d=>{
+    // Helper to accumulate earnings into a client bucket
+    const accrue=(cname,myEarnings,myH,isProjected)=>{
+      if(myEarnings<=0&&myH<=0) return;
+      if(!clientEarnings[cname]) clientEarnings[cname]={name:cname,earnings:0,projected:0,hours:0,deals:0};
+      clientEarnings[cname].earnings+=myEarnings;
+      if(isProjected) clientEarnings[cname].projected+=myEarnings;
+      clientEarnings[cname].hours+=myH;
+      clientEarnings[cname].deals++;
+      totalEarnings+=myEarnings;
+      totalHours+=myH;
+    };
+
+    deals.filter(d=>d.stage==='Closed Won').forEach(d=>{
       const proj=projects.find(p=>p.dealId===d.id);
-      if(!proj||proj.status!=='complete') return;
+      if(!proj||proj.archived) return;
       const projTasks=tasks.filter(t=>t.projectId===proj.id);
       const myTasks=projTasks.filter(t=>t.assigneeId===m.id);
       const cname=d.client||'Unknown';
-      let myEarnings=0;
-      let myH=0;
 
-      // Production pool (proportional to hours)
+      // Determine if actual (paid + complete) or projected (in-progress)
+      const isActual=d.invoiceStatus==='paid'&&proj.status==='complete';
+      const isProjected=!isActual; // still open/in-progress
+
+      // Production pool
       const pb=d.buckets?.find(b=>b.name==='Production Pool');
       if(pb&&myTasks.length){
         const pool=netRev(d)*pb.pct/100;
         const tH=projTasks.reduce((s,t)=>s+(t.estHours||0),0);
-        myH=myTasks.reduce((s,t)=>s+(t.estHours||0),0);
-        if(tH>0&&myH>0) myEarnings+=pool*(myH/tH);
+        const myH=myTasks.reduce((s,t)=>s+(t.estHours||0),0);
+        if(tH>0&&myH>0) accrue(cname, pool*(myH/tH), myH, isProjected);
       }
 
-      // Personal fee buckets assigned to this member
+      // Personal fee buckets
       d.buckets?.filter(b=>b.isPersonal&&b.assignedTo===m.id).forEach(b=>{
-        myEarnings+=netRev(d)*b.pct/100;
+        const amt=netRev(d)*b.pct/100;
+        if(amt>0) accrue(cname, amt, 0, isProjected);
       });
 
-      // Profit share — check per-project pay_status key
-      const psKey=`${proj.id}_ps_${m.id}`;
-      const psPaid=!!state.payStatus[psKey];
-      if(psPaid){
-        const psB=d.buckets?.find(b=>b.name==='Profit Share');
-        const psPct=psB?psB.pct:17.5;
-        const pool=netRev(d)*psPct/100;
-        const lockedPct=state.payStatusSnapshots&&state.payStatusSnapshots[psKey]!=null
-          ?state.payStatusSnapshots[psKey]:(m.profitSharePct||0);
-        myEarnings+=pool*lockedPct/100;
-      }
-
-      if(myEarnings>0||myH>0){
-        if(!clientEarnings[cname])clientEarnings[cname]={name:cname,earnings:0,hours:0,deals:0};
-        clientEarnings[cname].earnings+=myEarnings;
-        clientEarnings[cname].hours+=myH;
-        clientEarnings[cname].deals++;
-        totalEarnings+=myEarnings;
-        totalHours+=myH;
+      // Profit share — actual (paid) only
+      if(isActual){
+        const psKey=`${proj.id}_ps_${m.id}`;
+        if(state.payStatus[psKey]){
+          const psB=d.buckets?.find(b=>b.name==='Profit Share');
+          const psPct=psB?psB.pct:17.5;
+          const pool=netRev(d)*psPct/100;
+          const lockedPct=state.payStatusSnapshots?.[psKey]??m.profitSharePct??0;
+          accrue(cname, pool*lockedPct/100, 0, false);
+        }
       }
     });
 
@@ -10258,7 +10280,7 @@ function renderTeamPayByClient(){
             </div>
             <div style="text-align:right">
               <div style="font-family:'DM Mono',monospace;font-size:15px;font-weight:700;color:var(--gold)">${fmt(totalEarnings)}</div>
-              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">all sources · ${totalHours}h</div>
+              <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">all sources · ${totalHours}h · actual + projected</div>
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px">
@@ -10279,7 +10301,7 @@ function renderTeamPayByClient(){
                 <div style="height:4px;background:var(--bg4);border-radius:2px;overflow:hidden">
                   <div style="height:100%;width:${pct}%;background:${member.color};opacity:0.8;border-radius:2px"></div>
                 </div>
-                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.hours}h · ${c.deals} deal${c.deals===1?'':'s'}</div>
+                <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace;margin-top:2px">${c.hours}h · ${c.deals} deal${c.deals===1?'':'s'}${c.projected>0?` · <span style="color:var(--amber)">${fmt(c.projected)} proj.</span>`:''}</div>
               </div>`;
             }).join('')}
           </div>
