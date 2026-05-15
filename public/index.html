@@ -7936,7 +7936,7 @@ function renderProdCal(){
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Live Workload</div>
         <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">today / 7d / 30d caps</div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1px;background:var(--border)">
+      <div style="display:flex;flex-direction:column;gap:1px;background:var(--border)">
         ${memberStatsList.map(m=>{
           const periodBars=periods.map(p=>{
             const{hours,pct,over}=m.byPeriod[p.id];
@@ -7951,17 +7951,17 @@ function renderProdCal(){
               </div>
             </div>`;
           }).join('');
-          return`<div style="background:var(--bg2);padding:14px 16px;display:flex;align-items:center;gap:14px">
+          return`<div style="background:var(--bg2);padding:16px 20px;display:flex;align-items:center;gap:20px">
             <div style="flex-shrink:0">${_buildMemberDonut(m,m,120)}</div>
             <div style="flex:1;min-width:0">
-              <div style="display:flex;align-items:center;gap:7px;margin-bottom:6px">
-                <div class="user-avatar" style="background:${m.color};width:24px;height:24px;font-size:9px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
                 <div>
-                  <div style="font-size:13px;font-weight:600;color:var(--text)">${m.name}</div>
-                  <div style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">${m.openTasks.length} open${m.overdue.length?` · <span style="color:var(--red)">${m.overdue.length} overdue</span>`:''}</div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text)">${m.name}</div>
+                  <div style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace">${m.openTasks.length} open task${m.openTasks.length===1?'':'s'}${m.overdue.length?` · <span style="color:var(--red)">${m.overdue.length} overdue</span>`:''}</div>
                 </div>
               </div>
-              <div style="display:flex;gap:12px">${periodBars}</div>
+              <div style="display:flex;gap:20px">${periodBars}</div>
             </div>
           </div>`;
         }).join('')}
