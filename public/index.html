@@ -4299,6 +4299,8 @@ function renderCRM(){
       <div class="stat-delta">${deals.length} deals · all stages</div>
     </div>
   `;
+  const canEdit=can.edit();
+
   // Role-gate topbar
   const taEl=document.getElementById('crm-topbar-actions');
   if(taEl) taEl.innerHTML=canEdit
