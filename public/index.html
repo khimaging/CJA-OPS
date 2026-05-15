@@ -5544,6 +5544,14 @@ function renderYouDashboard(){
   // Hours capacity (current month tasks by due date)
   const monthTasks=myTasks.filter(t=>(t.due||'').startsWith(thisMonthKey));
   const monthHours=monthTasks.reduce((s,t)=>s+(t.estHours||0),0);
+
+  // Completed vs scheduled breakdown for this month
+  const mDoneH=monthTasks.filter(t=>t.status==='done').reduce((s,t)=>s+(t.estHours||0),0);
+  const mReviewH=monthTasks.filter(t=>t.status==='review').reduce((s,t)=>s+(t.estHours||0),0);
+  const mProgH=monthTasks.filter(t=>t.status==='progress').reduce((s,t)=>s+(t.estHours||0),0);
+  const mTodoH=monthTasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(t.estHours||0),0);
+  const mCompletedH=mDoneH+mReviewH;
+  const mCompletedPct=monthHours>0?Math.round(mCompletedH/monthHours*100):0;
   const cap=memberMonthCap(member);
   const utilPct=Math.min(Math.round(monthHours/cap*100),120);
   const utilColor=monthCapColor(monthHours,cap);
@@ -5609,16 +5617,35 @@ function renderYouDashboard(){
         <div style="display:flex;gap:16px;align-items:flex-start">
           <div style="flex-shrink:0">${donutHtml}</div>
           <div style="flex:1;min-width:0">
-            <!-- Utilization bar -->
+            <!-- Month capacity bar -->
             <div style="margin-bottom:12px">
               <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:10px;margin-bottom:4px">
                 <span style="color:var(--text2)">Month Utilization</span>
-                <span style="color:${utilColor};font-weight:600">${utilPct}%</span>
+                <span style="color:${utilColor};font-weight:600">${monthHours}h / ${cap}h</span>
               </div>
               <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${utilPct}%;background:${utilColor};border-radius:3px"></div>
+                <div style="height:100%;width:${Math.min(utilPct,100)}%;background:${utilColor};border-radius:3px"></div>
               </div>
             </div>
+            <!-- Completed vs scheduled stacked bar -->
+            ${monthHours>0?`
+            <div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:10px;margin-bottom:4px">
+                <span style="color:var(--text2)">Completed</span>
+                <span style="color:var(--text3)">${mCompletedH}h done · ${mCompletedPct}%</span>
+              </div>
+              <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">
+                ${mDoneH>0?`<div style="height:100%;width:${Math.round(mDoneH/monthHours*100)}%;background:var(--green)" title="Done: ${mDoneH}h"></div>`:''}
+                ${mReviewH>0?`<div style="height:100%;width:${Math.round(mReviewH/monthHours*100)}%;background:var(--blue)" title="In Review: ${mReviewH}h"></div>`:''}
+                ${mProgH>0?`<div style="height:100%;width:${Math.round(mProgH/monthHours*100)}%;background:var(--amber)" title="In Progress: ${mProgH}h"></div>`:''}
+              </div>
+              <div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap">
+                ${mDoneH>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--green)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Done ${mDoneH}h</span></div>`:''}
+                ${mReviewH>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--blue)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Review ${mReviewH}h</span></div>`:''}
+                ${mProgH>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--amber)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">In Progress ${mProgH}h</span></div>`:''}
+                ${mTodoH>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--bg3);border:1px solid var(--border)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">To Do ${mTodoH}h</span></div>`:''}
+              </div>
+            </div>`:''}
             <!-- Work mix -->
             ${Object.entries(tagHours).filter(([,h])=>h>0).map(([tag,h])=>{
               const pct=monthHours>0?Math.round(h/monthHours*100):0;
@@ -5633,7 +5660,7 @@ function renderYouDashboard(){
                 </div>
               </div>`;
             }).join('')}
-            <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:8px">Rings: 30d · 7d · 1d</div>
+            <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:8px">Rings: Mo · Wk · Day</div>
           </div>
         </div>
       </div>
@@ -6533,7 +6560,7 @@ function _utilLegacyMemberCards(){
               <div style="display:flex;gap:16px">${periodBars}</div>
               <div style="display:flex;gap:12px;margin-top:10px">
                 <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Rings (outer→inner):</div>
-                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">30d · 7d · 1d</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Mo · Wk · Day</div>
               </div>
             </div>
           </div>
@@ -6819,7 +6846,7 @@ function _renderWorkloadInto(el){
               <!-- Ring legend -->
               <div style="display:flex;gap:12px;margin-top:10px">
                 <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Rings (outer→inner):</div>
-                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">30d · 7d · 1d</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Mo · Wk · Day</div>
               </div>
             </div>
           </div>
