@@ -5705,7 +5705,13 @@ function renderFinancialDashboard(){
     // Pipeline overlay (behind, spans full slot width)
     if(m.pipelineGross>0){
       const ph=Math.max(2,m.pipelineGross/maxVal*innerH);
-      barsSvg+=`<rect x="${xLeft(i)}" y="${yScale(m.pipelineGross)}" width="${pipeW}" height="${ph}" rx="2" fill="rgba(102,126,234,0.15)"/>`;
+      const py=yScale(m.pipelineGross);
+      barsSvg+=`<rect x="${xLeft(i)}" y="${py}" width="${pipeW}" height="${ph}" rx="2" fill="rgba(102,126,234,0.15)"/>`;
+      // Parenthetical label — same muted grey style as gross/net, in parens to signal projected
+      if(m.pipelineGross>=500){
+        const lbl=m.pipelineGross>=1000?`($${(m.pipelineGross/1000).toFixed(1)}k)`:`($${Math.round(m.pipelineGross)})`;
+        barsSvg+=`<text x="${xLeft(i)+pipeW/2}" y="${py-3}" text-anchor="middle" fill="rgba(234,234,234,0.3)" font-family="DM Mono,monospace" font-size="5" letter-spacing="0.04em">${lbl}</text>`;
+      }
     }
 
     // Gross bar
@@ -5740,6 +5746,34 @@ function renderFinancialDashboard(){
   // ── Effective rate color ──────────────────────────────────
   const rateColor=r=>r===null?'var(--text3)':r>=targetRate?'var(--green)':r>=targetRate*0.75?'var(--amber)':'var(--red)';
 
+  // ── Forecast metrics ──────────────────────────────────────
+  const retainerDeals=allDeals.filter(d=>d.stage==='Retainer');
+  // Committed retainer for next 3 months from today
+  const next3mStart=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const next3mEnd=(()=>{const d=new Date(now.getFullYear(),now.getMonth()+3,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
+  const next3mRetainerNet=retainerDeals
+    .filter(d=>{const mo=(d.closeDate||'').substring(0,7);return mo>=next3mStart&&mo<next3mEnd;})
+    .reduce((s,d)=>s+netRev(d),0);
+  // In-flight: Closed Won, project not complete
+  const inFlightDeals=closed.filter(d=>{
+    const proj=projects.find(p=>p.dealId===d.id);
+    return proj&&proj.status!=='complete';
+  });
+  const inFlightNet=inFlightDeals.reduce((s,d)=>s+netRev(d),0);
+  // Run rate: YTD net ÷ months elapsed
+  const monthsElapsed=Math.max(1,now.getMonth()+1);
+  const avgMonthlyNet=ytdNet/monthsElapsed;
+  // Projected annual: YTD actual + (avg monthly × remaining months)
+  const remainingMonths=12-monthsElapsed;
+  const projectedAnnual=ytdNet+(avgMonthlyNet*remainingMonths);
+  // Retainer ARR: total value of all retainer deals (annualized base)
+  const retainerARR=retainerDeals.reduce((s,d)=>s+(d.value||0),0);
+  // Coverage: retainer monthly avg as % of run rate
+  const retainerMonthlyAvg=retainerDeals.length>0
+    ? retainerARR/Math.max(1,new Set(retainerDeals.map(d=>(d.closeDate||'').substring(0,7))).size)
+    : 0;
+  const retainerCoverage=avgMonthlyNet>0?Math.round(retainerMonthlyAvg/avgMonthlyNet*100):0;
+
   el.innerHTML=`
     <!-- Controls bar -->
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px">
@@ -5756,8 +5790,8 @@ function renderFinancialDashboard(){
       </div>
     </div>
 
-    <!-- KPI strip -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
+    <!-- KPI strip — actuals -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:12px">
       ${[
         {label:'YTD Gross', val:fmt(ytdGross), sub:`${ytdDeals} deal${ytdDeals===1?'':'s'}`, color:'var(--gold)'},
         {label:'YTD Net', val:fmt(ytdNet), sub:`After expenses`, color:'var(--green)'},
@@ -5773,6 +5807,62 @@ function renderFinancialDashboard(){
         </div>`).join('')}
     </div>
 
+    <!-- Forecast KPI strip -->
+    <div style="margin-bottom:6px;padding:0 2px">
+      <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);opacity:0.7;margin-bottom:8px">Forecast</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
+      ${[
+        {
+          label:'Committed · Next 3 Mo',
+          val:fmt(next3mRetainerNet),
+          sub:`${retainerDeals.filter(d=>{const mo=(d.closeDate||'').substring(0,7);return mo>=next3mStart&&mo<next3mEnd;}).length} retainer deal${retainerDeals.filter(d=>{const mo=(d.closeDate||'').substring(0,7);return mo>=next3mStart&&mo<next3mEnd;}).length===1?'':'s'}`,
+          color:'var(--purple)',
+          accent:true,
+        },
+        {
+          label:'In-Flight Revenue',
+          val:fmt(inFlightNet),
+          sub:`${inFlightDeals.length} open project${inFlightDeals.length===1?'':'s'} · earned, not paid`,
+          color:'var(--amber)',
+          accent:false,
+        },
+        {
+          label:'Monthly Run Rate',
+          val:fmt(Math.round(avgMonthlyNet)),
+          sub:`${monthsElapsed}mo avg · net`,
+          color:'var(--blue)',
+          accent:false,
+        },
+        {
+          label:'Projected Annual',
+          val:fmt(Math.round(projectedAnnual)),
+          sub:`YTD + ${remainingMonths}mo at run rate`,
+          color:'var(--green)',
+          accent:false,
+        },
+        {
+          label:'Retainer ARR',
+          val:fmt(retainerARR),
+          sub:`${retainerDeals.length} retainer deal${retainerDeals.length===1?'':'s'}`,
+          color:'var(--purple)',
+          accent:false,
+        },
+        {
+          label:'Retainer Coverage',
+          val:`${retainerCoverage}%`,
+          sub:'of monthly run rate',
+          color:retainerCoverage>=80?'var(--green)':retainerCoverage>=50?'var(--amber)':'var(--text2)',
+          accent:false,
+        },
+      ].map(k=>`
+        <div style="background:var(--bg2);border:1px solid ${k.accent?'rgba(149,97,226,0.3)':'var(--border)'};border-radius:10px;padding:14px 16px;position:relative">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${k.label}</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;color:${k.color};letter-spacing:-0.02em;line-height:1">${k.val}</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:5px">${k.sub}</div>
+        </div>`).join('')}
+    </div>
+
     <!-- Revenue chart -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
@@ -5780,7 +5870,7 @@ function renderFinancialDashboard(){
         <div style="display:flex;gap:16px;align-items:center">
           <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(212,166,90,0.55)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Gross</span></div>
           <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(76,175,122,0.85)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Net</span></div>
-          <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(102,126,234,0.28)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Pipeline (weighted)</span></div>
+          <div style="display:flex;gap:6px;align-items:center"><div style="width:10px;height:10px;border-radius:2px;background:rgba(102,126,234,0.28)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Retainer / Pipeline</span></div>
         </div>
       </div>
       <div style="overflow-x:auto">
