@@ -798,7 +798,7 @@
       </div>
     </div>
     <div class="content">
-      <div class="stats-row-5" id="crm-stats"></div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px" id="crm-stats"></div>
       <div class="crm-tabs">
         <button class="crm-tab active" id="tab-pipeline" onclick="setCrmTab('pipeline')">Pipeline</button>
         <button class="crm-tab" id="tab-monthly" onclick="setCrmTab('monthly')">Monthly View</button>
@@ -4205,22 +4205,99 @@ function setCrmTab(tab){
 }
 
 function renderCRM(){
-  const total=state.deals.reduce((s,d)=>s+d.value,0);
-  const totalNet=state.deals.reduce((s,d)=>s+netRev(d),0);
-  const totalExp=state.deals.reduce((s,d)=>s+(d.expenses||0),0);
-  const won=state.deals.filter(d=>d.stage==='Closed Won');
-  const wonV=won.reduce((s,d)=>s+netRev(d),0);
-  const pipe=state.deals.filter(d=>d.stage!=='Closed Won');
-  const pipeV=pipe.reduce((s,d)=>s+netRev(d),0);
+  const now=new Date();
+  const currentYM=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const next30=new Date(now.getTime()+30*86400000).toISOString().split('T')[0];
+
+  const deals=state.deals;
+  const projects=state.projects||[];
+
+  // ── Actuals ──
+  const allGross=deals.reduce((s,d)=>s+(d.value||0),0);
+  const allNet=deals.reduce((s,d)=>s+netRev(d),0);
+  const won=deals.filter(d=>d.stage==='Closed Won');
+  const wonNet=won.reduce((s,d)=>s+netRev(d),0);
   const collected=won.filter(d=>d.invoiceStatus==='paid').reduce((s,d)=>s+netRev(d),0);
   const unpaidWon=won.filter(d=>d.invoiceStatus!=='paid');
-  const canEdit=can.edit();
+  const outstanding=wonNet-collected;
+  const lost=deals.filter(d=>d.stage==='Lost');
+  const winRate=won.length+lost.length>0?Math.round(won.length/(won.length+lost.length)*100):null;
+
+  // ── Forward view ──
+  // Weighted pipeline (non-won, non-retainer, non-lost)
+  const pipeDeals=deals.filter(d=>d.stage!=='Closed Won'&&d.stage!=='Retainer'&&d.stage!=='Lost');
+  const weightedPipe=pipeDeals.reduce((s,d)=>s+(d.value||0)*(d.prob||50)/100,0);
+  // Retainer — all future months
+  const retainerDeals=deals.filter(d=>d.stage==='Retainer');
+  const retainerFuture=retainerDeals.filter(d=>(d.closeDate||'').substring(0,7)>=currentYM);
+  const retainerFutureGross=retainerFuture.reduce((s,d)=>s+(d.value||0),0);
+  // In-flight
+  const inFlight=won.filter(d=>{
+    const proj=projects.find(p=>p.dealId===d.id);
+    return proj&&proj.status!=='complete';
+  });
+  const inFlightNet=inFlight.reduce((s,d)=>s+netRev(d),0);
+  // Deals closing this month
+  const closingThisMonth=pipeDeals.filter(d=>(d.closeDate||'').startsWith(currentYM));
+  const closingThisMonthV=closingThisMonth.reduce((s,d)=>s+(d.value||0)*(d.prob||50)/100,0);
+  // Total forward value: weighted pipe + committed retainer
+  const totalForward=weightedPipe+retainerFutureGross;
+
   document.getElementById('crm-stats').innerHTML=`
-    <div class="stat-card stat-card-gross"><div class="stat-label" style="color:var(--gold)">Gross Revenue</div><div class="stat-value" style="color:var(--gold)">${fmt(total)}</div><div class="stat-delta" style="color:var(--text3)">${totalExp>0?`− ${fmt(totalExp)} expenses`:''} · ${state.deals.length} deals</div></div>
-    <div class="stat-card"><div class="stat-label">Net Revenue</div><div class="stat-value">${fmt(totalNet)}</div><div class="stat-delta" style="color:var(--text3)">After expenses</div></div>
-    <div class="stat-card"><div class="stat-label">Closed Won (Net)</div><div class="stat-value">${fmt(wonV)}</div><div class="stat-delta">${won.length} deals</div></div>
-    <div class="stat-card"><div class="stat-label">Collected (Paid in Full)</div><div class="stat-value" style="color:var(--green)">${fmt(collected)}</div><div class="stat-delta" style="color:var(--text3)">${won.filter(d=>d.invoiceStatus==='paid').length} deals fully paid</div></div>
-    <div class="stat-card"><div class="stat-label">Outstanding</div><div class="stat-value" style="color:var(--blue)">${fmt(wonV - collected)}</div><div class="stat-delta" style="color:var(--text3)">${unpaidWon.length} unpaid deal${unpaidWon.length!==1?'s':''}</div></div>
+    <!-- Row 1 — Actuals -->
+    <div style="grid-column:1/-1;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);opacity:0.7;margin-bottom:2px">Current</div>
+    <div class="stat-card stat-card-gross">
+      <div class="stat-label" style="color:var(--gold)">Closed Won · Net</div>
+      <div class="stat-value" style="color:var(--gold)">${fmt(wonNet)}</div>
+      <div class="stat-delta">${won.length} deals${winRate!==null?` · <span style="color:${winRate>=60?'var(--green)':winRate>=40?'var(--amber)':'var(--red)'}">${winRate}% win rate</span>`:''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label" style="color:var(--green)">Collected</div>
+      <div class="stat-value" style="color:var(--green)">${fmt(collected)}</div>
+      <div class="stat-delta">${won.filter(d=>d.invoiceStatus==='paid').length} paid in full</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label" style="color:var(--amber)">Outstanding</div>
+      <div class="stat-value" style="color:${outstanding>0?'var(--amber)':'var(--text3)'}">${fmt(outstanding)}</div>
+      <div class="stat-delta">${unpaidWon.length} unpaid deal${unpaidWon.length!==1?'s':''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">In-Flight</div>
+      <div class="stat-value" style="color:var(--blue)">${fmt(inFlightNet)}</div>
+      <div class="stat-delta">${inFlight.length} open project${inFlight.length!==1?'s':''} · earned, not done</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Weighted Pipeline</div>
+      <div class="stat-value" style="color:var(--text2)">${fmt(weightedPipe)}</div>
+      <div class="stat-delta">${pipeDeals.length} deal${pipeDeals.length!==1?'s':''} · probability-weighted</div>
+    </div>
+    <!-- Row 2 — Forward view -->
+    <div style="grid-column:1/-1;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);opacity:0.7;margin-top:4px;margin-bottom:2px">Forecast</div>
+    <div class="stat-card" style="border-color:rgba(149,97,226,0.3)">
+      <div class="stat-label" style="color:var(--purple)">Committed Retainer</div>
+      <div class="stat-value" style="color:var(--purple)">${fmt(retainerFutureGross)}</div>
+      <div class="stat-delta">${retainerFuture.length} future month${retainerFuture.length!==1?'s':''} · ${retainerDeals.length} total retainer deal${retainerDeals.length!==1?'s':''}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Forward Value</div>
+      <div class="stat-value" style="color:var(--green)">${fmt(totalForward)}</div>
+      <div class="stat-delta">retainer + weighted pipeline</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Closing This Month</div>
+      <div class="stat-value" style="color:${closingThisMonth.length>0?'var(--amber)':'var(--text3)'}">${fmt(closingThisMonthV)}</div>
+      <div class="stat-delta">${closingThisMonth.length} deal${closingThisMonth.length!==1?'s':''} · expected ${currentYM}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Deal Size</div>
+      <div class="stat-value" style="color:var(--text2)">${won.length>0?fmt(Math.round(wonNet/won.length)):'—'}</div>
+      <div class="stat-delta">net · Closed Won</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Gross</div>
+      <div class="stat-value" style="color:var(--text3)">${fmt(allGross)}</div>
+      <div class="stat-delta">${deals.length} deals · all stages</div>
+    </div>
   `;
   // Role-gate topbar
   const taEl=document.getElementById('crm-topbar-actions');
