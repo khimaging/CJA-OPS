@@ -6719,7 +6719,7 @@ function _buildMemberDonut(m, memberStats, size=130){
     return`
       <circle cx="${cx}" cy="${cy}" r="${ring.r}" fill="none" stroke="${trackColor}" stroke-width="${strokeW}" opacity="0.5"/>
       <circle cx="${cx}" cy="${cy}" r="${ring.r}" fill="none" stroke="${color}" stroke-width="${strokeW}"
-        stroke-dasharray="${filled} ${circ}" stroke-dashoffset="${circ/4}"
+        stroke-dasharray="${filled} ${circ-filled}" stroke-dashoffset="${circ/4}"
         stroke-linecap="round"/>
       <text x="${cx+(ring.r+strokeW/2+4)}" y="${cy+4}" text-anchor="start" fill="${color}"
         font-family="DM Mono,monospace" font-size="7" style="transform:none">${ring.label}</text>
