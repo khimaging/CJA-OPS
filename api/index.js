@@ -330,7 +330,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       expensesRes, payStatusRes, psStatusRes, payLogRes,
       clientsRes, delivTypesRes, delivsRes, taskDelivsRes,
     ] = await Promise.all([
-      supabase.from('team_members').select('id,name,role,color,profit_share_pct,active,auth_role').order('name'),
+      supabase.from('team_members').select('id,name,role,color,profit_share_pct,month_cap,active,auth_role').order('name'),
       supabase.from('deals').select('*').order('created_at', { ascending: false }),
       supabase.from('projects').select('*').order('created_at', { ascending: false }),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
@@ -827,11 +827,12 @@ app.get('/api/audit-log', requireAuth, requireAdmin, async (req, res) => {
 
 app.post('/api/team', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, role, profitSharePct, active, color, pin } = req.body;
+    const { name, role, profitSharePct, active, color, pin, monthCap } = req.body;
     if (!pin) return res.status(400).json({ error: 'PIN is required for new members' });
     const pin_hash = await bcrypt.hash(String(pin), 10);
     const { data, error } = await supabase.from('team_members').insert({
       name, role: role || '', profit_share_pct: profitSharePct || 0,
+      month_cap: monthCap != null ? parseInt(monthCap) : 180,
       active: active !== false, color: color || '#c9a84c',
       auth_role: 'member', pin_hash,
     }).select().single();
@@ -864,6 +865,7 @@ app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
     if (req.body.name           !== undefined) updates.name             = req.body.name;
     if (req.body.role           !== undefined) updates.role             = req.body.role;
     if (req.body.profitSharePct !== undefined) updates.profit_share_pct = req.body.profitSharePct;
+    if (req.body.monthCap       !== undefined) updates.month_cap        = parseInt(req.body.monthCap)||180;
     if (req.body.active         !== undefined) updates.active           = req.body.active;
     if (req.body.authRole !== undefined) {
       const validRoles = ['admin','class_a','class_b','va'];
@@ -2249,6 +2251,7 @@ function mapTeamMember(m) {
     role:           m.role,
     color:          m.color,
     profitSharePct: m.profit_share_pct,
+    monthCap:       m.month_cap != null ? m.month_cap : 180,
     active:         m.active,
     authRole:       m.auth_role,
   };
