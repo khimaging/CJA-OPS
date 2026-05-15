@@ -5667,7 +5667,7 @@ function renderYouDashboard(){
       <div style="padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">My Schedule</div>
         <div style="display:flex;gap:4px">
-          ${['day','week','month'].map(v=>`<button onclick="state.youCalView='${v}';state.youCalOffset=0;_renderYouCal('${v}')"
+          ${['day','week','month'].map(v=>`<button data-youcal="${v}" onclick="state.youCalView='${v}';state.youCalOffset=0;_renderYouCal('${v}')"
             style="font-family:'DM Mono',monospace;font-size:9px;padding:3px 10px;border-radius:5px;border:1px solid ${state.youCalView===v?'var(--gold)':'var(--border)'};background:${state.youCalView===v?'rgba(234,234,234,0.1)':'var(--bg3)'};color:${state.youCalView===v?'var(--gold)':'var(--text3)'};cursor:pointer">
             ${v.charAt(0).toUpperCase()+v.slice(1)}
           </button>`).join('')}
@@ -6131,7 +6131,7 @@ function renderStandaloneWorkload(){
 }
 
 // ── Helpers ──────────────────────────────────────────────────
-const HOURS_PER_WEEK = 50; // capacity per active team member
+const HOURS_PER_MONTH = 180; // default monthly capacity per team member (sprint-aware model)
 
 // Returns {start, end} ISO date strings for the chosen window. Inclusive.
 function _utilWindow(){
@@ -6232,9 +6232,15 @@ function _renderTeamUtilization(el){
   const active = (state.team||[]).filter(m => m.active !== false);
   const totalHours = tasks.reduce((s,t) => s + (t.estHours||0), 0);
 
-  // Capacity = HOURS_PER_WEEK × weeks × member count
-  const capPerMember = HOURS_PER_WEEK * (win.days / 7);
-  const capTotal = capPerMember * active.length;
+  // Capacity = per-member monthCap scaled to the window's days vs a 30-day month
+  // Uses each member's individual cap so different expectations are respected
+  const capByMember = Object.fromEntries(
+    active.map(m=>[m.id, Math.round(memberMonthCap(m) * (win.days/30))])
+  );
+  const capPerMember = active.length > 0
+    ? Math.round(active.reduce((s,m)=>s+capByMember[m.id],0) / active.length)
+    : Math.round((HOURS_PER_MONTH) * (win.days/30));
+  const capTotal = active.reduce((s,m)=>s+capByMember[m.id],0);
   const utilPct = capTotal > 0 ? Math.round(totalHours / capTotal * 100) : 0;
 
   // Tag breakdown
@@ -6253,12 +6259,13 @@ function _renderTeamUtilization(el){
 
   // Per-member breakdown
   const byMember = active.map(m => {
+    const mCap = capByMember[m.id];
     const mTasks = tasks.filter(t => t.assigneeId === m.id);
     const hours = mTasks.reduce((s,t)=>s+(t.estHours||0),0);
-    const pct = capPerMember > 0 ? Math.round(hours / capPerMember * 100) : 0;
+    const pct = mCap > 0 ? Math.round(hours / mCap * 100) : 0;
     const tags = { production:0, 'post-production':0, admin:0, untagged:0 };
     mTasks.forEach(t => { const k=t.tag||'untagged'; tags[k]=(tags[k]||0)+(t.estHours||0); });
-    return { member:m, tasks:mTasks, hours, pct, tags };
+    return { member:m, tasks:mTasks, hours, pct, tags, cap:mCap };
   }).sort((a,b)=>b.hours-a.hours);
 
   // Client breakdown
@@ -6345,7 +6352,7 @@ function _utilFilterBar(win){
 
 // ── Top KPI metrics ──
 function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, byStatus, win){
-  const utilColor = utilPct >= 100 ? 'var(--red)' : utilPct >= 85 ? 'var(--amber)' : utilPct >= 50 ? 'var(--green)' : 'var(--text2)';
+  const utilColor = monthCapColor(totalHours, capTotal); // sprint-aware: sweet spot 78-100% of cap
   const tagColor = { production:'var(--blue)', 'post-production':'var(--purple)', admin:'var(--text3)', untagged:'var(--text3)' };
   const tagOrder = ['production','post-production','admin','untagged'];
   const statusColor = { todo:'var(--text3)', progress:'var(--amber)', review:'var(--blue)', done:'var(--green)' };
@@ -6415,11 +6422,12 @@ function _utilMemberSection(byMember, capPerMember, win){
   return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-bottom:20px">
     <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
       <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Per-Member Utilization</div>
-      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Capacity: ${capPerMember.toFixed(0)}h per person</div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${win.label} · sprint-aware caps</div>
     </div>
     <div style="display:flex;flex-direction:column;gap:14px">
-      ${byMember.map(({member,hours,pct,tags,tasks})=>{
-        const utilColor = pct >= 100 ? 'var(--red)' : pct >= 85 ? 'var(--amber)' : pct >= 50 ? 'var(--green)' : 'var(--text2)';
+      ${byMember.map(({member,hours,pct,tags,tasks,cap:mCap})=>{
+        // Sprint-aware color: uses monthCapColor scaled to window
+        const utilColor = monthCapColor(hours, mCap);
         const tagBreakdown = ['production','post-production','admin','untagged']
           .filter(k=>tags[k]>0)
           .map(k=>{
@@ -6431,11 +6439,10 @@ function _utilMemberSection(byMember, capPerMember, win){
               <span style="color:var(--text3)">${tags[k].toFixed(1)}h</span>
             </div>`;
           }).join('');
-        // Stacked bar
         const stackedSegments = ['production','post-production','admin','untagged']
           .filter(k=>tags[k]>0)
           .map(k=>{
-            const segPct = capPerMember>0 ? (tags[k]/capPerMember*100) : 0;
+            const segPct = mCap>0 ? (tags[k]/mCap*100) : 0;
             return `<div style="height:100%;width:${Math.min(100,segPct)}%;background:${tagColor[k]};border-right:1px solid rgba(0,0,0,0.3)" title="${k}: ${tags[k].toFixed(1)}h"></div>`;
           }).join('');
         return `<div>
@@ -6447,7 +6454,7 @@ function _utilMemberSection(byMember, capPerMember, win){
             </div>
             <div style="text-align:right">
               <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:${utilColor};letter-spacing:-0.02em">${pct}%</div>
-              <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap">${hours.toFixed(1)}h · ${tasks.length} task${tasks.length===1?'':'s'}</div>
+              <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap">${hours.toFixed(1)}h / ${mCap}h · ${tasks.length} task${tasks.length===1?'':'s'}</div>
             </div>
           </div>
           <div style="display:flex;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
@@ -6654,19 +6661,21 @@ function monthCapColor(hours, cap){
 
 function _calcMemberHours(memberId, period){
   const now=new Date();
-  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate(),0,0,0,0);
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   let start,end;
   if(period==='day'){
     start=today;
     end=new Date(today.getFullYear(),today.getMonth(),today.getDate(),23,59,59,999);
   } else if(period==='week'){
-    start=today;
-    end=new Date(today);end.setDate(today.getDate()+6);end.setHours(23,59,59,999);
+    // Calendar week: Monday–Sunday of the current week
+    const dow=today.getDay()||7; // Mon=1 … Sun=7
+    start=new Date(today);start.setDate(today.getDate()-dow+1);
+    end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59,999);
   } else {
-    start=today;
-    end=new Date(today);end.setDate(today.getDate()+29);end.setHours(23,59,59,999);
+    // Calendar month: 1st–last day of the current month
+    start=new Date(now.getFullYear(),now.getMonth(),1);
+    end=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59,999);
   }
-  // Include all tasks (including done) so completed work counts toward utilization
   return state.tasks.filter(t=>{
     if(t.assigneeId!==memberId||!t.due) return false;
     const d=new Date(t.due+'T12:00:00');
@@ -7914,6 +7923,16 @@ function _renderYouCalNavLabel(view){
 function _renderYouCal(view){
   const el=document.getElementById('you-cal-inner');
   if(!el) return;
+
+  // Sync the view toggle button highlights to the current view
+  ['day','week','month'].forEach(v=>{
+    const btn=document.querySelector(`#you-board button[data-youcal="${v}"]`);
+    if(!btn) return;
+    const active=v===view;
+    btn.style.borderColor=active?'var(--gold)':'var(--border)';
+    btn.style.background=active?'rgba(234,234,234,0.1)':'var(--bg3)';
+    btn.style.color=active?'var(--gold)':'var(--text3)';
+  });
 
   const myId=auth?.user?.id;
   if(!myId) return;
