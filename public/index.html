@@ -10420,15 +10420,17 @@ function renderTeamPayByClient(){
         if(amt>0) accrue(cname, amt, 0, isProjected);
       });
 
-      // Profit share — actual (paid) only
-      if(isActual){
-        const psKey=`${proj.id}_ps_${m.id}`;
-        if(state.payStatus[psKey]){
-          const psB=d.buckets?.find(b=>b.name==='Profit Share');
-          const psPct=psB?psB.pct:17.5;
-          const pool=netRev(d)*psPct/100;
-          const lockedPct=state.payStatusSnapshots?.[psKey]??m.profitSharePct??0;
-          accrue(cname, pool*lockedPct/100, 0, false);
+      // Profit share — match overview logic: actual for complete/paid, projected for in-progress
+      // Don't gate on payStatus checkbox — that's a payment tracking concern, not an earnings concern
+      {
+        const psB=d.buckets?.find(b=>b.name==='Profit Share');
+        const psPct=psB?psB.pct:17.5;
+        const pool=netRev(d)*psPct/100;
+        const mem=state.team.find(x=>x.id===m.id);
+        const memberPsPct=mem?.profitSharePct||0;
+        if(pool>0&&memberPsPct>0){
+          const amt=Math.round(pool*memberPsPct/100*100)/100;
+          accrue(cname, amt, 0, isProjected);
         }
       }
     });
