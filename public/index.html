@@ -6696,9 +6696,9 @@ function _buildMemberDonut(m, memberStats, size=130){
   const cx=size/2,cy=size/2,strokeW=16;
 
   const rings=[
-    {id:'month', r:size/2-10,            cap,          label:`${cap}h`},
-    {id:'week',  r:size/2-10-strokeW-4,  cap:WL_CAPS.week,  label:'45h'},
-    {id:'day',   r:size/2-10-(strokeW+4)*2, cap:WL_CAPS.day, label:'10h'},
+    {id:'month', r:size/2-10,            cap,          label:'Mo'},
+    {id:'week',  r:size/2-10-strokeW-4,  cap:WL_CAPS.week,  label:'Wk'},
+    {id:'day',   r:size/2-10-(strokeW+4)*2, cap:WL_CAPS.day, label:'Day'},
   ];
 
   const svgRings=rings.map(ring=>{
@@ -6745,9 +6745,9 @@ function _renderWorkloadInto(el){
   const now=new Date();
   const active=state.team.filter(m=>m.active!==false);
   const periods=[
-    {id:'day',  label:'Today',   sublabel:'10h ref',  cap:WL_CAPS.day},
-    {id:'week', label:'7 Days',  sublabel:'45h ref',  cap:WL_CAPS.week},
-    {id:'month',label:'30 Days', sublabel:'cap',      cap:WL_CAPS.month}, // overridden per-member below
+    {id:'day',  label:'Today',       sublabel:'10h ref',  cap:WL_CAPS.day},
+    {id:'week', label:'This Week',   sublabel:'45h ref',  cap:WL_CAPS.week},
+    {id:'month',label:'This Month',  sublabel:'cap',      cap:WL_CAPS.month},
   ];
 
   const memberStats=active.map(m=>{
@@ -8140,11 +8140,10 @@ function renderProdCal(){
   const memberOpts=`<option value="">All Members</option>`+
     active.map(m=>`<option value="${m.id}" ${state.prodCalMember===m.id?'selected':''}>${m.name}</option>`).join('');
 
-  // Simplified workload cards — donut + bars only, no task list
   const periods=[
-    {id:'day',  label:'Today',  cap:WL_CAPS.day},
-    {id:'week', label:'7 Days', cap:WL_CAPS.week},
-    {id:'month',label:'30 Days',cap:WL_CAPS.month},
+    {id:'day',  label:'Day',       cap:WL_CAPS.day},
+    {id:'week', label:'This Week', cap:WL_CAPS.week},
+    {id:'month',label:'This Month',cap:WL_CAPS.month},
   ];
   const visibleMembers=state.prodCalMember
     ? active.filter(m=>m.id===state.prodCalMember)
@@ -8166,7 +8165,7 @@ function renderProdCal(){
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">
       <div style="padding:12px 20px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Live Workload</div>
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">today / 7d / 30d caps</div>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Day · Calendar Week · Calendar Month</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:1px;background:var(--border)">
         ${memberStatsList.map(m=>{
@@ -8188,7 +8187,7 @@ function renderProdCal(){
             </div>`;
           }).join('');
           return`<div style="background:var(--bg2);padding:16px 20px;display:flex;align-items:center;gap:20px">
-            <div style="flex-shrink:0">${_buildMemberDonut(m,m,120)}</div>
+            <div style="flex-shrink:0">${_buildMemberDonut(m,m,160)}</div>
             <div style="flex:1;min-width:0">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
                 <div class="user-avatar" style="background:${m.color};width:26px;height:26px;font-size:10px">${m.name.split(' ').map(n=>n[0]).join('')}</div>
@@ -8205,6 +8204,7 @@ function renderProdCal(){
     </div>`;
 
   el.innerHTML=`
+    <!-- Top filter bar: client + member only, no view picker here -->
     <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:20px">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Client</span>
@@ -8218,9 +8218,12 @@ function renderProdCal(){
           ${memberOpts}
         </select>
       </div>
-      ${viewPicker}
     </div>
     ${workloadCards}
+    <!-- View picker sits above the calendar, right before the nav -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      ${viewPicker}
+    </div>
     <div id="prodcal-inner"></div>
   `;
   _renderProdCalCalendar(view);
@@ -8262,12 +8265,6 @@ function _renderProdCalCalendar(view){
     <span style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:var(--text)">${navLabel}</span>
     <button class="month-nav-btn" onclick="state.prodCalOffset=(state.prodCalOffset||0)+1;renderProdCal()">›</button>
     ${todayBtn}
-    <div style="display:flex;align-items:center;gap:8px;margin-left:12px">
-      <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Client</span>
-      <select onchange="state.prodCalClient=this.value;renderProdCal()" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;font-family:inherit;cursor:pointer;min-width:180px">
-        ${_calClientOptions(state.prodCalClient||'')}
-      </select>
-    </div>
   </div>`;
 
   // Client-scoped visible project IDs for filtering tasks
