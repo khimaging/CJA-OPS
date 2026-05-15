@@ -4458,13 +4458,23 @@ async function unfinalizePayouts(pid){
   )) return;
   try {
     const updated = await api('PATCH','/projects/'+pid,{payoutsFinalized:false});
+    // Update state directly — don't rely on the response shape merging
     const idx = state.projects.findIndex(x=>x.id===pid);
-    if (idx>=0) state.projects[idx] = {...state.projects[idx], ...updated, payoutsFinalized:false};
-    notify('Payouts unfinalized — project unlocked for editing');
-    renderProjects();
+    if (idx>=0){
+      state.projects[idx].payoutsFinalized=false;
+      // Merge any other returned fields
+      if(updated&&typeof updated==='object') Object.assign(state.projects[idx], updated, {payoutsFinalized:false});
+    }
+    notify('Payouts unfinalized — project unlocked for editing ✓');
+    // Re-render all views that show project lock state
     renderProjMonthly();
-    if (state.currentPage==='pay') renderPayView();
-  } catch(e) { notify('Failed: '+e.message); }
+    if(state.currentPage==='health') renderHealthDashboard();
+    if(state.currentPage==='pay') renderPayView();
+    if(state.currentPage==='projects'&&state.activeProjectId===pid) renderProjectDetail(pid);
+  } catch(e) {
+    notify('Failed to unfinalize: '+e.message);
+    console.error('unfinalizePayouts error:', e);
+  }
 }
 
 async function finalizePayouts(pid){
