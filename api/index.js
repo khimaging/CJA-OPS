@@ -529,10 +529,19 @@ app.post('/api/projects', requireAuth, async (req, res) => {
 
 app.patch('/api/projects/:id', requireAuth, async (req, res) => {
   try {
-    // If payouts are finalized, nothing can be changed — ever
     const { data: current } = await supabase.from('projects').select('payouts_finalized,name').eq('id', req.params.id).single();
-    if (current?.payouts_finalized && req.body.payoutsFinalized !== false) {
-      return res.status(403).json({ error: `"${current.name}" has finalized payouts — this project is permanently locked.` });
+
+    // Finalized projects are locked — ONLY an admin can explicitly unfinalize (payoutsFinalized: false)
+    if (current?.payouts_finalized) {
+      const isUnfinalizing = req.body.payoutsFinalized === false;
+      const isAdmin = req.user?.role === 'admin';
+      if (!isUnfinalizing) {
+        return res.status(403).json({ error: `"${current.name}" has finalized payouts — permanently locked.` });
+      }
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Only admins can override finalized payouts.' });
+      }
+      // Admin + payoutsFinalized:false → allow through
     }
     const updates = {};
     if (req.body.status            !== undefined) updates.status             = req.body.status;
