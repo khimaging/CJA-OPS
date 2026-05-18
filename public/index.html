@@ -1891,6 +1891,7 @@ let state={
   projectTab:'grid',projMonthOffset:0,projStatusFilter:'active',activeProjectId:null,projectDetailTab:'kanban',projDetailCalOffset:0,calOffset:0,workloadPeriod:'week',taskTagFilter:'',
   utilWindow:'currentMonth',utilMonthOffset:0,utilMemberFilter:'',utilClientFilter:'',utilDateLens:'completed',
   finYear: new Date().getFullYear(), finTargetRate: (()=>{ try{ const s=localStorage.getItem('cja_fin_target_rate'); return s?parseInt(s):150; }catch(e){return 150;} })(),
+  finProdTargetRate: (()=>{ try{ const s=localStorage.getItem('cja_fin_prod_target_rate'); return s?parseInt(s):70; }catch(e){return 70;} })(),
   youCalOffset:0, youCalView:'week',
   payStatusFilter:'all',archivedProjects:{},
   teamTab:'overview',teamMonthOffset:0,healthTab:'active',prodCalTab:'calendar',prodCalOffset:0,prodCalView:'month',prodCalClient:'',prodCalMember:'',pubCalClient:'',
@@ -5722,6 +5723,7 @@ function renderFinancialDashboard(){
 
   const yr=state.finYear||new Date().getFullYear();
   const targetRate=state.finTargetRate||150;
+  const prodTargetRate=state.finProdTargetRate||70;
   const now=new Date();
 
   // ── Data preparation ──────────────────────────────────────
@@ -5768,13 +5770,18 @@ function renderFinancialDashboard(){
   const clientMap={};
   closed.forEach(d=>{
     const cname=d.client||'Unknown';
-    if(!clientMap[cname])clientMap[cname]={name:cname,gross:0,net:0,hours:0,deals:0,expenses:0};
+    if(!clientMap[cname])clientMap[cname]={name:cname,gross:0,net:0,hours:0,deals:0,expenses:0,prodPool:0};
     clientMap[cname].gross+=d.value;
     clientMap[cname].net+=netRev(d);
     clientMap[cname].expenses+=(d.expenses||0);
     clientMap[cname].deals++;
     const proj=projects.find(p=>p.dealId===d.id);
-    if(proj) clientMap[cname].hours+=hoursByProj[proj.id]||0;
+    if(proj){
+      clientMap[cname].hours+=hoursByProj[proj.id]||0;
+      // Production pool for this deal
+      const pb=d.buckets?.find(b=>b.name==='Production Pool');
+      if(pb) clientMap[cname].prodPool+=netRev(d)*pb.pct/100;
+    }
   });
   const clientList=Object.values(clientMap).sort((a,b)=>b.gross-a.gross);
   const totalGrossAllTime=clientList.reduce((s,c)=>s+c.gross,0);
@@ -5896,10 +5903,18 @@ function renderFinancialDashboard(){
         ${yearOpts.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('')}
       </select>
       <div style="display:flex;align-items:center;gap:8px;margin-left:auto;background:var(--bg3);border:1px solid var(--border);padding:6px 12px;border-radius:7px">
-        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Effective Rate Target</span>
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Overall Rate Target</span>
         <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">$</span>
         <input type="number" value="${targetRate}" min="50" max="500" step="5"
           onchange="state.finTargetRate=parseInt(this.value)||150;try{localStorage.setItem('cja_fin_target_rate',state.finTargetRate);}catch(e){}renderFinancialDashboard()"
+          style="background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;width:52px;padding:0 2px;outline:none">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">/hr</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);padding:6px 12px;border-radius:7px">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Pool Rate Target</span>
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text2)">$</span>
+        <input type="number" value="${prodTargetRate}" min="10" max="300" step="5"
+          onchange="state.finProdTargetRate=parseInt(this.value)||70;try{localStorage.setItem('cja_fin_prod_target_rate',state.finProdTargetRate);}catch(e){}renderFinancialDashboard()"
           style="background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:11px;width:52px;padding:0 2px;outline:none">
         <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">/hr</span>
       </div>
@@ -6023,14 +6038,18 @@ function renderFinancialDashboard(){
 
       <!-- Effective hourly rate table -->
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3)">Effective Rate by Client</div>
-          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Net ÷ Hours</div>
+          <div style="display:flex;gap:14px;font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">
+            <span>Overall: target $${targetRate}/hr</span>
+            <span>Pool: target $${prodTargetRate}/hr</span>
+          </div>
         </div>
         <table class="list-table" style="width:100%">
           <thead><tr>
             <th>Client</th>
-            <th style="text-align:right">Rate/hr</th>
+            <th style="text-align:right">Overall/hr</th>
+            <th style="text-align:right">Pool/hr</th>
             <th style="text-align:right">Hours</th>
             <th style="text-align:right">Net</th>
           </tr></thead>
@@ -6041,16 +6060,19 @@ function renderFinancialDashboard(){
               return rb-ra;
             }).map(c=>{
               const rate=c.hours>0?Math.round(c.net/c.hours*100)/100:null;
-              const col=rateColor(rate);
+              const poolRate=c.hours>0?Math.round(c.prodPool/c.hours*100)/100:null;
+              const overallCol=rateColor(rate);
+              const prodCol=poolRate===null?'var(--text3)':poolRate>=prodTargetRate?'var(--green)':poolRate>=prodTargetRate*0.75?'var(--amber)':'var(--red)';
               return`<tr>
                 <td style="font-size:11px;color:var(--text);font-weight:500">${_escapeHtml(c.name)}</td>
-                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${col}">${rate?'$'+rate.toFixed(0)+'':'—'}</td>
+                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${overallCol}">${rate?'$'+rate.toFixed(0):'—'}</td>
+                <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px;font-weight:700;color:${prodCol}">${poolRate?'$'+poolRate.toFixed(0):'—'}</td>
                 <td style="text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${c.hours}h</td>
                 <td style="text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text2)">${fmt(c.net)}</td>
               </tr>`;
             }).join('')}
             ${clientList.filter(c=>c.hours===0).length?`
-              <tr><td colspan="4" style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;padding-top:8px">${clientList.filter(c=>c.hours===0).length} clients with no hours tracked</td></tr>`:''}
+              <tr><td colspan="5" style="font-size:10px;color:var(--text3);font-family:'DM Mono',monospace;padding-top:8px">${clientList.filter(c=>c.hours===0).length} clients with no hours tracked</td></tr>`:''}
           </tbody>
         </table>
       </div>
@@ -6145,6 +6167,76 @@ function renderFinancialDashboard(){
         })()}
       </div>
     </div>
+
+    <!-- Revenue by Deal Owner -->
+    ${(()=>{
+      // Build per-owner breakdown: closed won actuals + retainer future projected
+      const ownerMap={};
+      const now2=new Date();
+      const currentYM2=now2.getFullYear()+'-'+String(now2.getMonth()+1).padStart(2,'0');
+
+      // Closed Won actuals
+      closed.forEach(d=>{
+        const ownerId=d.owner||'unassigned';
+        const owner=state.team.find(m=>m.id===ownerId);
+        const oname=owner?owner.name:'Unassigned';
+        if(!ownerMap[ownerId]) ownerMap[ownerId]={name:oname,color:owner?.color||'var(--text3)',gross:0,net:0,deals:0,retainerGross:0,retainerCount:0};
+        ownerMap[ownerId].gross+=d.value||0;
+        ownerMap[ownerId].net+=netRev(d);
+        ownerMap[ownerId].deals++;
+      });
+
+      // Retainer projected (future months only)
+      allDeals.filter(d=>d.stage==='Retainer').forEach(d=>{
+        const mo=(d.closeDate||'').substring(0,7);
+        if(mo<currentYM2) return; // past retainer months already flowed to closed won
+        const ownerId=d.owner||'unassigned';
+        const owner=state.team.find(m=>m.id===ownerId);
+        const oname=owner?owner.name:'Unassigned';
+        if(!ownerMap[ownerId]) ownerMap[ownerId]={name:oname,color:owner?.color||'var(--text3)',gross:0,net:0,deals:0,retainerGross:0,retainerCount:0};
+        ownerMap[ownerId].retainerGross+=(d.value||0);
+        ownerMap[ownerId].retainerCount++;
+      });
+
+      const ownerList=Object.values(ownerMap).filter(o=>o.gross>0||o.retainerGross>0).sort((a,b)=>(b.gross+b.retainerGross)-(a.gross+a.retainerGross));
+      const grandTotal=ownerList.reduce((s,o)=>s+o.gross,0);
+
+      if(!ownerList.length) return '';
+      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px;margin-top:16px">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:16px">Revenue by Deal Owner</div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${ownerList.map(o=>{
+            const totalWithRetainer=o.gross+o.retainerGross;
+            const pct=grandTotal>0?Math.round(o.gross/grandTotal*100):0;
+            const margin=o.gross>0?Math.round(o.net/o.gross*100):0;
+            return`<div>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div style="width:10px;height:10px;border-radius:2px;background:${o.color}"></div>
+                  <span style="font-size:13px;font-weight:600;color:var(--text)">${_escapeHtml(o.name)}</span>
+                  <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${o.deals} deal${o.deals===1?'':'s'} · ${margin}% margin</span>
+                </div>
+                <div style="display:flex;gap:16px;align-items:baseline">
+                  <div style="text-align:right">
+                    <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--gold)">${fmt(o.net)}</div>
+                    <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">net · ${pct}% of total</div>
+                  </div>
+                  ${o.retainerGross>0?`<div style="text-align:right">
+                    <div style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--purple)">(${fmt(o.retainerGross)})</div>
+                    <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${o.retainerCount} retainer mo.</div>
+                  </div>`:''}
+                </div>
+              </div>
+              <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;display:flex">
+                <div style="height:100%;width:${pct}%;background:${o.color};border-radius:3px"></div>
+                ${o.retainerGross>0?`<div style="height:100%;width:${grandTotal>0?Math.round(o.retainerGross/grandTotal*100):0}%;background:${o.color};opacity:0.3;margin-left:1px;border-radius:3px"></div>`:''}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Solid = closed won net · <span style="color:var(--purple)">(parentheses)</span> = committed retainer future months</div>
+      </div>`;
+    })()}
   `;
 }
 
