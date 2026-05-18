@@ -521,10 +521,19 @@ function renderDashboard(){
   const ppDeliveredHours=ppTasks
     .filter(t=>t.status==='review'||t.status==='done')
     .reduce((s,t)=>s+(t.estHours||0),0);
+  const ppInProgHours=ppTasks
+    .filter(t=>t.status==='progress')
+    .reduce((s,t)=>s+(t.estHours||0),0);
+  const ppPlannedHours=ppTasks
+    .filter(t=>t.status==='todo')
+    .reduce((s,t)=>s+(t.estHours||0),0);
   const ppScheduledHours=ppTasks.reduce((s,t)=>s+(t.estHours||0),0);
   const ppBudget=ppBudgetProjs.reduce((s,p)=>s+(p.editHoursBudget||0),0);
   const ppDeliveredPct=ppBudget>0?Math.min(100,Math.round(ppDeliveredHours/ppBudget*100)):0;
   const ppScheduledPct=ppBudget>0?Math.min(100,Math.round(ppScheduledHours/ppBudget*100)):0;
+  const ppInProgPct=ppScheduledHours>0?Math.round(ppInProgHours/ppScheduledHours*100):0;
+  const ppPlannedPct=ppScheduledHours>0?Math.round(ppPlannedHours/ppScheduledHours*100):0;
+  const ppDelivPctOfUsed=ppScheduledHours>0?Math.round(ppDeliveredHours/ppScheduledHours*100):0;
   const ppOver=ppScheduledHours>ppBudget;
 
   const el=document.getElementById('portal-content');
@@ -558,33 +567,45 @@ function renderDashboard(){
       <div class="metric-card">
         <div class="metric-label">Post-Production Hours</div>
         <div class="metric-value" style="color:${ppOver?'var(--red)':ppDeliveredPct>=100?'var(--green)':'var(--text)'}">
-          ${ppDeliveredHours.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500">h</span>
+          ${ppScheduledHours.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500">h</span>
         </div>
-        <!-- Stacked bar: delivered (solid) + remaining scheduled (muted) vs budget -->
-        <div style="position:relative;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-top:10px">
-          <!-- Scheduled layer (behind) -->
-          <div style="position:absolute;left:0;top:0;height:100%;width:${ppScheduledPct}%;background:${ppOver?'rgba(224,90,90,0.3)':'rgba(102,126,234,0.25)'};border-radius:3px"></div>
-          <!-- Delivered layer (front) -->
-          <div style="position:absolute;left:0;top:0;height:100%;width:${ppDeliveredPct}%;background:${ppOver?'var(--red)':'var(--blue)'};border-radius:3px;transition:width .3s"></div>
+        <!-- Budget usage bar: scheduled vs budget -->
+        <div style="height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-top:10px;margin-bottom:4px">
+          <div style="height:100%;width:${ppScheduledPct}%;background:${ppOver?'var(--red)':ppScheduledPct>=85?'var(--amber)':'var(--blue)'};border-radius:3px;transition:width .3s"></div>
         </div>
-        <div class="metric-sub" style="margin-top:8px;display:flex;flex-direction:column;gap:3px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:10px;text-align:right">${ppScheduledHours.toFixed(1)}h of ${ppBudget.toFixed(1)}h budget${ppOver?` · <span style="color:var(--red);font-weight:600">${(ppScheduledHours-ppBudget).toFixed(1)}h over</span>`:''}</div>
+        <!-- Planned vs delivered breakdown bar -->
+        ${ppScheduledHours>0?`
+        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex;margin-bottom:6px">
+          <div style="height:100%;width:${ppDelivPctOfUsed}%;background:var(--green)" title="Delivered: ${ppDeliveredHours.toFixed(1)}h"></div>
+          <div style="height:100%;width:${ppInProgPct}%;background:var(--amber)" title="In Progress: ${ppInProgHours.toFixed(1)}h"></div>
+          <div style="height:100%;width:${ppPlannedPct}%;background:var(--bg3);border:1px solid var(--border)" title="Planned: ${ppPlannedHours.toFixed(1)}h"></div>
+        </div>`:''}
+        <div class="metric-sub" style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
+          ${ppDeliveredHours>0?`<div style="display:flex;justify-content:space-between;align-items:center">
             <span style="display:flex;align-items:center;gap:5px">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--blue)"></span>
+              <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--green)"></span>
               Delivered
             </span>
             <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${ppDeliveredHours.toFixed(1)}h</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
+          </div>`:''}
+          ${ppInProgHours>0?`<div style="display:flex;justify-content:space-between;align-items:center">
             <span style="display:flex;align-items:center;gap:5px">
-              <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(102,126,234,0.25);border:1px solid var(--blue)"></span>
-              Scheduled
+              <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--amber)"></span>
+              In Progress
             </span>
-            <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${ppScheduledHours.toFixed(1)}h</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:3px;margin-top:1px">
+            <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${ppInProgHours.toFixed(1)}h</span>
+          </div>`:''}
+          ${ppPlannedHours>0?`<div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="display:flex;align-items:center;gap:5px">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--bg3);border:1px solid var(--border)"></span>
+              Planned
+            </span>
+            <span style="font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${ppPlannedHours.toFixed(1)}h</span>
+          </div>`:''}
+          <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:4px;margin-top:2px">
             <span style="color:var(--text3)">Budget</span>
-            <span style="font-family:'DM Mono',monospace;color:${ppOver?'var(--red)':'var(--text3)'}${ppOver?';font-weight:600':''}">${ppBudget.toFixed(1)}h${ppOver?` · ${(ppScheduledHours-ppBudget).toFixed(1)}h over`:''}</span>
+            <span style="font-family:'DM Mono',monospace;color:${ppOver?'var(--red)':'var(--text3)'}${ppOver?';font-weight:600':''}">${ppBudget.toFixed(1)}h</span>
           </div>
         </div>
       </div>`:`

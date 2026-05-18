@@ -4864,8 +4864,10 @@ function renderProjectDetail(pid){
         const tagData=TAGS.map(tg=>{
           const tTasks=tasks.filter(t=>t.tag===tg.id);
           const hours=tTasks.reduce((s,t)=>s+(t.estHours||0),0);
-          const done=tTasks.filter(t=>t.status==='done').length;
-          return{...tg,hours,count:tTasks.length,done};
+          const deliveredH=tTasks.filter(t=>t.status==='done'||t.status==='review').reduce((s,t)=>s+(t.estHours||0),0);
+          const inProgH=tTasks.filter(t=>t.status==='progress').reduce((s,t)=>s+(t.estHours||0),0);
+          const plannedH=tTasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(t.estHours||0),0);
+          return{...tg,hours,count:tTasks.length,deliveredH,inProgH,plannedH};
         }).filter(tg=>tg.count>0);
         if(!tagData.length&&!untaggedH) return'';
         return`<div style="padding:14px 20px;border-bottom:1px solid var(--border)">
@@ -4873,18 +4875,22 @@ function renderProjectDetail(pid){
           <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
             ${tagData.map(tg=>{
               const pct=totH>0?Math.round(tg.hours/totH*100):0;
-              const donePct=tg.count>0?Math.round(tg.done/tg.count*100):0;
-              return`<div style="flex:1;min-width:140px;background:${tg.bg};border:1px solid ${tg.color.replace('var(','').replace(')','') === tg.color ? tg.color : tg.color};border-radius:8px;padding:10px 14px;border-color:${tg.color};opacity:0.9">
+              const delivPct=tg.hours>0?Math.round(tg.deliveredH/tg.hours*100):0;
+              const inProgPct=tg.hours>0?Math.round(tg.inProgH/tg.hours*100):0;
+              const plannedPct=tg.hours>0?Math.round(tg.plannedH/tg.hours*100):0;
+              return`<div style="flex:1;min-width:140px;background:${tg.bg};border:1px solid ${tg.color};border-radius:8px;padding:10px 14px;opacity:0.9">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
                   <span class="task-type-tag tag-${tg.id}" style="font-size:8px;padding:2px 6px">${tg.label}</span>
                   <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">${tg.count} task${tg.count!==1?'s':''}</span>
                 </div>
                 <div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:${tg.color};line-height:1;margin-bottom:4px">${tg.hours}h</div>
                 <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:6px">${pct}% of ${totH}h total</div>
-                <div style="height:3px;background:var(--bg4);border-radius:2px;overflow:hidden">
-                  <div style="height:100%;width:${donePct}%;background:${tg.color};border-radius:2px;opacity:0.7"></div>
+                <div style="height:5px;background:var(--bg4);border-radius:2px;overflow:hidden;display:flex;margin-bottom:4px">
+                  ${tg.deliveredH>0?`<div style="height:100%;width:${delivPct}%;background:var(--green)" title="Delivered: ${tg.deliveredH}h"></div>`:''}
+                  ${tg.inProgH>0?`<div style="height:100%;width:${inProgPct}%;background:var(--amber)" title="In Progress: ${tg.inProgH}h"></div>`:''}
+                  ${tg.plannedH>0?`<div style="height:100%;width:${plannedPct}%;background:var(--border2)" title="Planned: ${tg.plannedH}h"></div>`:''}
                 </div>
-                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px">${donePct}% done</div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${delivPct}% delivered${tg.plannedH>0?` · ${tg.plannedH}h planned`:''}</div>
               </div>`;
             }).join('')}
             ${untaggedH>0?`<div style="flex:1;min-width:140px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
@@ -4894,10 +4900,19 @@ function renderProjectDetail(pid){
               </div>
               <div style="font-family:'DM Mono',monospace;font-size:20px;font-weight:700;color:var(--text3);line-height:1;margin-bottom:4px">${untaggedH}h</div>
               <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-bottom:6px">${totH>0?Math.round(untaggedH/totH*100):0}% of ${totH}h total</div>
-              <div style="height:3px;background:var(--bg4);border-radius:2px;overflow:hidden">
-                <div style="height:100%;width:${untaggedTotal>0?Math.round(untaggedDone/untaggedTotal*100):0}%;background:var(--text3);border-radius:2px;opacity:0.5"></div>
-              </div>
-              <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px">${untaggedTotal>0?Math.round(untaggedDone/untaggedTotal*100):0}% done</div>
+              ${(()=>{
+                const uTasks=tasks.filter(t=>!t.tag);
+                const uDel=uTasks.filter(t=>t.status==='done'||t.status==='review').reduce((s,t)=>s+(t.estHours||0),0);
+                const uProg=uTasks.filter(t=>t.status==='progress').reduce((s,t)=>s+(t.estHours||0),0);
+                const uPlan=uTasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(t.estHours||0),0);
+                const dPct=untaggedH>0?Math.round(uDel/untaggedH*100):0;
+                return`<div style="height:5px;background:var(--bg4);border-radius:2px;overflow:hidden;display:flex;margin-bottom:4px">
+                  ${uDel>0?`<div style="height:100%;width:${dPct}%;background:var(--green)"></div>`:''}
+                  ${uProg>0?`<div style="height:100%;width:${untaggedH>0?Math.round(uProg/untaggedH*100):0}%;background:var(--amber)"></div>`:''}
+                  ${uPlan>0?`<div style="height:100%;width:${untaggedH>0?Math.round(uPlan/untaggedH*100):0}%;background:var(--border2)"></div>`:''}
+                </div>
+                <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${dPct}% delivered${uPlan>0?` · ${uPlan.toFixed(1)}h planned`:''}</div>`;
+              })()}
             </div>`:''}
           </div>
         </div>`;
@@ -4915,6 +4930,10 @@ function renderProjectDetail(pid){
       const overBudget=hoursUsed>budget;
       const barColor=overBudget?'var(--red)':pct>=85?'var(--amber)':'var(--green)';
       const remaining=budget-hoursUsed;
+      // Planned vs delivered within post-production tasks
+      const ppDeliveredH=postProdTasks.filter(t=>t.status==='done'||t.status==='review').reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
+      const ppInProgH=postProdTasks.filter(t=>t.status==='progress').reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
+      const ppPlannedH=postProdTasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(parseFloat(t.estHours)||0),0);
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:14px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
           <div>
@@ -4929,10 +4948,23 @@ function renderProjectDetail(pid){
             <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:${overBudget?'var(--red)':'var(--text2)'};letter-spacing:-0.02em">${Math.abs(remaining).toFixed(1)}h</div>
           </div>
         </div>
-        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+        <!-- Total used vs budget bar -->
+        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;margin-bottom:6px">
           <div style="height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width .3s"></div>
         </div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:8px">From ${postProdTasks.length} post-production task${postProdTasks.length===1?'':'s'}</div>
+        <!-- Planned vs delivered bar within used hours -->
+        ${hoursUsed>0?`
+        <div style="height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;display:flex;margin-bottom:4px">
+          ${ppDeliveredH>0?`<div style="height:100%;width:${Math.round(ppDeliveredH/hoursUsed*100)}%;background:var(--green)" title="Delivered: ${ppDeliveredH.toFixed(1)}h"></div>`:''}
+          ${ppInProgH>0?`<div style="height:100%;width:${Math.round(ppInProgH/hoursUsed*100)}%;background:var(--amber)" title="In Progress: ${ppInProgH.toFixed(1)}h"></div>`:''}
+          ${ppPlannedH>0?`<div style="height:100%;width:${Math.round(ppPlannedH/hoursUsed*100)}%;background:var(--border2)" title="Planned: ${ppPlannedH.toFixed(1)}h"></div>`:''}
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+          ${ppDeliveredH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--green)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Delivered ${ppDeliveredH.toFixed(1)}h</span></div>`:''}
+          ${ppInProgH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--amber)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">In Progress ${ppInProgH.toFixed(1)}h</span></div>`:''}
+          ${ppPlannedH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--border2)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Planned ${ppPlannedH.toFixed(1)}h</span></div>`:''}
+        </div>`:''}
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">From ${postProdTasks.length} post-production task${postProdTasks.length===1?'':'s'}</div>
       </div>`;
     })()}
 
@@ -6487,7 +6519,18 @@ function _utilTopMetrics(totalHours, capTotal, utilPct, byTag, byStatus, win){
     <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Total Hours</div>
       <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:600;color:var(--text);letter-spacing:-0.02em">${totalHours.toFixed(1)}<span style="font-size:14px;color:var(--text3);font-weight:500;margin-left:4px">h</span></div>
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">Capacity: ${capTotal.toFixed(0)}h</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px;margin-bottom:10px">Capacity: ${capTotal.toFixed(0)}h</div>
+      ${totalHours>0?`
+      <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex;margin-bottom:5px">
+        <div style="height:100%;width:${Math.round((doneHours+reviewHours)/totalHours*100)}%;background:var(--green);border-radius:4px 0 0 4px" title="Delivered: ${(doneHours+reviewHours).toFixed(1)}h"></div>
+        <div style="height:100%;width:${Math.round((byStatus.progress||0)/totalHours*100)}%;background:var(--amber)" title="In Progress: ${(byStatus.progress||0).toFixed(1)}h"></div>
+        <div style="height:100%;width:${Math.round((byStatus.todo||0)/totalHours*100)}%;background:var(--border2)" title="Planned: ${(byStatus.todo||0).toFixed(1)}h"></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--green)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Delivered ${(doneHours+reviewHours).toFixed(1)}h</span></div>
+        ${(byStatus.progress||0)>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--amber)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">In Progress ${(byStatus.progress||0).toFixed(1)}h</span></div>`:''}
+        ${(byStatus.todo||0)>0?`<div style="display:flex;align-items:center;gap:4px"><div style="width:7px;height:7px;border-radius:1px;background:var(--border2)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Planned ${(byStatus.todo||0).toFixed(1)}h</span></div>`:''}
+      </div>`:''}
     </div>
     <div class="metric-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px 20px">
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Team Utilization</div>
@@ -6545,8 +6588,11 @@ function _utilMemberSection(byMember, capPerMember, win){
     </div>
     <div style="display:flex;flex-direction:column;gap:14px">
       ${byMember.map(({member,hours,pct,tags,tasks,cap:mCap})=>{
-        // Sprint-aware color: uses monthCapColor scaled to window
         const utilColor = monthCapColor(hours, mCap);
+        // Planned vs delivered breakdown
+        const deliveredH = tasks.filter(t=>t.status==='done'||t.status==='review').reduce((s,t)=>s+(t.estHours||0),0);
+        const inProgH = tasks.filter(t=>t.status==='progress').reduce((s,t)=>s+(t.estHours||0),0);
+        const plannedH = tasks.filter(t=>t.status==='todo').reduce((s,t)=>s+(t.estHours||0),0);
         const tagBreakdown = ['production','post-production','admin','untagged']
           .filter(k=>tags[k]>0)
           .map(k=>{
@@ -6576,9 +6622,22 @@ function _utilMemberSection(byMember, capPerMember, win){
               <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap">${hours.toFixed(1)}h / ${mCap}h · ${tasks.length} task${tasks.length===1?'':'s'}</div>
             </div>
           </div>
-          <div style="display:flex;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+          <!-- Tag type bar -->
+          <div style="display:flex;height:6px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
             ${stackedSegments}
           </div>
+          <!-- Planned vs delivered bar -->
+          ${hours>0?`
+          <div style="display:flex;height:5px;background:var(--bg4);border-radius:3px;overflow:hidden;margin-bottom:4px">
+            <div style="height:100%;width:${Math.round(deliveredH/hours*100)}%;background:var(--green)" title="Delivered: ${deliveredH.toFixed(1)}h"></div>
+            <div style="height:100%;width:${Math.round(inProgH/hours*100)}%;background:var(--amber)" title="In Progress: ${inProgH.toFixed(1)}h"></div>
+            <div style="height:100%;width:${Math.round(plannedH/hours*100)}%;background:var(--border2)" title="Planned: ${plannedH.toFixed(1)}h"></div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            ${deliveredH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--green)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Delivered ${deliveredH.toFixed(1)}h</span></div>`:''}
+            ${inProgH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--amber)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">In Progress ${inProgH.toFixed(1)}h</span></div>`:''}
+            ${plannedH>0?`<div style="display:flex;align-items:center;gap:3px"><div style="width:6px;height:6px;border-radius:1px;background:var(--border2)"></div><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">Planned ${plannedH.toFixed(1)}h</span></div>`:''}
+          </div>`:''}
         </div>`;
       }).join('')}
     </div>
