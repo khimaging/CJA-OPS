@@ -2604,6 +2604,9 @@ async function saveTask() {
       if (deliverableId) {
         state.taskDeliverables = state.taskDeliverables || [];
         state.taskDeliverables.push({ taskId, deliverableId });
+        // Refetch deliverables to pick up the recomputed status triggered by the link
+        const freshDelivs = await api('GET', `/deliverables?projectId=${projectId}`);
+        state.deliverables = state.deliverables.filter(d => d.projectId !== projectId).concat(freshDelivs);
       }
       notify('Task added ✓');
     }
@@ -5182,8 +5185,7 @@ async function pdetailDrop(e,status){
 }
 
 function openTaskModalForProject(pid){
-  openTaskModal();
-  setTimeout(()=>{ const sel=document.getElementById('t-project'); if(sel) sel.value=pid; },50);
+  openTaskModal(null, pid);
 }
 
 function renderHealthDashboard(){
@@ -5594,12 +5596,13 @@ function renderYouDashboard(){
   monthTasks.forEach(t=>{const k=t.tag||'untagged';tagHours[k]=(tagHours[k]||0)+(t.estHours||0);});
   const tagColor={'production':'var(--blue)','post-production':'var(--purple)','admin':'var(--text3)','untagged':'var(--text3)'};
 
-  // Earnings this month — projected (includes in-progress deals, not just paid/complete)
+  // Earnings this month — actual + projected combined (matches the monthly view total)
   const monthFilter=d=>(d.closeDate||'').startsWith(thisMonthKey);
-  const {prodPay:projProdPay,feePay:projFeePay,psPay:projPsPay}=calcProjectedEarnings(monthFilter);
-  const myProd=projProdPay[myId]||0;
-  const myFee=projFeePay[myId]||0;
-  const myPs=projPsPay[myId]||0;
+  const {prodPay:actProd,feePay:actFee,psPay:actPs}=calcActualEarnings(monthFilter);
+  const {prodPay:prjProd,feePay:prjFee,psPay:prjPs}=calcProjectedEarnings(monthFilter);
+  const myProd=(actProd[myId]||0)+(prjProd[myId]||0);
+  const myFee=(actFee[myId]||0)+(prjFee[myId]||0);
+  const myPs=(actPs[myId]||0)+(prjPs[myId]||0);
   const myTotal=myProd+myFee+myPs;
 
   // Workload donut — build the byPeriod structure _buildMemberDonut expects
@@ -5635,7 +5638,7 @@ function renderYouDashboard(){
         {label:'In Review', val:inReviewTasks.length, color:inReviewTasks.length>0?'var(--blue)':'var(--text3)'},
         {label:'Done This Month', val:monthTasks.filter(t=>t.status==='done').length, sub:`of ${monthTasks.length} scheduled`, color:'var(--green)'},
         {label:'Month Hours', val:`${monthHours}h`, sub:`of ${cap}h cap`, color:utilColor},
-        {label:'Month Earnings', val:fmt(myTotal), sub:'projected · prod + fees', color:'var(--gold)'},
+        {label:'Month Earnings', val:fmt(myTotal), sub:'actual + projected', color:'var(--gold)'},
       ].map(k=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
         <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">${k.label}</div>
         <div style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:${k.color};letter-spacing:-0.02em">${k.val}</div>
@@ -5920,11 +5923,15 @@ function renderFinancialDashboard(){
   // Projected annual: YTD actual + (avg monthly × remaining months)
   const remainingMonths=12-monthsElapsed;
   const projectedAnnual=ytdNet+(avgMonthlyNet*remainingMonths);
-  // Retainer ARR: total value of all retainer deals (annualized base)
-  const retainerARR=retainerDeals.reduce((s,d)=>s+(d.value||0),0);
+  // Retainer ARR: all deals (Retainer stage + Closed Won) for clients with active retainer contracts
+  // This correctly counts the full contract value regardless of which months have been activated
+  const retainerClientSet=new Set(retainerDeals.map(d=>d.client));
+  const retainerARR=[...retainerDeals,
+    ...allDeals.filter(d=>d.stage==='Closed Won'&&retainerClientSet.has(d.client))
+  ].reduce((s,d)=>s+(d.value||0),0);
   // Coverage: retainer monthly avg as % of run rate
-  const retainerMonthlyAvg=retainerDeals.length>0
-    ? retainerARR/Math.max(1,new Set(retainerDeals.map(d=>(d.closeDate||'').substring(0,7))).size)
+  const retainerMonthlyAvg=retainerClientSet.size>0
+    ? retainerARR/Math.max(1,[...retainerDeals,...allDeals.filter(d=>d.stage==='Closed Won'&&retainerClientSet.has(d.client))].length)
     : 0;
   const retainerCoverage=avgMonthlyNet>0?Math.round(retainerMonthlyAvg/avgMonthlyNet*100):0;
 
@@ -6006,7 +6013,7 @@ function renderFinancialDashboard(){
         {
           label:'Retainer ARR',
           val:fmt(retainerARR),
-          sub:`${retainerDeals.length} retainer deal${retainerDeals.length===1?'':'s'}`,
+          sub:`${retainerClientSet.size} retainer client${retainerClientSet.size===1?'':'s'} · all months`,
           color:'var(--purple)',
           accent:false,
         },
@@ -11277,10 +11284,15 @@ function openProjectModal(editId){
   document.getElementById('p-edit-hours-budget').value=p&&p.editHoursBudget!=null?p.editHoursBudget:'';
   document.getElementById('project-modal').classList.add('open');
 }
-function openTaskModal(editId){
+function openTaskModal(editId, forceProjectId){
   const t=editId?state.tasks.find(x=>x.id===editId):null;
   document.querySelector('#task-modal .modal-title').childNodes[0].nodeValue=t?'Edit Task ':'New Task ';
-  document.getElementById('t-project').innerHTML=state.projects.filter(p=>p.status!=='complete'&&!p.archived).map(p=>`<option value="${p.id}" ${t&&t.projectId===p.id?'selected':''}>${p.name}</option>`).join('')||'<option>No active projects</option>';
+  document.getElementById('t-project').innerHTML=state.projects.filter(p=>p.status!=='complete'&&!p.archived).map(p=>`<option value="${p.id}" ${(t&&t.projectId===p.id)||(forceProjectId&&p.id===forceProjectId)?'selected':''}>${p.name}</option>`).join('')||'<option>No active projects</option>';
+  // If forceProjectId, ensure it's selected even if the map above didn't mark it
+  if(forceProjectId&&!t){
+    const sel=document.getElementById('t-project');
+    if(sel&&sel.value!==forceProjectId) sel.value=forceProjectId;
+  }
   document.getElementById('t-assignee').innerHTML=state.team.map(m=>`<option value="${m.id}" ${t&&t.assigneeId===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('t-title').value=t?t.title:'';
   document.getElementById('t-due').value=t?(t.due||''):'';
