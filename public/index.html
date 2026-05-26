@@ -520,22 +520,34 @@
     .topbar{padding:10px 14px;flex-wrap:wrap;gap:8px;position:relative;top:auto;}
     .page-title{font-size:17px;}
     .topbar-actions{margin-left:0;width:100%;justify-content:flex-end;flex-wrap:wrap;gap:6px;}
-    .content{padding:14px;}
+    .content{padding:10px;}
 
-    /* All grids → single column */
+    /* ── GLOBAL OVERFLOW GUARD ─────────────────────────────── */
+    /* Prevent any element from blowing past the viewport */
+    .view{max-width:100vw;overflow-x:hidden;}
+    .content>*{max-width:100%;}
+
+    /* Tables and fixed-grid containers: always scroll */
+    .monthly-table,.team-monthly-table,.bucket-table,.exp-project-block,
+    .health-project-grid,.list-table-wrap,.pm-board,.pay-content-inner,
+    .proj-detail-stat-strip{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    /* Any table element */
+    table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+    /* ── STAT / KPI GRIDS ──────────────────────────────────── */
     .stats-row,.stats-row-5,.exp-summary-grid,.ps-summary-grid,
     .projects-grid,.pay-grid,.ps-member-grid,.manage-grid,
     .month-summary,.kanban,.exp-reimb-grid{grid-template-columns:1fr!important;}
+    /* 2-col for KPI cards that are wide enough */
+    .fin-kpi-strip,.forecast-kpi-strip{grid-template-columns:repeat(2,1fr)!important;}
 
-    /* Pipeline: horizontal scroll with fixed card width */
+    /* ── PIPELINE / KANBAN ─────────────────────────────────── */
     .pipeline{
       display:flex;gap:12px;
       overflow-x:auto;padding-bottom:8px;
       scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
     }
     .pipeline-col{min-width:220px;flex-shrink:0;scroll-snap-align:start;}
-
-    /* Kanban: horizontal scroll too */
     .kanban{
       display:flex!important;gap:12px;
       overflow-x:auto;padding-bottom:8px;
@@ -543,72 +555,98 @@
     }
     .kanban-col{min-width:220px;flex-shrink:0;scroll-snap-align:start;}
 
-    /* Tabs: scroll horizontally */
+    /* ── TABS ──────────────────────────────────────────────── */
     .crm-tabs{width:100%;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch;}
-    .crm-tab{padding:8px 14px;font-size:9px;}
+    .crm-tab{padding:8px 12px;font-size:9px;}
 
-    /* Task toolbar: wrap */
+    /* ── TASK TOOLBAR ──────────────────────────────────────── */
     .task-toolbar{flex-wrap:wrap;gap:8px;}
     .view-toggle{flex-shrink:0;}
-
-    /* Filter pills: scroll */
     .filter-pills-row{overflow-x:auto;white-space:nowrap;padding-bottom:4px;-webkit-overflow-scrolling:touch;}
 
-    /* Calendar: shrink cells */
+    /* ── CALENDAR ──────────────────────────────────────────── */
     .calendar-grid{font-size:10px;}
     .cal-day{min-height:54px;padding:4px;}
     .cal-day-num{font-size:9px;margin-bottom:2px;}
     .cal-task{font-size:8px;padding:1px 3px;}
 
-    /* Monthly tables: show only key cols, scroll for rest */
-    .monthly-table,.team-monthly-table,.bucket-table,.exp-project-block{overflow-x:auto;}
-    .mt-head,.mt-row{grid-template-columns:1fr 80px 90px;min-width:340px;}
+    /* ── MONTHLY / PROJECT TABLES ──────────────────────────── */
+    .mt-head,.mt-row{grid-template-columns:1fr 80px 90px;min-width:300px;}
     .mt-head>*:nth-child(n+4),.mt-row>*:nth-child(n+4){display:none;}
-    .pm-head,.pm-row{grid-template-columns:1fr 90px 80px;min-width:300px;}
+    .pm-head,.pm-row{grid-template-columns:1fr 80px 70px;min-width:260px;font-size:11px;}
     .pm-head>*:nth-child(n+4),.pm-row>*:nth-child(n+4){display:none;}
     .team-monthly-head,.team-monthly-row{grid-template-columns:1fr 80px 100px!important;min-width:300px;}
     .team-monthly-head>*:nth-child(n+4),.team-monthly-row>*:nth-child(n+4){display:none!important;}
 
-    /* Expense rows: hide all but desc + amount + delete */
+    /* ── EXPENSE TABLE ─────────────────────────────────────── */
     .exp-table-head,.exp-row{grid-template-columns:1fr 70px 32px!important;min-width:0;}
     .exp-table-head span:nth-child(n+2):not(:nth-last-child(-n+2)),
     .exp-row>div:nth-child(n+2):not(:nth-last-child(-n+2)){display:none!important;}
-
-    /* Bucket rows: stack */
     .bucket-row{grid-template-columns:1fr 60px;gap:8px;}
     .bucket-row>*:nth-child(n+3){display:none;}
 
-    /* Modals: full screen sheet */
-    .modal{width:100%!important;max-width:100vw;max-height:92vh;border-radius:16px 16px 0 0;position:fixed;bottom:0;left:0;right:0;animation:slideUpSheet .22s ease;}
+    /* ── PROJECT DETAIL STAT STRIP ─────────────────────────── */
+    /* 7-col stat strip → 2-col scrollable */
+    .proj-stat-strip{display:grid!important;grid-template-columns:repeat(2,1fr)!important;
+      border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+    .proj-stat-strip>div{border-right:none!important;border-bottom:1px solid var(--border);}
+
+    /* ── HEALTH DASHBOARD ──────────────────────────────────── */
+    /* Project grid: hide non-essential cols, scroll container */
+    .health-proj-row{grid-template-columns:1fr 90px!important;min-width:0;}
+    .health-proj-row>*:nth-child(n+3){display:none;}
+
+    /* ── FINANCIAL DASHBOARD ───────────────────────────────── */
+    /* Two-col breakdowns → single col */
+    .fin-two-col{grid-template-columns:1fr!important;}
+    .fin-bottom-row{grid-template-columns:1fr!important;}
+    /* Controls bar: stack year + target inputs */
+    .fin-controls{flex-wrap:wrap;gap:8px;}
+    .fin-controls>*{flex:1 1 140px;}
+
+    /* ── TEAM PAGE ─────────────────────────────────────────── */
+    /* Pay-by-client: single col */
+    .team-client-grid{grid-template-columns:1fr!important;}
+
+    /* ── YOU PAGE ──────────────────────────────────────────── */
+    .you-two-col{grid-template-columns:1fr!important;}
+
+    /* ── MODALS: FULL-SCREEN SHEET ─────────────────────────── */
+    .modal{width:100%!important;max-width:100vw;max-height:92vh;
+      border-radius:16px 16px 0 0;position:fixed;bottom:0;left:0;right:0;
+      animation:slideUpSheet .22s ease;}
     .modal-overlay.open{align-items:flex-end;}
     @keyframes slideUpSheet{from{transform:translateY(100%)}to{transform:translateY(0)}}
 
-    /* Form rows: stack fields */
+    /* ── FORMS ─────────────────────────────────────────────── */
     .form-row{grid-template-columns:1fr!important;}
 
-    /* Profit share grid */
+    /* ── MISC ──────────────────────────────────────────────── */
     .ps-member-grid{grid-template-columns:1fr!important;}
-
-    /* Stat values: slightly smaller */
-    .stat-value{font-size:22px;}
+    .stat-value{font-size:20px;}
     .pay-total{font-size:22px;}
     .ps-amount{font-size:22px;}
-
-    /* Team monthly nav */
     .team-month-nav{flex-wrap:wrap;gap:8px;}
     .team-month-label{min-width:auto;}
-
-    /* Notification: full width at bottom */
     .notification{left:14px;right:14px;bottom:14px;text-align:center;}
-
-    /* Section titles wrap */
     .section-title{font-size:16px;}
-
-    /* Reimbursement dashboard grid */
     .exp-reimb-grid{grid-template-columns:1fr!important;}
-
-    /* Pay calculator section */
     .pay-grid{grid-template-columns:1fr!important;}
+
+    /* ── INLINE STYLE OVERRIDES for dynamic content ─────────── */
+    /* Two-col grids rendered inline → force single col on mobile */
+    [style*="grid-template-columns:1fr 1fr"]{grid-template-columns:1fr!important;}
+    [style*="grid-template-columns: 1fr 1fr"]{grid-template-columns:1fr!important;}
+    /* Auto-fit grids already handle themselves via minmax — leave those */
+
+    /* Prevent SVG charts from overflowing */
+    svg{max-width:100%;}
+    /* Scrollable chart wrappers */
+    [style*="overflow-x:auto"]{max-width:100%;-webkit-overflow-scrolling:touch;}
+
+    /* Nav bar filter rows with multiple selects: wrap */
+    [style*="display:flex"][style*="gap:10px"]{flex-wrap:wrap;}
+    [style*="display:flex"][style*="gap:12px"]{flex-wrap:wrap;}
   }
 </style>
 </head>
@@ -4778,8 +4816,8 @@ function renderProjectDetail(pid){
         </div>
       </div>
 
-      <!-- Stat strip — same pattern as pay section sub-header -->
-      <div style="display:grid;grid-template-columns:repeat(${deal?7:2},1fr);border-bottom:1px solid var(--border)">
+      <!-- Stat strip -->
+      <div class="proj-stat-strip" style="display:grid;grid-template-columns:repeat(${deal?7:2},1fr);border-bottom:1px solid var(--border);overflow-x:auto">
         <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
           <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${tasks.length}</span></div>
@@ -5646,7 +5684,7 @@ function renderYouDashboard(){
       </div>`).join('')}
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+    <div class="you-two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
       <!-- Workload + work mix -->
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
         <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:14px">My Workload · ${MONTHS[now.getMonth()]}</div>
@@ -5937,7 +5975,7 @@ function renderFinancialDashboard(){
 
   el.innerHTML=`
     <!-- Controls bar -->
-    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px">
+    <div class="fin-controls" style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px">
       <select onchange="state.finYear=parseInt(this.value);renderFinancialDashboard()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:7px;font-family:'DM Mono',monospace;font-size:10px;cursor:pointer">
         ${yearOpts.map(y=>`<option value="${y}" ${y===yr?'selected':''}>${y}</option>`).join('')}
       </select>
@@ -5960,7 +5998,7 @@ function renderFinancialDashboard(){
     </div>
 
     <!-- KPI strip — actuals -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:12px">
+    <div class="fin-kpi-strip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:12px">
       ${[
         {label:'YTD Gross', val:fmt(ytdGross), sub:`${ytdDeals} deal${ytdDeals===1?'':'s'}`, color:'var(--gold)'},
         {label:'YTD Net', val:fmt(ytdNet), sub:`After expenses`, color:'var(--green)'},
@@ -5980,7 +6018,7 @@ function renderFinancialDashboard(){
     <div style="margin-bottom:6px;padding:0 2px">
       <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--text3);opacity:0.7;margin-bottom:8px">Forecast</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
+    <div class="forecast-kpi-strip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px">
       ${[
         {
           label:'Committed · Next 3 Mo',
@@ -6051,7 +6089,7 @@ function renderFinancialDashboard(){
     </div>
 
     <!-- Two-column: client revenue + effective rates -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+    <div class="fin-two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
 
       <!-- Client revenue bars -->
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
@@ -6118,7 +6156,7 @@ function renderFinancialDashboard(){
     </div>
 
     <!-- Bottom row: concentration risk + expense analysis + studio rate -->
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+    <div class="fin-bottom-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
 
       <!-- Revenue concentration -->
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px 22px">
