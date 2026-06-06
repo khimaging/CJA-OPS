@@ -3579,6 +3579,7 @@ function _calcBucketConsumed(bucket){
 
     // Only count deliverables on projects belonging to the right client
     // (determined by the contract — we match by deliverable type across all client projects)
+    // Add manual_consumed offset for pre-system work not in the deliverable library
     return delivs.filter(d=>{
       if(d.typeId!==bucket.deliverableTypeId) return false;
       if(d.status==='cancelled') return false;
@@ -3604,7 +3605,7 @@ function _calcBucketConsumed(bucket){
       if(bucket.phaseStartMonth&&workMonth<bucket.phaseStartMonth) return false;
       if(bucket.phaseEndMonth&&workMonth>bucket.phaseEndMonth) return false;
       return true;
-    }).length;
+    }).length + (bucket.manualConsumed||0); // always add manual offset — covers pre-system work
   }
   return bucket.manualConsumed||0;
 }
