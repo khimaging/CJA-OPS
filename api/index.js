@@ -2272,13 +2272,14 @@ function mapDeal(d) {
     client:        d.client,
     clientId:      d.client_id || null,
     value:         d.value,
-    expenses:      0,  // always computed client-side from expenses table via syncDealExpenses()
+    expenses:      0,
     stage:         d.stage,
     owner:         d.owner,
     closeDate:     d.close_date,
     invoiceStatus: d.invoice_status || 'none',
     buckets:       d.buckets || [],
     prob:          d.prob || 0,
+    isRetainer:    !!d.is_retainer,
   };
 }
 
@@ -2426,6 +2427,12 @@ function dealToRow(body, partial = false) {
   if (!partial || body.invoiceStatus !== undefined) row.invoice_status = body.invoiceStatus || 'none';
   if (!partial || body.buckets       !== undefined) row.buckets        = body.buckets || [];
   if (!partial || body.prob          !== undefined) row.prob           = body.prob || 0;
+  // Auto-flag as retainer if stage is Retainer; otherwise respect explicit value
+  if (body.stage === 'Retainer') {
+    row.is_retainer = true;
+  } else if (!partial || body.isRetainer !== undefined) {
+    row.is_retainer = !!body.isRetainer;
+  }
   return row;
 }
 
