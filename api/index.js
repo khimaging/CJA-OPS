@@ -2583,6 +2583,7 @@ function mapRetainerBucket(b) {
     unitType:           b.unit_type || 'count',
     contractedQty:      b.contracted_qty || 0,
     deliverableTypeId:  b.deliverable_type_id || null,
+    taskTag:            b.task_tag || 'post-production',
     manualConsumed:     b.manual_consumed || 0,
     phaseLabel:         b.phase_label || null,
     phaseStartMonth:    b.phase_start_month || null,
@@ -2663,6 +2664,7 @@ app.post('/api/retainer-contracts/:contractId/buckets', requireAuth, async (req,
       contract_id: req.params.contractId,
       name: name || 'New Bucket', unit: unit || 'items',
       unit_type: unitType || 'count',
+      task_tag: req.body.taskTag || 'post-production',
       contracted_qty: contractedQty || 0,
       deliverable_type_id: deliverableTypeId || null,
       manual_consumed: manualConsumed || 0,
@@ -2687,6 +2689,7 @@ app.patch('/api/retainer-buckets/:id', requireAuth, async (req, res) => {
     });
     if (req.body.contractedQty      !== undefined) updates.contracted_qty       = req.body.contractedQty;
     if (req.body.unitType           !== undefined) updates.unit_type             = req.body.unitType;
+    if (req.body.taskTag            !== undefined) updates.task_tag              = req.body.taskTag || 'post-production';
     if (req.body.deliverableTypeId  !== undefined) updates.deliverable_type_id  = req.body.deliverableTypeId || null;
     if (req.body.manualConsumed     !== undefined) updates.manual_consumed      = req.body.manualConsumed || 0;
     if (req.body.sortOrder          !== undefined) updates.sort_order           = req.body.sortOrder;
