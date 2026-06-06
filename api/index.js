@@ -2429,6 +2429,275 @@ function dealToRow(body, partial = false) {
   return row;
 }
 
+// ─── QUOTES ──────────────────────────────────────────────────────────────────
+
+function mapQuote(q, lineItems = []) {
+  return {
+    id:          q.id,
+    name:        q.name,
+    client:      q.client,
+    status:      q.status,
+    overheadPct: parseFloat(q.overhead_pct) || 20,
+    notes:       q.notes || null,
+    dealId:      q.deal_id || null,
+    createdBy:   q.created_by || null,
+    createdAt:   q.created_at,
+    updatedAt:   q.updated_at,
+    lineItems:   lineItems.map(mapQuoteLineItem),
+  };
+}
+
+function mapQuoteLineItem(li) {
+  return {
+    id:                 li.id,
+    quoteId:            li.quote_id,
+    description:        li.description,
+    deliverableTypeId:  li.deliverable_type_id || null,
+    quantity:           parseFloat(li.quantity) || 1,
+    hoursPerUnit:       parseFloat(li.hours_per_unit) || 0,
+    ratePerHour:        parseFloat(li.rate_per_hour) || 70,
+    rateLabel:          li.rate_label || 'Production Pool',
+    sortOrder:          li.sort_order || 0,
+  };
+}
+
+// GET all quotes with line items
+app.get('/api/quotes', requireAuth, async (req, res) => {
+  try {
+    const { data: quotes, error: qErr } = await supabase
+      .from('quotes').select('*').order('created_at', { ascending: false });
+    if (qErr) throw qErr;
+    const { data: lines, error: lErr } = await supabase
+      .from('quote_line_items').select('*').order('sort_order');
+    if (lErr) throw lErr;
+    const linesByQuote = {};
+    (lines || []).forEach(l => {
+      if (!linesByQuote[l.quote_id]) linesByQuote[l.quote_id] = [];
+      linesByQuote[l.quote_id].push(l);
+    });
+    res.json((quotes || []).map(q => mapQuote(q, linesByQuote[q.id] || [])));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST create quote
+app.post('/api/quotes', requireAuth, async (req, res) => {
+  try {
+    const { name, client, status, overheadPct, notes, lineItems } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+    const { data: q, error: qErr } = await supabase.from('quotes').insert({
+      name: name.trim(), client: client || '',
+      status: status || 'draft',
+      overhead_pct: overheadPct ?? 20,
+      notes: notes || null,
+      created_by: req.user?.id || null,
+    }).select().single();
+    if (qErr) throw qErr;
+    let savedLines = [];
+    if (lineItems?.length) {
+      const rows = lineItems.map((li, i) => ({
+        quote_id: q.id, description: li.description, quantity: li.quantity || 1,
+        hours_per_unit: li.hoursPerUnit || 0, rate_per_hour: li.ratePerHour || 70,
+        rate_label: li.rateLabel || 'Production Pool',
+        deliverable_type_id: li.deliverableTypeId || null,
+        sort_order: i,
+      }));
+      const { data: lines, error: lErr } = await supabase.from('quote_line_items').insert(rows).select();
+      if (lErr) throw lErr;
+      savedLines = lines || [];
+    }
+    res.status(201).json(mapQuote(q, savedLines));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH update quote
+app.patch('/api/quotes/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = { updated_at: new Date().toISOString() };
+    if (req.body.name        !== undefined) updates.name         = req.body.name;
+    if (req.body.client      !== undefined) updates.client       = req.body.client;
+    if (req.body.status      !== undefined) updates.status       = req.body.status;
+    if (req.body.overheadPct !== undefined) updates.overhead_pct = req.body.overheadPct;
+    if (req.body.notes       !== undefined) updates.notes        = req.body.notes || null;
+    if (req.body.dealId      !== undefined) updates.deal_id      = req.body.dealId || null;
+    const { data: q, error } = await supabase.from('quotes').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    // Replace line items if provided
+    if (req.body.lineItems !== undefined) {
+      await supabase.from('quote_line_items').delete().eq('quote_id', req.params.id);
+      if (req.body.lineItems.length) {
+        const rows = req.body.lineItems.map((li, i) => ({
+          quote_id: req.params.id, description: li.description,
+          quantity: li.quantity || 1, hours_per_unit: li.hoursPerUnit || 0,
+          rate_per_hour: li.ratePerHour || 70,
+          rate_label: li.rateLabel || 'Production Pool',
+          deliverable_type_id: li.deliverableTypeId || null,
+          sort_order: i,
+        }));
+        await supabase.from('quote_line_items').insert(rows);
+      }
+    }
+    const { data: lines } = await supabase.from('quote_line_items').select('*')
+      .eq('quote_id', req.params.id).order('sort_order');
+    res.json(mapQuote(q, lines || []));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE quote
+app.delete('/api/quotes/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    const { error } = await supabase.from('quotes').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── RETAINER CONTRACTS ──────────────────────────────────────────────────────
+
+function mapRetainerContract(c, buckets = []) {
+  return {
+    id:          c.id,
+    name:        c.name,
+    client:      c.client,
+    startMonth:  c.start_month,
+    endMonth:    c.end_month,
+    totalValue:  c.total_value != null ? parseFloat(c.total_value) : null,
+    notes:       c.notes || null,
+    createdAt:   c.created_at,
+    buckets:     buckets.map(mapRetainerBucket),
+  };
+}
+
+function mapRetainerBucket(b) {
+  return {
+    id:                 b.id,
+    contractId:         b.contract_id,
+    name:               b.name,
+    unit:               b.unit || 'items',
+    contractedQty:      b.contracted_qty || 0,
+    deliverableTypeId:  b.deliverable_type_id || null,
+    manualConsumed:     b.manual_consumed || 0,
+    phaseLabel:         b.phase_label || null,
+    phaseStartMonth:    b.phase_start_month || null,
+    phaseEndMonth:      b.phase_end_month || null,
+    sortOrder:          b.sort_order || 0,
+    notes:              b.notes || null,
+  };
+}
+
+// GET all retainer contracts with buckets
+app.get('/api/retainer-contracts', requireAuth, async (req, res) => {
+  try {
+    const { data: contracts, error: cErr } = await supabase
+      .from('retainer_contracts').select('*').order('start_month');
+    if (cErr) throw cErr;
+    const { data: buckets, error: bErr } = await supabase
+      .from('retainer_buckets').select('*').order('sort_order');
+    if (bErr) throw bErr;
+    const bucketsByContract = {};
+    (buckets || []).forEach(b => {
+      if (!bucketsByContract[b.contract_id]) bucketsByContract[b.contract_id] = [];
+      bucketsByContract[b.contract_id].push(b);
+    });
+    res.json((contracts || []).map(c => mapRetainerContract(c, bucketsByContract[c.id] || [])));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST create retainer contract
+app.post('/api/retainer-contracts', requireAuth, async (req, res) => {
+  try {
+    const { name, client, startMonth, endMonth, totalValue, notes } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+    const { data: c, error } = await supabase.from('retainer_contracts').insert({
+      name: name.trim(), client: client || '',
+      start_month: startMonth, end_month: endMonth,
+      total_value: totalValue || null,
+      notes: notes || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(mapRetainerContract(c, []));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH update retainer contract
+app.patch('/api/retainer-contracts/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = { updated_at: new Date().toISOString() };
+    if (req.body.name       !== undefined) updates.name        = req.body.name;
+    if (req.body.client     !== undefined) updates.client      = req.body.client;
+    if (req.body.startMonth !== undefined) updates.start_month = req.body.startMonth;
+    if (req.body.endMonth   !== undefined) updates.end_month   = req.body.endMonth;
+    if (req.body.totalValue !== undefined) updates.total_value = req.body.totalValue || null;
+    if (req.body.notes      !== undefined) updates.notes       = req.body.notes || null;
+    const { data: c, error } = await supabase.from('retainer_contracts').update(updates)
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    const { data: buckets } = await supabase.from('retainer_buckets').select('*')
+      .eq('contract_id', req.params.id).order('sort_order');
+    res.json(mapRetainerContract(c, buckets || []));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE retainer contract (cascades to buckets)
+app.delete('/api/retainer-contracts/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    const { error } = await supabase.from('retainer_contracts').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST create bucket
+app.post('/api/retainer-contracts/:contractId/buckets', requireAuth, async (req, res) => {
+  try {
+    const { name, unit, contractedQty, deliverableTypeId, manualConsumed,
+            phaseLabel, phaseStartMonth, phaseEndMonth, sortOrder, notes } = req.body;
+    const { data: b, error } = await supabase.from('retainer_buckets').insert({
+      contract_id: req.params.contractId,
+      name: name || 'New Bucket', unit: unit || 'items',
+      contracted_qty: contractedQty || 0,
+      deliverable_type_id: deliverableTypeId || null,
+      manual_consumed: manualConsumed || 0,
+      phase_label: phaseLabel || null,
+      phase_start_month: phaseStartMonth || null,
+      phase_end_month: phaseEndMonth || null,
+      sort_order: sortOrder || 0,
+      notes: notes || null,
+    }).select().single();
+    if (error) throw error;
+    res.status(201).json(mapRetainerBucket(b));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH update bucket
+app.patch('/api/retainer-buckets/:id', requireAuth, async (req, res) => {
+  try {
+    const updates = {};
+    ['name','unit','notes','phase_label','phase_start_month','phase_end_month'].forEach(f => {
+      const k = f.replace(/_([a-z])/g, (_,c)=>c.toUpperCase());
+      if (req.body[k] !== undefined) updates[f] = req.body[k] || null;
+    });
+    if (req.body.contractedQty      !== undefined) updates.contracted_qty       = req.body.contractedQty;
+    if (req.body.deliverableTypeId  !== undefined) updates.deliverable_type_id  = req.body.deliverableTypeId || null;
+    if (req.body.manualConsumed     !== undefined) updates.manual_consumed      = req.body.manualConsumed || 0;
+    if (req.body.sortOrder          !== undefined) updates.sort_order           = req.body.sortOrder;
+    if (req.body.name               !== undefined) updates.name                 = req.body.name;
+    if (req.body.unit               !== undefined) updates.unit                 = req.body.unit;
+    const { data: b, error } = await supabase.from('retainer_buckets').update(updates)
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapRetainerBucket(b));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE bucket
+app.delete('/api/retainer-buckets/:id', requireAuth, requireCanDelete, async (req, res) => {
+  try {
+    const { error } = await supabase.from('retainer_buckets').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── START ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => console.log(`CJ Agency API running on :${PORT}`));
 
