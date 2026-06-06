@@ -565,7 +565,14 @@ app.patch('/api/projects/:id', requireAuth, async (req, res) => {
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
   try {
-    const { title, projectId, assigneeId, dueDate, publishDate, priority, status, estHours, tag, publishable, notes, deliverableId } = req.body;
+    const { title, projectId, assigneeId, dueDate, publishDate, priority, status, estHours, tag, publishable, notes, deliverableId, parentId } = req.body;
+    // Enforce one level only — a subtask cannot itself be a parent
+    if (parentId) {
+      const { data: parent } = await supabase.from('tasks').select('parent_id').eq('id', parentId).single();
+      if (parent?.parent_id) {
+        return res.status(400).json({ error: 'Subtasks cannot have subtasks — only one level allowed.' });
+      }
+    }
     const { data, error } = await supabase.from('tasks').insert({
       title, project_id: projectId, assignee_id: assigneeId || null,
       due_date: dueDate || null,
@@ -575,6 +582,7 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
       tag: tag || null,
       publishable: !!publishable,
       notes: notes || null,
+      parent_id: parentId || null,
     }).select().single();
     if (error) throw error;
 
@@ -2304,6 +2312,7 @@ function mapTask(t) {
     tag:         t.tag || null,
     publishable: !!t.publishable,
     notes:       t.notes || null,
+    parentId:    t.parent_id || null,
     updatedAt:   t.updated_at || t.created_at || null,
     completedAt: t.completed_at || null,
     createdAt:   t.created_at || null,
