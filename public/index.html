@@ -1346,10 +1346,18 @@
       <div class="form-group"><label class="form-label">Unit</label><input class="form-input" id="bm-unit" placeholder="days" value="items"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Contracted Qty</label><input class="form-input" id="bm-qty" type="number" min="0" value="0"></div>
-      <div class="form-group"><label class="form-label">Deliverable Type <span style="font-weight:normal;color:var(--text3);font-size:10px">(auto-track)</span></label>
-        <select class="form-select" id="bm-dtype"></select>
+      <div class="form-group"><label class="form-label">Tracking Mode</label>
+        <select class="form-select" id="bm-unit-type" onchange="_toggleBucketModeFields()">
+          <option value="count">Count — track number of deliverables</option>
+          <option value="hours">Hours — track total hours from tasks</option>
+        </select>
       </div>
+      <div class="form-group"><label class="form-label">Contracted Total</label>
+        <input class="form-input" id="bm-qty" type="number" min="0" value="0">
+      </div>
+    </div>
+    <div id="bm-dtype-group" class="form-group"><label class="form-label">Deliverable Type <span style="font-weight:normal;color:var(--text3);font-size:10px">(auto-track by count)</span></label>
+      <select class="form-select" id="bm-dtype"></select>
     </div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Phase Label <span style="font-weight:normal;color:var(--text3);font-size:10px">optional</span></label>
@@ -3568,27 +3576,41 @@ function renderRetainerDashboard(){
 }
 
 function _calcBucketConsumed(bucket){
+  const isHours = bucket.unitType === 'hours';
+
+  if(isHours){
+    // Hours mode — sum estHours from post-production tasks on retainer deals
+    // within optional phase date range (uses task due date, same logic as count mode)
+    const tasks=state.tasks||[];
+    const projects=state.projects||[];
+    const deals=state.deals||[];
+    const hoursConsumed=tasks.filter(t=>{
+      if(t.tag!=='post-production') return false;
+      const proj=projects.find(p=>p.id===t.projectId);
+      if(!proj) return false;
+      const deal=deals.find(d=>d.id===proj.dealId);
+      if(!deal?.isRetainer) return false;
+      if(bucket.phaseStartMonth||bucket.phaseEndMonth){
+        const taskMo=(t.due||'').substring(0,7);
+        if(!taskMo) return false;
+        if(bucket.phaseStartMonth&&taskMo<bucket.phaseStartMonth) return false;
+        if(bucket.phaseEndMonth&&taskMo>bucket.phaseEndMonth) return false;
+      }
+      return true;
+    }).reduce((s,t)=>s+(t.estHours||0),0);
+    return Math.round(hoursConsumed*10)/10+(bucket.manualConsumed||0);
+  }
+
   if(bucket.deliverableTypeId){
-    // Auto mode — count deliverables of this type
-    // Use the earliest linked task's due date as the "work date" for phase filtering
-    // This correctly handles deliverables where work happened in a different month than billing
+    // Count mode — count deliverables of this type
     const delivs=state.deliverables||[];
     const projects=state.projects||[];
     const taskDelivLinks=state.taskDeliverables||[];
     const tasks=state.tasks||[];
-
-    // Only count deliverables on projects belonging to the right client
-    // (determined by the contract — we match by deliverable type across all client projects)
-    // Add manual_consumed offset for pre-system work not in the deliverable library
     return delivs.filter(d=>{
       if(d.typeId!==bucket.deliverableTypeId) return false;
       if(d.status==='cancelled') return false;
-
-      // If no phase date range set, count all deliverables of this type
       if(!bucket.phaseStartMonth&&!bucket.phaseEndMonth) return true;
-
-      // Determine the "work date" — earliest task due date linked to this deliverable
-      // Falls back to the deal close date if no tasks are linked
       const linkedTaskIds=taskDelivLinks.filter(td=>td.deliverableId===d.id).map(td=>td.taskId);
       const linkedTasks=tasks.filter(t=>linkedTaskIds.includes(t.id)&&t.due);
       let workMonth;
@@ -3600,13 +3622,13 @@ function _calcBucketConsumed(bucket){
         const deal=(state.deals||[]).find(x=>x.id===proj?.dealId);
         workMonth=(deal?.closeDate||'').substring(0,7);
       }
-
       if(!workMonth) return false;
       if(bucket.phaseStartMonth&&workMonth<bucket.phaseStartMonth) return false;
       if(bucket.phaseEndMonth&&workMonth>bucket.phaseEndMonth) return false;
       return true;
-    }).length + (bucket.manualConsumed||0); // always add manual offset — covers pre-system work
+    }).length+(bucket.manualConsumed||0);
   }
+
   return bucket.manualConsumed||0;
 }
 
@@ -3689,22 +3711,25 @@ function _renderRetainerContract(c){
       <div style="display:flex;flex-direction:column;gap:10px">
         ${buckets.map(b=>{
           const consumed=_calcBucketConsumed(b);
-          const autoCount=b.deliverableTypeId?consumed-b.manualConsumed:0;
+          const isHours=b.unitType==='hours';
+          const autoCount=b.deliverableTypeId&&!isHours?consumed-b.manualConsumed:0;
           const manualCount=b.manualConsumed||0;
           const total=b.contractedQty||1;
           const pct=Math.min(100,Math.round(consumed/total*100));
-          const isAuto=!!b.deliverableTypeId;
+          const isAuto=!!b.deliverableTypeId&&!isHours;
           const col=pct>=100?'var(--red)':pct>=75?'var(--amber)':'var(--green)';
-          const sourceLabel=isAuto
-            ? (manualCount>0
-                ? `${autoCount} auto + ${manualCount} manual`
-                : `${consumed} auto-tracked`)
-            : `${consumed} manual`;
+          const consumedLabel=isHours?`${consumed}h`:`${consumed}`;
+          const totalLabel=isHours?`${total}h`:`${total}`;
+          const sourceLabel=isHours
+            ? (manualCount>0?`${Math.round((consumed-manualCount)*10)/10}h auto + ${manualCount}h manual`:`${consumed}h auto-tracked`)
+            : isAuto
+              ? (manualCount>0?`${autoCount} auto + ${manualCount} manual`:`${consumed} auto-tracked`)
+              : `${consumed} manual`;
           return`<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
             <div style="flex:1;min-width:180px">
               <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
                 <div style="font-size:12px;font-weight:500;color:var(--text)">${_escapeHtml(b.name)}</div>
-                <div style="font-family:'DM Mono',monospace;font-size:11px;color:${col}">${consumed} / ${total} <span style="color:var(--text3);font-size:9px">${b.unit}</span></div>
+                <div style="font-family:'DM Mono',monospace;font-size:11px;color:${col}">${consumedLabel} / ${totalLabel} <span style="color:var(--text3);font-size:9px">${isHours?'':''+b.unit}</span></div>
               </div>
               <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">
                 ${isAuto&&autoCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(autoCount/total*100))}%;background:${col};border-radius:4px 0 0 4px" title="${autoCount} auto-tracked"></div>`:''}
@@ -3715,8 +3740,8 @@ function _renderRetainerContract(c){
                 <span style="color:${col};font-weight:600">${pct}%</span>
                 <span>${sourceLabel}</span>
                 ${isAuto&&manualCount>0?`<span style="color:var(--text3)">·</span><span style="color:var(--text3);font-style:italic">pre-system work included</span>`:''}
-                ${!isAuto?`<button onclick="promptManualConsume('${b.id}','${c.id}',${consumed})" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">update</button>`:''}
-                ${isAuto?`<button onclick="openBucketModal('${c.id}','${b.id}')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">edit</button>`:''}
+                ${!isAuto&&!isHours?`<button onclick="promptManualConsume('${b.id}','${c.id}',${consumed})" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">update</button>`:''}
+                <button onclick="openBucketModal('${c.id}','${b.id}')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">edit</button>
               </div>
             </div>
           </div>`;
@@ -3797,6 +3822,18 @@ async function deleteRetainerContract(){
 
 let _bucketContractId=null, _bucketEditId=null;
 
+function _toggleBucketModeFields(){
+  const mode=document.getElementById('bm-unit-type')?.value;
+  const dtypeGroup=document.getElementById('bm-dtype-group');
+  const unitField=document.getElementById('bm-unit');
+  const manualField=document.getElementById('bm-manual')?.closest('.form-group');
+  if(dtypeGroup) dtypeGroup.style.display=mode==='hours'?'none':'block';
+  if(unitField){
+    if(mode==='hours'){ unitField.value='hours'; unitField.disabled=true; }
+    else { unitField.disabled=false; }
+  }
+}
+
 function openBucketModal(contractId, bucketId){
   _bucketContractId=contractId;
   _bucketEditId=bucketId||null;
@@ -3804,6 +3841,7 @@ function openBucketModal(contractId, bucketId){
   const b=bucketId?(contract?.buckets||[]).find(x=>x.id===bucketId):null;
   document.getElementById('bm-name').value=b?b.name:'';
   document.getElementById('bm-unit').value=b?b.unit:'items';
+  document.getElementById('bm-unit-type').value=b?b.unitType||'count':'count';
   document.getElementById('bm-qty').value=b?b.contractedQty:0;
   document.getElementById('bm-phase').value=b?b.phaseLabel||'':'';
   document.getElementById('bm-phase-start').value=b?b.phaseStartMonth||'':'';
@@ -3814,6 +3852,7 @@ function openBucketModal(contractId, bucketId){
   document.getElementById('bm-dtype').innerHTML=
     `<option value="">— Manual tracking —</option>`+
     dtypes.map(dt=>`<option value="${dt.id}" ${b&&b.deliverableTypeId===dt.id?'selected':''}>${dt.name}</option>`).join('');
+  _toggleBucketModeFields();
   document.querySelector('#bucket-modal .modal-title').childNodes[0].nodeValue=b?'Edit Bucket ':'New Bucket ';
   openModal('bucket-modal');
 }
@@ -3823,6 +3862,7 @@ async function saveBucket(){
   if(!name){notify('Bucket name required');return;}
   const payload={
     name, unit:document.getElementById('bm-unit').value.trim()||'items',
+    unitType:document.getElementById('bm-unit-type').value||'count',
     contractedQty:parseInt(document.getElementById('bm-qty').value)||0,
     deliverableTypeId:document.getElementById('bm-dtype').value||null,
     manualConsumed:parseInt(document.getElementById('bm-manual').value)||0,
