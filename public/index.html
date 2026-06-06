@@ -1214,6 +1214,12 @@
       </div>
     </div>
     <div class="form-group">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="d-is-retainer" style="width:14px;height:14px;accent-color:var(--purple)">
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text2)">Retainer month <span style="color:var(--text3)">— part of a retainer contract (included in retainer dashboard)</span></span>
+      </label>
+    </div>
+    <div class="form-group">
       <label class="form-label" style="margin-bottom:10px">Fund Allocation — applied to Net Revenue (must total 100%)</label>
       <div style="display:grid;grid-template-columns:12px 1fr 60px 1fr;gap:8px;padding:0 2px;margin-bottom:6px">
         <span></span>
@@ -2541,7 +2547,8 @@ async function saveDeal() {
   const closeDate    = document.getElementById('d-closedate').value;
   const expenses     = parseFloat(document.getElementById('d-expenses').value) || 0;
   const invoiceStatus = stage === 'Closed Won' ? document.getElementById('d-invoice').value : 'none';
-  const amountCollected = 0; // field removed — no longer tracked
+  const isRetainer = !!(document.getElementById('d-is-retainer')?.checked) || stage === 'Retainer';
+  const amountCollected = 0;
   if (!name || !client || isNaN(value)) { notify('Please fill in all required fields'); return; }
 
   // If no clientId matched, this is either new client or misspelling → fuzzy check
@@ -2584,9 +2591,9 @@ async function saveDeal() {
   // If deal is paid, strip financial fields from payload so admin can still edit non-financial fields
   let payload;
   if (editId && isDealModalLocked()) {
-    payload = { name, client, clientId, stage, owner, closeDate, invoiceStatus, amountCollected };
+    payload = { name, client, clientId, stage, owner, closeDate, invoiceStatus, isRetainer, amountCollected };
   } else {
-    payload = { name, client, clientId, value, expenses, stage, owner, closeDate, invoiceStatus, amountCollected, buckets };
+    payload = { name, client, clientId, value, expenses, stage, owner, closeDate, invoiceStatus, isRetainer, amountCollected, buckets };
   }
 
   closeModal('deal-modal');
@@ -3608,6 +3615,7 @@ function _renderRetainerContract(c){
   // Get all linked deals — same client, within date range
   const linkedDeals=deals.filter(d=>{
     if(d.client!==c.client) return false;
+    if(!d.isRetainer) return false; // exclude one-off projects
     const mo=(d.closeDate||'').substring(0,7);
     return mo>=c.startMonth&&mo<=c.endMonth;
   }).sort((a,b)=>(a.closeDate||'').localeCompare(b.closeDate||''));
@@ -12110,6 +12118,9 @@ function openDealModal(editId){
   document.getElementById('d-closedate').value=d?(d.closeDate||''):'';
   document.getElementById('d-stage').value=d?d.stage:'Lead';
   document.getElementById('d-invoice').value=d?(d.invoiceStatus||'none'):'none';
+  // Auto-check for Retainer stage; otherwise use stored value
+  const isRetainerChk=document.getElementById('d-is-retainer');
+  if(isRetainerChk) isRetainerChk.checked=d?(d.isRetainer||d.stage==='Retainer'):false;
   toggleInvoiceStatus();
   updateNetRevPreview();
   document.getElementById('deal-modal').dataset.editId=editId||'';
@@ -12169,6 +12180,10 @@ function saveDefaultBuckets(){
 }
 function toggleInvoiceStatus(){
   document.getElementById('d-invoice-group').style.display=document.getElementById('d-stage').value==='Closed Won'?'block':'none';
+  // Auto-check retainer flag when stage is Retainer
+  const stageVal=document.getElementById('d-stage').value;
+  const chk=document.getElementById('d-is-retainer');
+  if(chk&&stageVal==='Retainer') chk.checked=true;
 }
 function updatePctTotal(){
   let t=0;DEFAULT_BUCKETS.forEach((_,i)=>{const v=parseFloat(document.getElementById('bpct-'+i)?.value||0);t+=v;});
