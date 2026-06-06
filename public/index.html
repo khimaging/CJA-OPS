@@ -3687,12 +3687,12 @@ function _renderRetainerContract(c){
       <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">${_escapeHtml(phase)}</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         ${buckets.map(b=>{
-          const consumed=_calcBucketConsumed(bucket);
-          const autoCount=bucket.deliverableTypeId?consumed-bucket.manualConsumed:0;
-          const manualCount=bucket.manualConsumed||0;
+          const consumed=_calcBucketConsumed(b);
+          const autoCount=b.deliverableTypeId?consumed-b.manualConsumed:0;
+          const manualCount=b.manualConsumed||0;
           const total=b.contractedQty||1;
           const pct=Math.min(100,Math.round(consumed/total*100));
-          const isAuto=!!bucket.deliverableTypeId;
+          const isAuto=!!b.deliverableTypeId;
           const col=pct>=100?'var(--red)':pct>=75?'var(--amber)':'var(--green)';
           const sourceLabel=isAuto
             ? (manualCount>0
