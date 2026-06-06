@@ -134,6 +134,14 @@
   .task-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:13px;cursor:grab;transition:all 0.15s;user-select:none;}
   .task-card:hover{border-color:var(--border2);transform:translateY(-1px);}
   .task-card.dragging{opacity:0.35;cursor:grabbing;transform:rotate(1.5deg) scale(0.97);}
+  /* Subtask card — inset, smaller, connected visually to parent */
+  .subtask-card{background:var(--bg4);border:1px solid var(--border);border-radius:6px;padding:9px 11px;cursor:grab;transition:all 0.12s;user-select:none;margin-top:4px;position:relative;}
+  .subtask-card::before{content:'';position:absolute;left:-12px;top:50%;width:10px;height:1px;background:var(--border2);}
+  .subtask-card:hover{border-color:var(--border2);}
+  .subtask-card.dragging{opacity:0.35;cursor:grabbing;}
+  .subtask-wrap{padding-left:16px;border-left:2px solid var(--border);margin-top:6px;margin-left:8px;display:flex;flex-direction:column;gap:4px;}
+  .add-subtask-btn{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--text3);background:none;border:1px dashed var(--border);border-radius:5px;padding:4px 10px;cursor:pointer;width:100%;text-align:left;margin-top:6px;transition:all .12s;}
+  .add-subtask-btn:hover{color:var(--text2);border-color:var(--border2);background:var(--bg4);}
   .task-title{font-size:12px;font-weight:500;color:var(--text);margin-bottom:8px;line-height:1.4;}
   .task-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .task-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.08em;padding:2px 7px;border-radius:4px;text-transform:uppercase;}
@@ -1238,6 +1246,13 @@
 <div class="modal-overlay" id="task-modal">
   <div class="modal" style="max-width:680px">
     <div class="modal-title">New Task<button class="modal-close" onclick="closeModal('task-modal')">✕</button></div>
+    <!-- Subtask banner — shown when creating/editing a subtask -->
+    <div id="t-subtask-banner" style="display:none;background:rgba(212,166,90,0.08);border:1px solid rgba(212,166,90,0.25);border-radius:7px;padding:8px 12px;margin-bottom:12px;display:flex;align-items:center;gap:8px">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--gold)">Subtask of: </span>
+      <span id="t-subtask-parent-name" style="font-size:11px;color:var(--text2)"></span>
+    </div>
+    <input type="hidden" id="t-parent-id" value="">
     <div class="form-group"><label class="form-label">Task Title</label><input class="form-input" id="t-title" placeholder="Design homepage mockup"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Project</label><select class="form-select" id="t-project" onchange="updateTaskPayPreview();_onTaskProjectChange()"></select></div>
@@ -2603,8 +2618,11 @@ async function saveTask() {
     return;
   }
   const deliverableId = document.getElementById('t-deliverable').value || null;
-  // Enforce: if project has deliverables and this is a NEW task, deliverable link required
-  if (!editId) {
+  const parentId = document.getElementById('t-parent-id')?.value || null;
+  // Subtasks don't require deliverable links (they inherit context from parent)
+  const isSubtask = !!parentId;
+  // Enforce: if project has deliverables and this is a NEW non-subtask, deliverable link required
+  if (!editId && !isSubtask) {
     const projHasDelivs = (state.deliverables||[]).some(d => d.projectId === projectId && d.status !== 'cancelled');
     if (projHasDelivs && !deliverableId) {
       notify('This project has deliverables defined — please link this task to one.');
@@ -2636,7 +2654,7 @@ async function saveTask() {
       taskId = editId;
       notify('Task updated ✓');
     } else {
-      const created = await api('POST', '/tasks', { ...payload, deliverableId });
+      const created = await api('POST', '/tasks', { ...payload, deliverableId, parentId: parentId||null });
       state.tasks.push(created);
       taskId = created.id;
       if (deliverableId) {
@@ -2687,12 +2705,19 @@ async function deleteTask() {
     notify('🔒 Project is complete and paid — tasks are locked');
     return;
   }
-  if (!confirm(`Delete "${task.title}"? This cannot be undone.`)) return;
+  const subtasks = state.tasks.filter(t => t.parentId === editId);
+  const subtaskMsg = subtasks.length ? `\n\nThis will also delete ${subtasks.length} subtask${subtasks.length>1?'s':''}.` : '';
+  if (!confirm(`Delete "${task.title}"?${subtaskMsg} This cannot be undone.`)) return;
   closeModal('task-modal');
   try {
     await api('DELETE', '/tasks/' + editId);
-    state.tasks = state.tasks.filter(t => t.id !== editId);
+    // DB CASCADE deletes subtasks in the DB; remove them from state too
+    const idsToRemove = new Set([editId, ...subtasks.map(s => s.id)]);
+    state.tasks = state.tasks.filter(t => !idsToRemove.has(t.id));
     renderTaskView(); updateBadges(); notify('Task deleted');
+    if (state.currentPage === 'projects' && state.activeProjectId) {
+      renderProjectDetail(state.activeProjectId);
+    }
   } catch(e) { notify('Delete failed: ' + e.message); }
 }
 
@@ -4714,9 +4739,10 @@ function renderProjectDetail(pid){
   if(!proj){setProjTab('grid');return;}
   const deal=state.deals.find(d=>d.id===proj.dealId);
   const tasks=state.tasks.filter(t=>t.projectId===pid);
-  const done=tasks.filter(t=>t.status==='done').length;
-  const pct=tasks.length?Math.round(done/tasks.length*100):0;
-  const totH=tasks.reduce((s,t)=>s+(t.estHours||0),0);
+  const topLevelTasks=tasks.filter(t=>!t.parentId);
+  const done=topLevelTasks.filter(t=>t.status==='done').length;
+  const pct=topLevelTasks.length?Math.round(done/topLevelTasks.length*100):0;
+  const totH=tasks.reduce((s,t)=>s+(t.estHours||0),0); // all tasks incl. subtasks
   const rag=calcProjectRag(proj);
   const isFinalized=!!proj.payoutsFinalized;
   const pStatus=proj.status||'active';
@@ -4735,9 +4761,10 @@ function renderProjectDetail(pid){
 
   // Kanban
   const COLS=[{id:'todo',label:'To Do'},{id:'progress',label:'In Progress'},{id:'review',label:'In Review'},{id:'done',label:'Done'}];
+  // topLevelTasks already declared above — subtasks render nested inside parent cards
   const kanbanHtml=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
     ${COLS.map(col=>{
-      const ct=tasks.filter(t=>t.status===col.id);
+      const ct=topLevelTasks.filter(t=>t.status===col.id);
       const colColor=col.id==='done'?'var(--green)':col.id==='progress'?'var(--amber)':col.id==='review'?'var(--blue)':'var(--text3)';
       return`<div class="kanban-col" ondragover="pdetailDragOver(event,this)" ondragleave="pdetailDragLeave(this)" ondrop="pdetailDrop(event,'${col.id}')">
         <div class="kanban-header">
@@ -4751,7 +4778,7 @@ function renderProjectDetail(pid){
     }).join('')}
   </div>`;
 
-  // List view — matches pay calculator table aesthetic
+  // List view — parent tasks with subtasks indented below
   const listCols='2fr 130px 80px 90px 70px 70px';
   const overdueTasks=tasks.filter(t=>isTaskOverdue(t));
   const listHtml=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
@@ -4764,20 +4791,39 @@ function renderProjectDetail(pid){
       <span style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Status</span>
     </div>
     ${tasks.length===0?`<div style="padding:24px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">No tasks yet — add tasks or apply a template</div>`:''}
-    ${tasks.map(t=>{
+    ${topLevelTasks.map(t=>{
       const a=state.team.find(m=>m.id===t.assigneeId);
       const isOverdue=isTaskOverdue(t);
       const dueStr=t.due?new Date(t.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
       const statusColor={'done':'var(--green)','progress':'var(--amber)','review':'var(--blue)','todo':'var(--text3)'}[t.status]||'var(--text3)';
       const locked=isProjectLocked(pid);
-      return`<div style="display:grid;grid-template-columns:${listCols};padding:10px 16px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
-        <div style="font-size:12px;font-weight:500;color:var(--text)">${locked?'🔒 ':''}${t.title}</div>
+      const tSubtasks=tasks.filter(s=>s.parentId===t.id);
+      const subHtml=tSubtasks.map(s=>{
+        const sa=state.team.find(m=>m.id===s.assigneeId);
+        const sDue=s.due?new Date(s.due+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—';
+        const sSc={'done':'var(--green)','progress':'var(--amber)','review':'var(--blue)','todo':'var(--text3)'}[s.status]||'var(--text3)';
+        const sOd=isTaskOverdue(s);
+        return`<div style="display:grid;grid-template-columns:${listCols};padding:7px 16px 7px 32px;border-bottom:1px solid var(--border);align-items:center;cursor:pointer;background:var(--bg4);border-left:3px solid var(--border2);transition:background .1s;${sOd?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${sOd?'rgba(224,90,90,0.04)':'var(--bg4)'}'" onclick="openEditTaskModal('${s.id}')">
+          <div style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            ${s.title}
+          </div>
+          <div>${sa?`<div style="display:flex;align-items:center;gap:6px"><div class="user-avatar" style="background:${sa.color};width:18px;height:18px;font-size:7px">${sa.name.split(' ').map(n=>n[0]).join('')}</div><span style="font-size:10px;color:var(--text2)">${sa.name.split(' ')[0]}</span></div>`:`<span style="color:var(--text3);font-size:10px">—</span>`}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:10px;color:${sOd?'var(--red)':'var(--text3)'}">${sDue}</div>
+          <div><span class="task-tag priority-${s.priority}" style="font-size:8px">${s.priority}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold)">${s.estHours||0}h</div>
+          <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:${sSc}">${s.status}</div>
+        </div>`;
+      }).join('');
+      return`<div style="display:grid;grid-template-columns:${listCols};padding:10px 16px;border-bottom:1px solid ${tSubtasks.length?'var(--border2)':'var(--border)'};align-items:center;cursor:pointer;transition:background .1s;${isOverdue?'background:rgba(224,90,90,0.04)':''}" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='${isOverdue?'rgba(224,90,90,0.04)':''}'" onclick="openEditTaskModal('${t.id}')">
+        <div style="font-size:12px;font-weight:500;color:var(--text)">${locked?'🔒 ':''}${t.title}${tSubtasks.length?`<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3);margin-left:6px">${tSubtasks.length} subtask${tSubtasks.length>1?'s':''}</span>`:''}
+        </div>
         <div>${a?`<div style="display:flex;align-items:center;gap:7px"><div class="user-avatar" style="background:${a.color};width:20px;height:20px;font-size:8px">${a.name.split(' ').map(n=>n[0]).join('')}</div><span style="font-size:11px;color:var(--text2)">${a.name.split(' ')[0]}</span></div>`:`<span style="color:var(--text3);font-size:11px">—</span>`}</div>
         <div style="font-family:'DM Mono',monospace;font-size:11px;color:${isOverdue?'var(--red)':'var(--text3)'}">${dueStr}</div>
         <div><span class="task-tag priority-${t.priority}">${t.priority}</span></div>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${t.estHours||0}h</div>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold)">${t.estHours||0}h${tSubtasks.length?`<span style="font-size:9px;color:var(--text3)"> +${tSubtasks.reduce((s,x)=>s+(x.estHours||0),0)}</span>`:''}</div>
         <div style="font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:${statusColor}">${t.status}</div>
-      </div>`;
+      </div>${subHtml}`;
     }).join('')}
   </div>`;
 
@@ -4820,7 +4866,7 @@ function renderProjectDetail(pid){
       <div class="proj-stat-strip" style="display:grid;grid-template-columns:repeat(${deal?7:2},1fr);border-bottom:1px solid var(--border);overflow-x:auto">
         <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Tasks</div>
-          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${tasks.length}</span></div>
+          <div style="font-family:'DM Mono',monospace;font-size:16px;font-weight:700;color:var(--text)">${done}<span style="color:var(--text3);font-size:12px">/${topLevelTasks.length}</span></div>
         </div>
         <div style="padding:12px 20px;border-right:1px solid var(--border)">
           <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:4px">Hours</div>
@@ -5224,6 +5270,18 @@ async function pdetailDrop(e,status){
 
 function openTaskModalForProject(pid){
   openTaskModal(null, pid);
+}
+
+// Open modal to create a new subtask under a given parent task
+function openSubtaskModal(parentTaskId){
+  const parent=state.tasks.find(t=>t.id===parentTaskId);
+  if(!parent) return;
+  openTaskModal(null, parent.projectId, parentTaskId);
+}
+
+// Open modal to edit an existing task (or subtask)
+function openEditTaskModal(taskId){
+  openTaskModal(taskId);
 }
 
 function renderHealthDashboard(){
@@ -9462,6 +9520,32 @@ function renderTaskCard(t){
   const h=t.estHours||0;
   const pay=calcTaskPay(t);
   const locked=isProjectLocked(t.projectId);
+  // Only render subtask nesting on parent tasks (parentId === null)
+  const subtasks=t.parentId?[]:(state.tasks||[]).filter(s=>s.parentId===t.id);
+  const subtaskHtml=subtasks.length>0?`
+    <div class="subtask-wrap">
+      ${subtasks.map(s=>{
+        const sa=state.team.find(m=>m.id===s.assigneeId);
+        const sInit=sa?sa.name.split(' ').map(n=>n[0]).join(''):'?';
+        const sColor=sa?sa.color:'var(--text3)';
+        const sDue=s.due?formatDue(s.due):null;
+        const sDc=sDue?getDueClass(s):'';
+        const isDone=s.status==='done';
+        return`<div class="subtask-card ${isDone?'':''}${locked?'':'draggable-subtask'}"
+          ${!locked?`draggable="true" ondragstart="kanbanDragStart(event,'${s.id}')" ondragend="kanbanDragEnd(event)"`:''}
+          onclick="event.stopPropagation();openEditTaskModal('${s.id}')"
+          style="${isDone?'opacity:0.6;':''}${locked?'cursor:default;':''}">
+          <div style="display:flex;align-items:center;gap:6px;justify-content:space-between">
+            <div style="font-size:11px;color:${isDone?'var(--text3)':'var(--text)'};${isDone?'text-decoration:line-through;':''}">${isDone?'✓ ':''}${s.title}</div>
+            <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+              <div class="deal-avatar" style="background:${sColor};width:16px;height:16px;font-size:7px">${sInit}</div>
+              <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--gold)">${s.estHours||0}h</span>
+              ${sDue?`<span class="task-due ${sDc}" style="font-size:9px">${sDue}</span>`:''}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`:'';
   return`<div class="task-card"
       draggable="true"
       data-task-id="${t.id}"
@@ -9476,7 +9560,8 @@ function renderTaskCard(t){
       ${t.tag?`<span class="task-type-tag tag-${t.tag}">${t.tag.replace('-',' ')}</span>`:''}
       ${proj?`<span style="font-size:10px;color:var(--text3)">${proj.name.length>14?proj.name.substring(0,13)+'…':proj.name}</span>`:''}
       ${ds?`<span class="task-due ${dc}"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>${ds}</span>`:''}
-      <span class="task-hours"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${h}h</span>
+      <span class="task-hours"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>${h}h${subtasks.length?` <span style="color:var(--text3)">+${subtasks.reduce((s,x)=>s+(x.estHours||0),0)}h sub</span>`:''}
+      </span>
       <div class="deal-avatar" style="background:${ac};width:18px;height:18px;font-size:8px">${init}</div>
     </div>
     ${pay>0?`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;padding-top:8px;border-top:1px solid var(--border)">
@@ -9484,6 +9569,8 @@ function renderTaskCard(t){
       <span style="font-family:'DM Mono',monospace;font-size:12px;color:var(--green);font-weight:500">${fmt(pay)}</span>
     </div>`:''}
     ${h>0?`<div class="hours-bar" style="margin-top:${pay>0?'6px':'8px'}"><div class="hours-fill" style="width:100%"></div></div>`:''}
+    ${subtaskHtml}
+    ${!locked&&!t.parentId?`<button class="add-subtask-btn" onclick="event.stopPropagation();openSubtaskModal('${t.id}')">+ Add Subtask</button>`:''}
   </div>`;
 }
 
@@ -11322,14 +11409,30 @@ function openProjectModal(editId){
   document.getElementById('p-edit-hours-budget').value=p&&p.editHoursBudget!=null?p.editHoursBudget:'';
   document.getElementById('project-modal').classList.add('open');
 }
-function openTaskModal(editId, forceProjectId){
+function openTaskModal(editId, forceProjectId, parentId){
   const t=editId?state.tasks.find(x=>x.id===editId):null;
-  document.querySelector('#task-modal .modal-title').childNodes[0].nodeValue=t?'Edit Task ':'New Task ';
+  document.querySelector('#task-modal .modal-title').childNodes[0].nodeValue=
+    t ? (t.parentId?'Edit Subtask ':'Edit Task ') : (parentId?'New Subtask ':'New Task ');
   document.getElementById('t-project').innerHTML=state.projects.filter(p=>p.status!=='complete'&&!p.archived).map(p=>`<option value="${p.id}" ${(t&&t.projectId===p.id)||(forceProjectId&&p.id===forceProjectId)?'selected':''}>${p.name}</option>`).join('')||'<option>No active projects</option>';
   // If forceProjectId, ensure it's selected even if the map above didn't mark it
   if(forceProjectId&&!t){
     const sel=document.getElementById('t-project');
     if(sel&&sel.value!==forceProjectId) sel.value=forceProjectId;
+  }
+
+  // Subtask banner
+  const banner=document.getElementById('t-subtask-banner');
+  const pidField=document.getElementById('t-parent-id');
+  const effectiveParentId=parentId||(t&&t.parentId)||'';
+  if(banner&&pidField){
+    pidField.value=effectiveParentId||'';
+    if(effectiveParentId){
+      const parentTask=state.tasks.find(x=>x.id===effectiveParentId);
+      document.getElementById('t-subtask-parent-name').textContent=parentTask?parentTask.title:'';
+      banner.style.display='flex';
+    } else {
+      banner.style.display='none';
+    }
   }
   document.getElementById('t-assignee').innerHTML=state.team.map(m=>`<option value="${m.id}" ${t&&t.assigneeId===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('t-title').value=t?t.title:'';
@@ -11495,7 +11598,7 @@ async function _deleteComment(id){
   } catch(e){notify('Failed: '+e.message);}
 }
 
-function openEditTaskModal(id){openTaskModal(id);}
+// openEditTaskModal defined above near openTaskModal
 
 function _selectTag(tag){
   document.getElementById('t-tag').value=tag||'';

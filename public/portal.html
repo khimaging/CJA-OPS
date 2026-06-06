@@ -312,7 +312,8 @@ function getFilteredTasks(){
   const visibleIds=new Set(getVisibleProjects().map(p=>p.id));
   return (state.data.tasks||[])
     .filter(t=>visibleIds.has(t.projectId))
-    .filter(t=>t.tag!=='admin');
+    .filter(t=>t.tag!=='admin')
+    .filter(t=>!t.parentId); // subtasks are internal only
 }
 
 function getAllTasks(){
@@ -320,7 +321,8 @@ function getAllTasks(){
   const allProjIds=new Set((state.data.projects||[]).map(p=>p.id));
   return (state.data.tasks||[])
     .filter(t=>allProjIds.has(t.projectId))
-    .filter(t=>t.tag!=='admin');
+    .filter(t=>t.tag!=='admin')
+    .filter(t=>!t.parentId); // subtasks are internal only
 }
 
 // ── Page routing ──
