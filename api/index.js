@@ -2580,6 +2580,7 @@ function mapRetainerBucket(b) {
     contractId:         b.contract_id,
     name:               b.name,
     unit:               b.unit || 'items',
+    unitType:           b.unit_type || 'count',
     contractedQty:      b.contracted_qty || 0,
     deliverableTypeId:  b.deliverable_type_id || null,
     manualConsumed:     b.manual_consumed || 0,
@@ -2656,11 +2657,12 @@ app.delete('/api/retainer-contracts/:id', requireAuth, requireCanDelete, async (
 // POST create bucket
 app.post('/api/retainer-contracts/:contractId/buckets', requireAuth, async (req, res) => {
   try {
-    const { name, unit, contractedQty, deliverableTypeId, manualConsumed,
+    const { name, unit, unitType, contractedQty, deliverableTypeId, manualConsumed,
             phaseLabel, phaseStartMonth, phaseEndMonth, sortOrder, notes } = req.body;
     const { data: b, error } = await supabase.from('retainer_buckets').insert({
       contract_id: req.params.contractId,
       name: name || 'New Bucket', unit: unit || 'items',
+      unit_type: unitType || 'count',
       contracted_qty: contractedQty || 0,
       deliverable_type_id: deliverableTypeId || null,
       manual_consumed: manualConsumed || 0,
@@ -2684,6 +2686,7 @@ app.patch('/api/retainer-buckets/:id', requireAuth, async (req, res) => {
       if (req.body[k] !== undefined) updates[f] = req.body[k] || null;
     });
     if (req.body.contractedQty      !== undefined) updates.contracted_qty       = req.body.contractedQty;
+    if (req.body.unitType           !== undefined) updates.unit_type             = req.body.unitType;
     if (req.body.deliverableTypeId  !== undefined) updates.deliverable_type_id  = req.body.deliverableTypeId || null;
     if (req.body.manualConsumed     !== undefined) updates.manual_consumed      = req.body.manualConsumed || 0;
     if (req.body.sortOrder          !== undefined) updates.sort_order           = req.body.sortOrder;
