@@ -3587,24 +3587,34 @@ function _calcBucketConsumed(bucket){
   const isHours = bucket.unitType === 'hours';
 
   if(isHours){
-    // Hours mode — sum estHours from tasks matching the bucket's taskTag
-    // Defaults to 'post-production'. Set to 'any' to count all tags.
     const taskTag = bucket.taskTag || 'post-production';
     const tasks=state.tasks||[];
     const projects=state.projects||[];
     const deals=state.deals||[];
+
+    // Find the contract this bucket belongs to — used to scope by client
+    const contract=(state.retainerContracts||[]).find(c=>(c.buckets||[]).some(b=>b.id===bucket.id));
+    const contractClient=contract?.client||null;
+    const contractStart=contract?.startMonth||null;
+    const contractEnd=contract?.endMonth||null;
+
+    // Phase date range — use bucket phase if set, otherwise fall back to contract date range
+    const phaseStart=bucket.phaseStartMonth||contractStart;
+    const phaseEnd=bucket.phaseEndMonth||contractEnd;
+
     const hoursConsumed=tasks.filter(t=>{
       if(taskTag!=='any'&&t.tag!==taskTag) return false;
       const proj=projects.find(p=>p.id===t.projectId);
       if(!proj) return false;
       const deal=deals.find(d=>d.id===proj.dealId);
       if(!deal?.isRetainer) return false;
-      if(bucket.phaseStartMonth||bucket.phaseEndMonth){
-        const taskMo=(t.due||'').substring(0,7);
-        if(!taskMo) return false;
-        if(bucket.phaseStartMonth&&taskMo<bucket.phaseStartMonth) return false;
-        if(bucket.phaseEndMonth&&taskMo>bucket.phaseEndMonth) return false;
-      }
+      // Scope to the contract's client — prevents cross-client contamination
+      if(contractClient&&deal.client!==contractClient) return false;
+      // Phase date filter — always apply using task due date
+      const taskMo=(t.due||'').substring(0,7);
+      if(!taskMo) return false;
+      if(phaseStart&&taskMo<phaseStart) return false;
+      if(phaseEnd&&taskMo>phaseEnd) return false;
       return true;
     }).reduce((s,t)=>s+(t.estHours||0),0);
     return Math.round(hoursConsumed*10)/10+(bucket.manualConsumed||0);
@@ -3749,6 +3759,7 @@ function _renderRetainerContract(c){
               <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center">
                 <span style="color:${col};font-weight:600">${pct}%</span>
                 <span>${sourceLabel}</span>
+                ${isHours?`<span style="color:var(--text3)">· ${b.phaseStartMonth||contract?.startMonth||'?'} → ${b.phaseEndMonth||contract?.endMonth||'?'}</span>`:''}
                 ${isAuto&&manualCount>0?`<span style="color:var(--text3)">·</span><span style="color:var(--text3);font-style:italic">pre-system work included</span>`:''}
                 ${!isAuto&&!isHours?`<button onclick="promptManualConsume('${b.id}','${c.id}',${consumed})" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">update</button>`:''}
                 <button onclick="openBucketModal('${c.id}','${b.id}')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">edit</button>
