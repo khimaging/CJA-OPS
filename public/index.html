@@ -3608,13 +3608,14 @@ function _calcBucketConsumed(bucket){
       if(!proj) return false;
       const deal=deals.find(d=>d.id===proj.dealId);
       if(!deal?.isRetainer) return false;
-      // Scope to the contract's client — prevents cross-client contamination
+      // Scope to the contract's client
       if(contractClient&&deal.client!==contractClient) return false;
-      // Phase date filter — always apply using task due date
-      const taskMo=(t.due||'').substring(0,7);
-      if(!taskMo) return false;
-      if(phaseStart&&taskMo<phaseStart) return false;
-      if(phaseEnd&&taskMo>phaseEnd) return false;
+      // Use deal close date month — aligns with how pay/financial dashboard work
+      // A task done in April on a May project counts in May
+      const dealMo=(deal.closeDate||'').substring(0,7);
+      if(!dealMo) return false;
+      if(phaseStart&&dealMo<phaseStart) return false;
+      if(phaseEnd&&dealMo>phaseEnd) return false;
       return true;
     }).reduce((s,t)=>s+(t.estHours||0),0);
     return Math.round(hoursConsumed*10)/10+(bucket.manualConsumed||0);
@@ -3750,11 +3751,13 @@ function _renderRetainerContract(c){
                 <div style="font-family:'DM Mono',monospace;font-size:11px;color:${col}">${consumedLabel} / ${totalLabel} <span style="color:var(--text3);font-size:9px">${isHours?'':''+b.unit}</span></div>
               </div>
               <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">
-                ${consumed>0?(
-                  isAuto&&autoCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(autoCount/total*100))}%;background:${col};border-radius:4px 0 0 4px" title="${autoCount} auto-tracked"></div>`:''
-                )+''+
-                (manualCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(manualCount/total*100))}%;background:${col};opacity:${isAuto?'0.45':'1'};${!isAuto?'border-radius:4px':''}" title="${manualCount} manually logged"></div>`:'')
-                :`<div style="height:100%;width:0%;background:${col}"></div>`}
+                ${isHours&&consumed>0
+                  ? `<div style="height:100%;width:${pct}%;background:${col};border-radius:4px" title="${consumed}h tracked"></div>`
+                  : consumed>0
+                    ? (isAuto&&autoCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(autoCount/total*100))}%;background:${col};border-radius:4px 0 0 4px" title="${autoCount} auto-tracked"></div>`:'')
+                      +(manualCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(manualCount/total*100))}%;background:${col};opacity:${isAuto?'0.45':'1'};${!isAuto?'border-radius:4px':''}" title="${manualCount} manually logged"></div>`:'')
+                    : `<div style="height:100%;width:0%;background:${col}"></div>`
+                }
               </div>
               <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center">
                 <span style="color:${col};font-weight:600">${pct}%</span>
