@@ -1234,6 +1234,9 @@
       </div>
     </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
+      <div id="d-delete-wrap" style="display:none;margin-right:auto">
+        <button class="btn btn-danger" onclick="deleteDeal(document.getElementById('deal-modal').dataset.editId)">Delete Deal</button>
+      </div>
       <button class="btn" onclick="closeModal('deal-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveDeal()">Save Deal</button>
     </div>
@@ -1280,6 +1283,23 @@
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:20px">
       <button class="btn" onclick="closeModal('project-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveProject()">Save Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE CONFIRMATION MODAL -->
+<div class="modal-overlay" id="delete-confirm-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-title" style="color:var(--red)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:8px;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Confirm Delete
+      <button class="modal-close" onclick="closeModal('delete-confirm-modal')">✕</button>
+    </div>
+    <div id="delete-confirm-body" style="margin-bottom:16px;font-size:13px;color:var(--text2);line-height:1.5"></div>
+    <div id="delete-confirm-warning" style="display:none;background:rgba(224,90,90,0.08);border:1px solid rgba(224,90,90,0.3);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--red);line-height:1.5"></div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeModal('delete-confirm-modal')">Cancel</button>
+      <button id="delete-confirm-btn" class="btn btn-danger" style="min-width:120px">Delete</button>
     </div>
   </div>
 </div>
@@ -3212,47 +3232,46 @@ function renderQuotesView(){
   if(!el) return;
   const quotes=state.quotes||[];
   if(!quotes.length){
-    el.innerHTML=`<div style="padding:48px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:12px">No quotes yet — create your first quote to get started.</div>`;
+    el.innerHTML='<div style="padding:48px;text-align:center;color:var(--text3);font-family:\'DM Mono\',monospace;font-size:12px">No quotes yet — create your first quote to get started.</div>';
     return;
   }
   const statusColor={draft:'var(--text3)',sent:'var(--blue)',won:'var(--green)',lost:'var(--red)'};
-  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:12px">
-    ${quotes.map(q=>{
+    el.innerHTML='<div style="display:flex;flex-direction:column;gap:12px">'+
+    quotes.map(q=>{
       const total=calcQuoteTotal(q);
       const totalHours=q.lineItems.reduce((s,li)=>s+li.quantity*li.hoursPerUnit,0);
       const effRate=totalHours>0?total.grandTotal/totalHours:0;
       const tgt=state.finTargetRate||150;
       const rateCol=effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
-      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;cursor:pointer;background:var(--bg)"
-          onclick="toggleQuoteExpand('${q.id}')">
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px">
-              <div style="font-size:15px;font-weight:600;color:var(--text)">${_escapeHtml(q.name)}</div>
-              <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--bg3);color:${statusColor[q.status]};border:1px solid ${statusColor[q.status]}">${q.status}</span>
-              ${q.dealId?`<span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--green)">→ CRM</span>`:''}
-            </div>
-            <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${q.client||'No client'} · ${q.lineItems.length} line item${q.lineItems.length!==1?'s':''} · ${totalHours.toFixed(1)}h</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:20px">
-            <div style="text-align:right">
-              <div style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;color:var(--gold);letter-spacing:-0.02em">${fmt(total.grandTotal)}</div>
-              <div style="font-family:'DM Mono',monospace;font-size:9px;color:${rateCol}">${totalHours>0?'$'+effRate.toFixed(0)+'/hr':''}</div>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button onclick="event.stopPropagation();openQuoteModal('${q.id}')" class="btn btn-sm">Edit</button>
-              <button onclick="event.stopPropagation();duplicateQuote('${q.id}')" class="btn btn-sm" title="Duplicate">⧉</button>
-              <button onclick="event.stopPropagation();exportQuoteDocx('${q.id}')" class="btn btn-sm" title="Export DOCX">⬇</button>
-              ${!q.dealId?`<button onclick="event.stopPropagation();pushQuoteToCRM('${q.id}')" class="btn btn-sm" title="Push to CRM">→ CRM</button>`:''}
-            </div>
-          </div>
-        </div>
-        <div id="quote-detail-${q.id}" style="display:none;padding:0 20px 16px">
-          ${_renderQuoteDetail(q, total)}
-        </div>
-      </div>`;
-    }).join('')}
-  </div>`;
+      const crmBadge=q.dealId?'<span style="font-family:\'DM Mono\',monospace;font-size:8px;color:var(--green)">\u2192 CRM</span>':'';
+      const crmBtn=!q.dealId?'<button onclick="event.stopPropagation();pushQuoteToCRM(\''+q.id+'\')" class="btn btn-sm" title="Push to CRM">\u2192 CRM</button>':'';
+      const statusColor={draft:'var(--text3)',sent:'var(--blue)',won:'var(--green)',lost:'var(--red)'};
+      return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;cursor:pointer;background:var(--bg)" onclick="toggleQuoteExpand(\''+q.id+'\')">'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:3px">'
+        +'<div style="font-size:15px;font-weight:600;color:var(--text)">'+_escapeHtml(q.name)+'</div>'
+        +'<span style="font-family:\'DM Mono\',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;padding:2px 8px;border-radius:3px;background:var(--bg3);color:'+statusColor[q.status]+';border:1px solid '+statusColor[q.status]+'">'+q.status+'</span>'
+        +crmBadge
+        +'</div>'
+        +'<div style="font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">'+(q.client||'No client')+' \u00b7 '+q.lineItems.length+' line item'+(q.lineItems.length!==1?'s':'')+' \u00b7 '+totalHours.toFixed(1)+'h</div>'
+        +'</div>'
+        +'<div style="display:flex;align-items:center;gap:20px">'
+        +'<div style="text-align:right">'
+        +'<div style="font-family:\'Space Grotesk\',sans-serif;font-size:20px;font-weight:700;color:var(--gold);letter-spacing:-0.02em">'+fmt(total.grandTotal)+'</div>'
+        +'<div style="font-family:\'DM Mono\',monospace;font-size:9px;color:'+rateCol+'">'+(totalHours>0?'$'+effRate.toFixed(0)+'/hr':'')+'</div>'
+        +'</div>'
+        +'<div style="display:flex;gap:6px">'
+        +'<button onclick="event.stopPropagation();openQuoteModal(\''+q.id+'\')" class="btn btn-sm">Edit</button>'
+        +'<button onclick="event.stopPropagation();duplicateQuote(\''+q.id+'\')" class="btn btn-sm" title="Duplicate">\u29c9</button>'
+        +'<button onclick="event.stopPropagation();exportQuoteDocx(\''+q.id+'\')" class="btn btn-sm" title="Export">\u2b07</button>'
+        +crmBtn
+        +'</div></div></div>'
+        +'<div id="quote-detail-'+q.id+'" style="display:none;padding:0 20px 16px">'
+        +_renderQuoteDetail(q, total)
+        +'</div></div>';
+    }).join('')
+    +'</div>';
 }
 
 function toggleQuoteExpand(id){
@@ -3275,53 +3294,50 @@ function calcQuoteTotal(q){
 }
 
 function _renderQuoteDetail(q, total){
-  if(!q.lineItems.length) return`<div style="padding:16px 0;color:var(--text3);font-size:12px;font-style:italic">No line items yet — edit the quote to add items.</div>`;
-  return`
-    <div style="overflow-x:auto;margin-bottom:12px">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr style="background:var(--bg);border-bottom:2px solid var(--border2)">
-            <th style="padding:8px 12px;text-align:left;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Description</th>
-            <th style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Qty</th>
-            <th style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Hrs/Unit</th>
-            <th style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Total Hrs</th>
-            <th style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Rate</th>
-            <th style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${q.lineItems.map(li=>{
-            const lineHrs=li.quantity*li.hoursPerUnit;
-            const lineVal=lineHrs*li.ratePerHour;
-            return`<tr style="border-bottom:1px solid var(--border)">
-              <td style="padding:8px 12px;color:var(--text)">${_escapeHtml(li.description)}<br><span style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3)">${li.rateLabel}</span></td>
-              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;color:var(--text2)">${li.quantity}</td>
-              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;color:var(--text2)">${li.hoursPerUnit}h</td>
-              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;color:var(--text2)">${lineHrs.toFixed(1)}h</td>
-              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;color:var(--text3)">$${li.ratePerHour}/hr</td>
-              <td style="padding:8px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--gold)">${fmt(lineVal)}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-        <tfoot>
-          <tr style="border-top:1px solid var(--border2)">
-            <td colspan="5" style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Production Pool Total</td>
-            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${fmt(total.poolTotal)}</td>
-          </tr>
-          ${total.otherTotal>0?`<tr><td colspan="5" style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Other</td><td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${fmt(total.otherTotal)}</td></tr>`:''}
-          <tr>
-            <td colspan="5" style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">Agency Overhead (${q.overheadPct}%)</td>
-            <td style="padding:7px 12px;text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:var(--text2)">${fmt(total.overhead)}</td>
-          </tr>
-          <tr style="background:var(--bg3)">
-            <td colspan="3" style="padding:10px 12px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${total.totalHours.toFixed(1)}h total · $${total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0}/hr effective</td>
-            <td colspan="2" style="padding:10px 12px;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--text3);font-weight:600">QUOTE TOTAL</td>
-            <td style="padding:10px 12px;text-align:right;font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:var(--gold);letter-spacing:-0.02em">${fmt(total.grandTotal)}</td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-    ${q.notes?`<div style="font-size:11px;color:var(--text3);font-style:italic;padding:8px 12px;background:var(--bg3);border-radius:6px">${_escapeHtml(q.notes)}</div>`:''}`;
+  if(!q.lineItems.length) return '<div style="padding:16px 0;color:var(--text3);font-size:12px;font-style:italic">No line items yet — edit the quote to add items.</div>';
+  const rowsHtml = q.lineItems.map(li=>{
+    const lineHrs=li.quantity*li.hoursPerUnit;
+    const lineVal=lineHrs*li.ratePerHour;
+    return '<tr style="border-bottom:1px solid var(--border)">'
+      +'<td style="padding:8px 12px;color:var(--text)">'+_escapeHtml(li.description)+'<br><span style="font-family:\'DM Mono\',monospace;font-size:8px;color:var(--text3)">'+li.rateLabel+'</span></td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:var(--text2)">'+li.quantity+'</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:var(--text2)">'+li.hoursPerUnit+'h</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:var(--text2)">'+lineHrs.toFixed(1)+'h</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;color:var(--text3)">$'+li.ratePerHour+'/hr</td>'
+      +'<td style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600;color:var(--gold)">'+fmt(lineVal)+'</td>'
+      +'</tr>';
+  }).join('');
+  const otherRow = total.otherTotal>0
+    ? '<tr><td colspan="5" style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">Other</td>'
+      +'<td style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600;color:var(--text2)">'+fmt(total.otherTotal)+'</td></tr>'
+    : '';
+  const effRate = total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0;
+  const notesHtml = q.notes
+    ? '<div style="font-size:11px;color:var(--text3);font-style:italic;padding:8px 12px;background:var(--bg3);border-radius:6px">'+_escapeHtml(q.notes)+'</div>'
+    : '';
+  return '<div style="overflow-x:auto;margin-bottom:12px">'
+    +'<table style="width:100%;border-collapse:collapse;font-size:11px">'
+    +'<thead><tr style="background:var(--bg);border-bottom:2px solid var(--border2)">'
+    +'<th style="padding:8px 12px;text-align:left;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Description</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Qty</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Hrs/Unit</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Total Hrs</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Rate</th>'
+    +'<th style="padding:8px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)">Value</th>'
+    +'</tr></thead>'
+    +'<tbody>'+rowsHtml+'</tbody>'
+    +'<tfoot>'
+    +'<tr style="border-top:1px solid var(--border2)"><td colspan="5" style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">Production Pool Total</td>'
+    +'<td style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600;color:var(--text2)">'+fmt(total.poolTotal)+'</td></tr>'
+    +otherRow
+    +'<tr><td colspan="5" style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">Agency Overhead ('+q.overheadPct+'%)</td>'
+    +'<td style="padding:7px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-weight:600;color:var(--text2)">'+fmt(total.overhead)+'</td></tr>'
+    +'<tr style="background:var(--bg3)">'
+    +'<td colspan="3" style="padding:10px 12px;font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">'+total.totalHours.toFixed(1)+'h total · $'+effRate+'/hr effective</td>'
+    +'<td colspan="2" style="padding:10px 12px;text-align:right;font-family:\'DM Mono\',monospace;font-size:12px;color:var(--text3);font-weight:600">QUOTE TOTAL</td>'
+    +'<td style="padding:10px 12px;text-align:right;font-family:\'Space Grotesk\',sans-serif;font-size:18px;font-weight:700;color:var(--gold);letter-spacing:-0.02em">'+fmt(total.grandTotal)+'</td>'
+    +'</tr></tfoot></table></div>'
+    +notesHtml;
 }
 
 // Quote modal state
@@ -3347,55 +3363,46 @@ function _renderQuoteLineItemsEditor(){
   if(!el) return;
   const dtypes=state.deliverableTypes||[];
   const poolRate=state.finProdTargetRate||70;
-  el.innerHTML=`
-    <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Line Items</div>
-    ${_quoteLineItems.map((li,i)=>`
-      <div style="display:grid;grid-template-columns:2fr 60px 70px 80px 80px 28px;gap:6px;align-items:center;margin-bottom:6px;padding:8px;background:var(--bg3);border-radius:6px;border:1px solid var(--border)">
-        <div>
-          <input class="form-input" style="margin-bottom:4px" value="${_escapeHtml(li.description)}" placeholder="Description"
-            onchange="updateQuoteLI(${i},'description',this.value)">
-          <select class="form-select" style="font-size:10px" onchange="applyDelivType(${i},this.value)">
-            <option value="">— from library —</option>
-            ${dtypes.map(dt=>`<option value="${dt.id}" ${li.deliverableTypeId===dt.id?'selected':''}>${dt.name}</option>`).join('')}
-          </select>
-        </div>
-        <input class="form-input" type="number" min="0.5" step="0.5" value="${li.quantity}" placeholder="Qty"
-          onchange="updateQuoteLI(${i},'quantity',parseFloat(this.value)||1)" title="Quantity">
-        <input class="form-input" type="number" min="0" step="0.5" value="${li.hoursPerUnit}" placeholder="Hrs"
-          onchange="updateQuoteLI(${i},'hoursPerUnit',parseFloat(this.value)||0)" title="Hours per unit">
-        <input class="form-input" type="number" min="0" step="5" value="${li.ratePerHour}" placeholder="Rate"
-          onchange="updateQuoteLI(${i},'ratePerHour',parseFloat(this.value)||0)" title="Rate per hour">
-        <select class="form-select" style="font-size:10px" onchange="updateQuoteLI(${i},'rateLabel',this.value)">
-          <option value="Production Pool" ${li.rateLabel==='Production Pool'?'selected':''}>Pool</option>
-          <option value="Creative Fee" ${li.rateLabel==='Creative Fee'?'selected':''}>Fee</option>
-          <option value="Travel" ${li.rateLabel==='Travel'?'selected':''}>Travel</option>
-          <option value="Other" ${li.rateLabel==='Other'?'selected':''}>Other</option>
-        </select>
-        <button onclick="removeQuoteLI(${i})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0">✕</button>
-      </div>
-    `).join('')}
-    <button onclick="addQuoteLI()" class="btn btn-sm" style="width:100%;margin-top:4px">+ Add Line Item</button>
-    <div id="qm-totals" style="margin-top:12px;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">
-      ${_quoteLineItems.length?_renderQuoteTotalsPreview():'<div style="color:var(--text3);font-size:10px;font-style:italic">Add line items to see totals</div>'}
-    </div>`;
+  const lineItemsHtml=_quoteLineItems.map((li,i)=>{
+    const dtOpts='<option value="">— from library —</option>'
+      +dtypes.map(dt=>'<option value="'+dt.id+'"'+(li.deliverableTypeId===dt.id?' selected':'')+'>'+_escapeHtml(dt.name)+'</option>').join('');
+    const rateSel='<option value="Production Pool"'+(li.rateLabel==='Production Pool'?' selected':'')+'>Pool</option>'
+      +'<option value="Creative Fee"'+(li.rateLabel==='Creative Fee'?' selected':'')+'>Fee</option>'
+      +'<option value="Travel"'+(li.rateLabel==='Travel'?' selected':'')+'>Travel</option>'
+      +'<option value="Other"'+(li.rateLabel==='Other'?' selected':'')+'>Other</option>';
+    return '<div style="display:grid;grid-template-columns:2fr 60px 70px 80px 80px 28px;gap:6px;align-items:center;margin-bottom:6px;padding:8px;background:var(--bg3);border-radius:6px;border:1px solid var(--border)">'
+      +'<div>'
+      +'<input class="form-input" style="margin-bottom:4px" value="'+_escapeHtml(li.description)+'" placeholder="Description" onchange="updateQuoteLI('+i+',\'description\',this.value)">'
+      +'<select class="form-select" style="font-size:10px" onchange="applyDelivType('+i+',this.value)">'+dtOpts+'</select>'
+      +'</div>'
+      +'<input class="form-input" type="number" min="0.5" step="0.5" value="'+li.quantity+'" placeholder="Qty" onchange="updateQuoteLI('+i+',\'quantity\',parseFloat(this.value)||1)" title="Quantity">'
+      +'<input class="form-input" type="number" min="0" step="0.5" value="'+li.hoursPerUnit+'" placeholder="Hrs" onchange="updateQuoteLI('+i+',\'hoursPerUnit\',parseFloat(this.value)||0)" title="Hours per unit">'
+      +'<input class="form-input" type="number" min="0" step="5" value="'+li.ratePerHour+'" placeholder="Rate" onchange="updateQuoteLI('+i+',\'ratePerHour\',parseFloat(this.value)||0)" title="Rate per hour">'
+      +'<select class="form-select" style="font-size:10px" onchange="updateQuoteLI('+i+',\'rateLabel\',this.value)">'+rateSel+'</select>'
+      +'<button onclick="removeQuoteLI('+i+')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0">\u2715</button>'
+      +'</div>';
+  }).join('');
+  const totalsHtml=_quoteLineItems.length?_renderQuoteTotalsPreview():'<div style="color:var(--text3);font-size:10px;font-style:italic">Add line items to see totals</div>';
+  el.innerHTML='<div style="font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Line Items</div>'
+    +lineItemsHtml
+    +'<button onclick="addQuoteLI()" class="btn btn-sm" style="width:100%;margin-top:4px">+ Add Line Item</button>'
+    +'<div id="qm-totals" style="margin-top:12px;padding:10px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">'+totalsHtml+'</div>';
 }
 
 function _renderQuoteTotalsPreview(){
   const overheadPct=parseFloat(document.getElementById('qm-overhead')?.value)||20;
   const fakeQ={lineItems:_quoteLineItems,overheadPct};
   const t=calcQuoteTotal(fakeQ);
-  const poolRate=state.finProdTargetRate||70;
   const effRate=t.totalHours>0?t.grandTotal/t.totalHours:0;
   const tgt=state.finTargetRate||150;
   const rCol=effRate>=tgt?'var(--green)':effRate>=tgt*0.75?'var(--amber)':'var(--red)';
-  return`<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-    <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${t.totalHours.toFixed(1)}h · <span style="color:${rCol}">$${effRate.toFixed(0)}/hr eff</span></div>
-    <div style="display:flex;gap:16px;font-family:'DM Mono',monospace;font-size:11px">
-      <span style="color:var(--text3)">Pool: ${fmt(t.poolTotal)}</span>
-      <span style="color:var(--text3)">+ ${overheadPct}%: ${fmt(t.overhead)}</span>
-      <span style="color:var(--gold);font-weight:700">= ${fmt(t.grandTotal)}</span>
-    </div>
-  </div>`;
+  return '<div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+    +'<div style="font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3)">'+t.totalHours.toFixed(1)+'h \u00b7 <span style="color:'+rCol+'">$'+effRate.toFixed(0)+'/hr eff</span></div>'
+    +'<div style="display:flex;gap:16px;font-family:\'DM Mono\',monospace;font-size:11px">'
+    +'<span style="color:var(--text3)">Pool: '+fmt(t.poolTotal)+'</span>'
+    +'<span style="color:var(--text3)">+ '+overheadPct+'%: '+fmt(t.overhead)+'</span>'
+    +'<span style="color:var(--gold);font-weight:700">= '+fmt(t.grandTotal)+'</span>'
+    +'</div></div>';
 }
 
 function updateQuoteLI(i, field, value){
@@ -3484,13 +3491,14 @@ async function pushQuoteToCRM(id){
   const q=(state.quotes||[]).find(x=>x.id===id);
   if(!q) return;
   const total=calcQuoteTotal(q);
-  if(!confirm(`Create a Proposal deal in CRM for "${q.name}" at ${fmt(total.grandTotal)}?`)) return;
+  if(!confirm('Create a Proposal deal in CRM for "'+q.name+'" at '+fmt(total.grandTotal)+'?')) return;
   try{
+    const effNote=total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0;
     const deal=await api('POST','/deals',{
       name:q.name, client:q.client, value:total.grandTotal,
       stage:'Proposal', prob:50,
       buckets:state.defaultBuckets||[],
-      notes:`Generated from quote. ${total.totalHours.toFixed(1)}h · $${total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0}/hr eff.`,
+      notes:'Generated from quote. '+total.totalHours.toFixed(1)+'h \u00b7 $'+effNote+'/hr eff.',
     });
     state.deals=state.deals||[];
     state.deals.unshift(deal);
@@ -3525,40 +3533,41 @@ async function exportQuoteDocx(id){
   ];
   // Use the docx skill via fetch to generate
   // For now, generate a clean HTML table for copy-paste
-  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
-    <style>body{font-family:Arial,sans-serif;padding:40px;max-width:900px}
-    h1{font-size:20px;margin-bottom:4px}
-    .meta{font-size:12px;color:#666;margin-bottom:24px}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th{background:#f5f5f5;padding:8px 12px;text-align:left;border-bottom:2px solid #ddd;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
-    td{padding:8px 12px;border-bottom:1px solid #eee}
-    td:nth-child(n+2){text-align:right}th:nth-child(n+2){text-align:right}
-    .total-row td{font-weight:700;background:#fafafa;border-top:2px solid #ddd}
-    .grand-total td{background:#f0f9f4;font-size:15px;font-weight:700}
-    .footer{margin-top:16px;font-size:11px;color:#666}</style>
-  </head><body>
-    <h1>${_escapeHtml(q.name)}</h1>
-    <div class="meta">${q.client||''}${q.client?' · ':''}${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
-    <table>
-      <thead><tr><th>Description</th><th>Qty</th><th>Hrs/Unit</th><th>Total Hrs</th><th>Rate</th><th>Value</th></tr></thead>
-      <tbody>
-        ${q.lineItems.map(li=>{
-          const lh=li.quantity*li.hoursPerUnit;
-          const lv=lh*li.ratePerHour;
-          return`<tr><td>${_escapeHtml(li.description)}<br><small style="color:#999">${li.rateLabel}</small></td>
-          <td>${li.quantity}</td><td>${li.hoursPerUnit}h</td><td>${lh.toFixed(1)}h</td>
-          <td>$${li.ratePerHour}/hr</td><td><b>${fmt(lv)}</b></td></tr>`;
-        }).join('')}
-      </tbody>
-      <tfoot>
-        <tr class="total-row"><td colspan="5" style="text-align:right">Production Pool</td><td>${fmt(total.poolTotal)}</td></tr>
-        ${total.otherTotal>0?`<tr class="total-row"><td colspan="5" style="text-align:right">Other</td><td>${fmt(total.otherTotal)}</td></tr>`:''}
-        <tr class="total-row"><td colspan="5" style="text-align:right">Agency Overhead (${q.overheadPct}%)</td><td>${fmt(total.overhead)}</td></tr>
-        <tr class="grand-total"><td colspan="3">${total.totalHours.toFixed(1)}h total &nbsp;·&nbsp; $${total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0}/hr eff. rate</td><td colspan="2" style="text-align:right">QUOTE TOTAL</td><td>${fmt(total.grandTotal)}</td></tr>
-      </tfoot>
-    </table>
-    ${q.notes?`<p style="margin-top:20px;font-size:12px;color:#555">${_escapeHtml(q.notes)}</p>`:''}
-  </body></html>`;
+  const lineRowsHtml=q.lineItems.map(li=>{
+    const lh=li.quantity*li.hoursPerUnit;
+    const lv=lh*li.ratePerHour;
+    return '<tr><td>'+_escapeHtml(li.description)+'<br><small style="color:#999">'+li.rateLabel+'</small></td>'
+      +'<td>'+li.quantity+'</td><td>'+li.hoursPerUnit+'h</td><td>'+lh.toFixed(1)+'h</td>'
+      +'<td>$'+li.ratePerHour+'/hr</td><td><b>'+fmt(lv)+'</b></td></tr>';
+  }).join('');
+  const otherRowHtml=total.otherTotal>0?'<tr class="total-row"><td colspan="5" style="text-align:right">Other</td><td>'+fmt(total.otherTotal)+'</td></tr>':'';
+  const notesParaHtml=q.notes?'<p style="margin-top:20px;font-size:12px;color:#555">'+_escapeHtml(q.notes)+'</p>':'';
+  const effRateExport=total.totalHours>0?(total.grandTotal/total.totalHours).toFixed(0):0;
+  const dateStr=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const html='<!DOCTYPE html><html><head><meta charset="utf-8">'
+    +'<style>body{font-family:Arial,sans-serif;padding:40px;max-width:900px}'
+    +'h1{font-size:20px;margin-bottom:4px}'
+    +'.meta{font-size:12px;color:#666;margin-bottom:24px}'
+    +'table{width:100%;border-collapse:collapse;font-size:13px}'
+    +'th{background:#f5f5f5;padding:8px 12px;text-align:left;border-bottom:2px solid #ddd;font-size:11px;text-transform:uppercase;letter-spacing:.06em}'
+    +'td{padding:8px 12px;border-bottom:1px solid #eee}'
+    +'td:nth-child(n+2){text-align:right}th:nth-child(n+2){text-align:right}'
+    +'.total-row td{font-weight:700;background:#fafafa;border-top:2px solid #ddd}'
+    +'.grand-total td{background:#f0f9f4;font-size:15px;font-weight:700}'
+    +'</style></head><body>'
+    +'<h1>'+_escapeHtml(q.name)+'</h1>'
+    +'<div class="meta">'+(q.client||'')+(q.client?' \u00b7 ':'')+dateStr+'</div>'
+    +'<table><thead><tr><th>Description</th><th>Qty</th><th>Hrs/Unit</th><th>Total Hrs</th><th>Rate</th><th>Value</th></tr></thead>'
+    +'<tbody>'+lineRowsHtml+'</tbody>'
+    +'<tfoot>'
+    +'<tr class="total-row"><td colspan="5" style="text-align:right">Production Pool</td><td>'+fmt(total.poolTotal)+'</td></tr>'
+    +otherRowHtml
+    +'<tr class="total-row"><td colspan="5" style="text-align:right">Agency Overhead ('+q.overheadPct+'%)</td><td>'+fmt(total.overhead)+'</td></tr>'
+    +'<tr class="grand-total"><td colspan="3">'+total.totalHours.toFixed(1)+'h total &nbsp;\u00b7&nbsp; $'+effRateExport+'/hr eff. rate</td>'
+    +'<td colspan="2" style="text-align:right">QUOTE TOTAL</td><td>'+fmt(total.grandTotal)+'</td></tr>'
+    +'</tfoot></table>'
+    +notesParaHtml
+    +'</body></html>';
   const blob=new Blob([html],{type:'text/html'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -3577,7 +3586,7 @@ function renderRetainerDashboard(){
   if(!el) return;
   const contracts=state.retainerContracts||[];
   if(!contracts.length){
-    el.innerHTML=`<div style="padding:48px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:12px">No retainer contracts yet — create your first contract to get started.</div>`;
+    el.innerHTML='<div style="padding:48px;text-align:center;color:var(--text3);font-family:\'DM Mono\',monospace;font-size:12px">No retainer contracts yet — create your first contract to get started.</div>';
     return;
   }
   el.innerHTML=contracts.map(c=>_renderRetainerContract(c)).join('');
@@ -3686,106 +3695,114 @@ function _renderRetainerContract(c){
     if(!phaseMap[phase]) phaseMap[phase]=[];
     phaseMap[phase].push(b);
   });
-  return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">
-    <!-- Header -->
-    <div style="padding:18px 22px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-      <div>
-        <div style="font-size:18px;font-weight:600;color:var(--text);letter-spacing:-0.01em">${_escapeHtml(c.name)}</div>
-        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:3px">${_escapeHtml(c.client)} · ${c.startMonth} → ${c.endMonth} · ${monthsTotal} month${monthsTotal!==1?'s':''}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <button onclick="openRetainerModal('${c.id}')" class="btn btn-sm">Edit</button>
-        <button onclick="openBucketModal('${c.id}')" class="btn btn-sm">+ Bucket</button>
-      </div>
-    </div>
-    <!-- Timeline -->
-    <div style="padding:16px 22px;border-bottom:1px solid var(--border)">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Contract Timeline · ${monthsComplete}/${monthsTotal} months</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">
-        ${months.map(m=>{
-          const isCurrent=m.key===currentMo;
-          const isPast=m.key<currentMo;
-          const deal=m.deal;
-          const isPaid=deal?.invoiceStatus==='paid';
-          const isRetainer=deal?.stage==='Retainer';
-          const bg=isPaid?'var(--green)':isCurrent?'var(--amber)':isRetainer?'rgba(149,97,226,0.6)':isPast?'var(--border2)':'var(--bg4)';
-          const label=MONTHS[parseInt(m.key.split('-')[1])-1].substring(0,3);
-          return`<div style="flex:1;min-width:36px;max-width:60px" title="${m.key}${deal?' — '+deal.name:''}">
-            <div style="height:28px;background:${bg};border-radius:4px;margin-bottom:3px;border:1px solid ${isCurrent?'var(--amber)':'transparent'}"></div>
-            <div style="font-family:'DM Mono',monospace;font-size:8px;color:${isCurrent?'var(--amber)':isPaid?'var(--green)':'var(--text3)'};text-align:center">${label}</div>
-            ${deal?`<div style="font-family:'DM Mono',monospace;font-size:7px;color:var(--text3);text-align:center">${fmt(deal.value).replace('$','')}</div>`:''}
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Paid</span></div>
-        <div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--amber)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Current</span></div>
-        <div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:rgba(149,97,226,0.6)"></div><span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">Upcoming Retainer</span></div>
-      </div>
-    </div>
-    <!-- Buckets -->
-    ${Object.entries(phaseMap).map(([phase, buckets])=>`
-    <div style="padding:16px 22px;border-bottom:1px solid var(--border)">
-      <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">${_escapeHtml(phase)}</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        ${buckets.map(b=>{
-          const consumed=_calcBucketConsumed(b);
-          const isHours=b.unitType==='hours';
-          const autoCount=b.deliverableTypeId&&!isHours?consumed-b.manualConsumed:0;
-          const manualCount=b.manualConsumed||0;
-          const total=b.contractedQty||1;
-          const pct=Math.min(100,Math.round(consumed/total*100));
-          const isAuto=!!b.deliverableTypeId&&!isHours;
-          const col=pct>=100?'var(--red)':pct>=75?'var(--amber)':'var(--green)';
-          const consumedLabel=isHours?`${consumed}h`:`${consumed}`;
-          const totalLabel=isHours?`${total}h`:`${total}`;
-          const sourceLabel=isHours
-            ? (manualCount>0?`${Math.round((consumed-manualCount)*10)/10}h auto + ${manualCount}h manual`:`${consumed}h auto-tracked`)
-            : isAuto
-              ? (manualCount>0?`${autoCount} auto + ${manualCount} manual`:`${consumed} auto-tracked`)
-              : `${consumed} manual`;
-          return`<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-            <div style="flex:1;min-width:180px">
-              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
-                <div style="font-size:12px;font-weight:500;color:var(--text)">${_escapeHtml(b.name)}</div>
-                <div style="font-family:'DM Mono',monospace;font-size:11px;color:${col}">${consumedLabel} / ${totalLabel} <span style="color:var(--text3);font-size:9px">${isHours?'':''+b.unit}</span></div>
-              </div>
-              <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">
-                ${isHours&&consumed>0
-                  ? `<div style="height:100%;width:${pct}%;background:${col};border-radius:4px" title="${consumed}h tracked"></div>`
-                  : consumed>0
-                    ? (isAuto&&autoCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(autoCount/total*100))}%;background:${col};border-radius:4px 0 0 4px" title="${autoCount} auto-tracked"></div>`:'')
-                      +(manualCount>0?`<div style="height:100%;width:${Math.min(100,Math.round(manualCount/total*100))}%;background:${col};opacity:${isAuto?'0.45':'1'};${!isAuto?'border-radius:4px':''}" title="${manualCount} manually logged"></div>`:'')
-                    : `<div style="height:100%;width:0%;background:${col}"></div>`
-                }
-              </div>
-              <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center">
-                <span style="color:${col};font-weight:600">${pct}%</span>
-                <span>${sourceLabel}</span>
-                ${isHours?`<span style="color:var(--text3)">· ${b.phaseStartMonth||contract?.startMonth||'?'} → ${b.phaseEndMonth||contract?.endMonth||'?'}</span>`:''}
-                ${isAuto&&manualCount>0?`<span style="color:var(--text3)">·</span><span style="color:var(--text3);font-style:italic">pre-system work included</span>`:''}
-                ${!isAuto&&!isHours?`<button onclick="promptManualConsume('${b.id}','${c.id}',${consumed})" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">update</button>`:''}
-                <button onclick="openBucketModal('${c.id}','${b.id}')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:'DM Mono',monospace">edit</button>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>`).join('')}
-    <!-- Contract financials -->
-    <div style="padding:16px 22px;display:flex;gap:24px;flex-wrap:wrap">
-      ${[
-        {label:'Contract Value',val:fmt(totalValue),color:'var(--gold)'},
-        {label:'Invoiced',val:fmt(totalInvoiced),color:'var(--green)'},
-        {label:'Remaining',val:fmt(totalRemaining),color:totalRemaining<0?'var(--red)':'var(--text2)'},
-        {label:'Months Left',val:Math.max(0,monthsTotal-monthsComplete),color:'var(--text3)'},
-        {label:'Avg/Month',val:fmt(Math.round(totalValue/Math.max(1,monthsTotal))),color:'var(--text3)'},
-      ].map(k=>`<div>
-        <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:2px">${k.label}</div>
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:600;color:${k.color};letter-spacing:-0.02em">${k.val}</div>
-      </div>`).join('')}
-    </div>
-  </div>`;
+  // Build timeline HTML
+  const timelineHtml=months.map(function(m){
+    const isCurrent=m.key===currentMo;
+    const isPast=m.key<currentMo;
+    const deal=m.deal;
+    const isPaid=deal&&deal.invoiceStatus==='paid';
+    const isRet=deal&&deal.stage==='Retainer';
+    const bg=isPaid?'var(--green)':isCurrent?'var(--amber)':isRet?'rgba(149,97,226,0.6)':isPast?'var(--border2)':'var(--bg4)';
+    const label=MONTHS[parseInt(m.key.split('-')[1])-1].substring(0,3);
+    const valDiv=deal?'<div style="font-family:\'DM Mono\',monospace;font-size:7px;color:var(--text3);text-align:center">'+fmt(deal.value).replace('$','')+'</div>':'';
+    return '<div style="flex:1;min-width:36px;max-width:60px" title="'+m.key+(deal?' \u2014 '+deal.name:'')+'">'
+      +'<div style="height:28px;background:'+bg+';border-radius:4px;margin-bottom:3px;border:1px solid '+(isCurrent?'var(--amber)':'transparent')+'"></div>'
+      +'<div style="font-family:\'DM Mono\',monospace;font-size:8px;color:'+(isCurrent?'var(--amber)':isPaid?'var(--green)':'var(--text3)')+';text-align:center">'+label+'</div>'
+      +valDiv+'</div>';
+  }).join('');
+
+  // Build buckets HTML
+  const bucketsHtml=Object.entries(phaseMap).map(function(entry){
+    const phase=entry[0]; const buckets=entry[1];
+    const bucketRowsHtml=buckets.map(function(b){
+      const consumed=_calcBucketConsumed(b);
+      const isHours=b.unitType==='hours';
+      const autoCount=b.deliverableTypeId&&!isHours?consumed-(b.manualConsumed||0):0;
+      const manualCount=b.manualConsumed||0;
+      const total=b.contractedQty||1;
+      const pct=Math.min(100,Math.round(consumed/total*100));
+      const isAuto=!!b.deliverableTypeId&&!isHours;
+      const col=pct>=100?'var(--red)':pct>=75?'var(--amber)':'var(--green)';
+      const consumedLabel=isHours?consumed+'h':''+consumed;
+      const totalLabel=isHours?total+'h':''+total;
+      let sourceLabel;
+      if(isHours){
+        sourceLabel=manualCount>0?Math.round((consumed-manualCount)*10)/10+'h auto + '+manualCount+'h manual':consumed+'h auto-tracked';
+      } else if(isAuto){
+        sourceLabel=manualCount>0?autoCount+' auto + '+manualCount+' manual':consumed+' auto-tracked';
+      } else {
+        sourceLabel=consumed+' manual';
+      }
+      // Bar HTML
+      let barInner;
+      if(isHours&&consumed>0){
+        barInner='<div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:4px" title="'+consumed+'h tracked"></div>';
+      } else if(consumed>0){
+        barInner=(isAuto&&autoCount>0?'<div style="height:100%;width:'+Math.min(100,Math.round(autoCount/total*100))+'%;background:'+col+';border-radius:4px 0 0 4px" title="'+autoCount+' auto-tracked"></div>':'')
+          +(manualCount>0?'<div style="height:100%;width:'+Math.min(100,Math.round(manualCount/total*100))+'%;background:'+col+';opacity:'+(isAuto?'0.45':'1')+';'+(isAuto?'':'border-radius:4px')+'" title="'+manualCount+' manually logged"></div>':'');
+      } else {
+        barInner='<div style="height:100%;width:0%;background:'+col+'"></div>';
+      }
+      const ps=b.phaseStartMonth||(c&&c.startMonth)||'?';
+      const pe=b.phaseEndMonth||(c&&c.endMonth)||'?';
+      const phaseDateSpan=isHours?'<span style="color:var(--text3)">\u00b7 '+ps+' \u2192 '+pe+'</span>':'';
+      const preSystemSpan=isAuto&&manualCount>0?'<span style="color:var(--text3)">\u00b7</span><span style="color:var(--text3);font-style:italic">pre-system work included</span>':'';
+      const updateBtn=!isAuto&&!isHours?'<button onclick="promptManualConsume(\''+b.id+'\',\''+c.id+'\','+consumed+')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:\'DM Mono\',monospace">update</button>':'';
+      const editBtn='<button onclick="openBucketModal(\''+c.id+'\',\''+b.id+'\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:8px;padding:0;font-family:\'DM Mono\',monospace">edit</button>';
+      return '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:180px">'
+        +'<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">'
+        +'<div style="font-size:12px;font-weight:500;color:var(--text)">'+_escapeHtml(b.name)+'</div>'
+        +'<div style="font-family:\'DM Mono\',monospace;font-size:11px;color:'+col+'">'+consumedLabel+' / '+totalLabel+' <span style="color:var(--text3);font-size:9px">'+(isHours?'':b.unit)+'</span></div>'
+        +'</div>'
+        +'<div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">'+barInner+'</div>'
+        +'<div style="font-family:\'DM Mono\',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center">'
+        +'<span style="color:'+col+';font-weight:600">'+pct+'%</span>'
+        +'<span>'+sourceLabel+'</span>'
+        +phaseDateSpan+preSystemSpan+updateBtn+editBtn
+        +'</div></div></div>';
+    }).join('');
+    return '<div style="padding:16px 22px;border-bottom:1px solid var(--border)">'
+      +'<div style="font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:12px">'+_escapeHtml(phase)+'</div>'
+      +'<div style="display:flex;flex-direction:column;gap:10px">'+bucketRowsHtml+'</div></div>';
+  }).join('');
+
+  // Build financials strip
+  const finKpis=[
+    {label:'Contract Value',val:fmt(totalValue),color:'var(--gold)'},
+    {label:'Invoiced',val:fmt(totalInvoiced),color:'var(--green)'},
+    {label:'Remaining',val:fmt(totalRemaining),color:totalRemaining<0?'var(--red)':'var(--text2)'},
+    {label:'Months Left',val:Math.max(0,monthsTotal-monthsComplete),color:'var(--text3)'},
+    {label:'Avg/Month',val:fmt(Math.round(totalValue/Math.max(1,monthsTotal))),color:'var(--text3)'},
+  ];
+  const finHtml=finKpis.map(function(k){
+    return '<div>'
+      +'<div style="font-family:\'DM Mono\',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:2px">'+k.label+'</div>'
+      +'<div style="font-family:\'Space Grotesk\',sans-serif;font-size:18px;font-weight:600;color:'+k.color+';letter-spacing:-0.02em">'+k.val+'</div>'
+      +'</div>';
+  }).join('');
+
+  return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">'
+    +'<div style="padding:18px 22px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+    +'<div>'
+    +'<div style="font-size:18px;font-weight:600;color:var(--text);letter-spacing:-0.01em">'+_escapeHtml(c.name)+'</div>'
+    +'<div style="font-family:\'DM Mono\',monospace;font-size:10px;color:var(--text3);margin-top:3px">'+_escapeHtml(c.client)+' \u00b7 '+c.startMonth+' \u2192 '+c.endMonth+' \u00b7 '+monthsTotal+' month'+(monthsTotal!==1?'s':'')+'</div>'
+    +'</div>'
+    +'<div style="display:flex;align-items:center;gap:8px">'
+    +'<button onclick="openRetainerModal(\''+c.id+'\')" class="btn btn-sm">Edit</button>'
+    +'<button onclick="openBucketModal(\''+c.id+'\')" class="btn btn-sm">+ Bucket</button>'
+    +'</div></div>'
+    +'<div style="padding:16px 22px;border-bottom:1px solid var(--border)">'
+    +'<div style="font-family:\'DM Mono\',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Contract Timeline \u00b7 '+monthsComplete+'/'+monthsTotal+' months</div>'
+    +'<div style="display:flex;gap:4px;flex-wrap:wrap">'+timelineHtml+'</div>'
+    +'<div style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap">'
+    +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Paid</span></div>'
+    +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--amber)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Current</span></div>'
+    +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:rgba(149,97,226,0.6)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Upcoming Retainer</span></div>'
+    +'</div></div>'
+    +bucketsHtml
+    +'<div style="padding:16px 22px;display:flex;gap:24px;flex-wrap:wrap">'+finHtml+'</div>'
+    +'</div>';
 }
 
 // ── Retainer contract modal ──────────────────────────────────────────────────
@@ -3877,8 +3894,8 @@ function openBucketModal(contractId, bucketId){
   document.getElementById('bm-notes').value=b?b.notes||'':'';
   const dtypes=state.deliverableTypes||[];
   document.getElementById('bm-dtype').innerHTML=
-    `<option value="">— Manual tracking —</option>`+
-    dtypes.map(dt=>`<option value="${dt.id}" ${b&&b.deliverableTypeId===dt.id?'selected':''}>${dt.name}</option>`).join('');
+    '<option value="">— Manual tracking —</option>'+
+    dtypes.map(function(dt){return '<option value="'+dt.id+'"'+(b&&b.deliverableTypeId===dt.id?' selected':'')+'>'+_escapeHtml(dt.name)+'</option>';}).join('');
   _toggleBucketModeFields();
   document.querySelector('#bucket-modal .modal-title').childNodes[0].nodeValue=b?'Edit Bucket ':'New Bucket ';
   openModal('bucket-modal');
@@ -3928,7 +3945,7 @@ async function deleteBucket(){
 }
 
 async function promptManualConsume(bucketId, contractId, current){
-  const val=prompt(`Update consumed count (currently ${current}):`,current);
+  const val=prompt('Update consumed count (currently '+current+'):',current);
   if(val===null||isNaN(parseInt(val))) return;
   try{
     const updated=await api('PATCH','/retainer-buckets/'+bucketId,{manualConsumed:parseInt(val)});
@@ -3936,6 +3953,155 @@ async function promptManualConsume(bucketId, contractId, current){
     if(contract){const idx=(contract.buckets||[]).findIndex(b=>b.id===bucketId);if(idx>=0)contract.buckets[idx]=updated;}
     renderRetainerDashboard();
   } catch(e){notify('Update failed: '+e.message);}
+}
+
+// ── Delete project / deal with safeguard confirmation ────────────────────────
+
+function _showDeleteConfirm(opts){
+  const body = opts.body;
+  const warning = opts.warning || null;
+  const onConfirm = opts.onConfirm;
+  const confirmLabel = opts.confirmLabel || 'Delete';
+  document.getElementById('delete-confirm-body').innerHTML = body;
+  const warnEl = document.getElementById('delete-confirm-warning');
+  if(warning){ warnEl.style.display='block'; warnEl.innerHTML=warning; }
+  else { warnEl.style.display='none'; }
+  const btn = document.getElementById('delete-confirm-btn');
+  btn.textContent = confirmLabel;
+  btn.onclick = onConfirm;
+  openModal('delete-confirm-modal');
+}
+
+async function deleteProject(pid){
+  if(!can.adminFinance()) { notify('Only admins can delete projects'); return; }
+  const proj = state.projects.find(p=>p.id===pid);
+  if(!proj) return;
+
+  // First attempt — check for warnings
+  try {
+    const res = await fetch('/api/projects/'+pid, {
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+auth.token}
+    });
+    const data = await res.json();
+
+    if(res.status === 403){ notify('🔒 '+data.error); return; }
+
+    if(res.status === 409 && data.warning){
+      // Show warning dialog — user must confirm twice
+      const hasPayImpact = data.assignedTaskCount > 0;
+      const bodyHtml = '<strong>Delete "'+_escapeHtml(proj.name)+'"?</strong><br><br>'
+        + data.taskCount+' task'+(data.taskCount!==1?'s':'')+' will be permanently deleted.'
+        + (hasPayImpact ? '<br><br><strong style="color:var(--red)">⚠ Pay impact:</strong> '
+            + data.assignedTaskCount+' assigned task'+(data.assignedTaskCount!==1?'s':'')+' ('+data.totalHours+'h) will be removed from production pool calculations.' : '');
+      const _doDeleteProject = async function(){ closeModal('delete-confirm-modal'); await _forceDeleteProject(pid, proj.name); };
+      _showDeleteConfirm({
+        body: bodyHtml,
+        warning: hasPayImpact ? data.message : null,
+        confirmLabel: hasPayImpact ? '\u26a0 Delete Anyway' : 'Yes, Delete',
+        onConfirm: _doDeleteProject
+      });
+      return;
+    }
+
+    if(res.ok){
+      // Clean delete — no tasks, no warnings
+      _removeProjectFromState(pid);
+      notify('Project deleted');
+      setProjTab('grid');
+    } else {
+      notify('Delete failed: '+(data.error||'Unknown error'));
+    }
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
+async function _forceDeleteProject(pid, name){
+  try {
+    const res = await fetch('/api/projects/'+pid+'?force=true', {
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+auth.token}
+    });
+    const data = await res.json();
+    if(res.ok){
+      _removeProjectFromState(pid);
+      notify('Project "'+name+'" deleted');
+      setProjTab('grid');
+    } else {
+      notify('Delete failed: '+(data.error||'Unknown error'));
+    }
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
+function _removeProjectFromState(pid){
+  // Remove project and its tasks/deliverables from state
+  const taskIds = new Set(state.tasks.filter(t=>t.projectId===pid).map(t=>t.id));
+  state.tasks = state.tasks.filter(t=>t.projectId!==pid);
+  state.deliverables = state.deliverables.filter(d=>d.projectId!==pid);
+  state.taskDeliverables = state.taskDeliverables.filter(td=>!taskIds.has(td.taskId));
+  state.projects = state.projects.filter(p=>p.id!==pid);
+  renderProjects(); renderProjMonthly(); updateBadges();
+}
+
+async function deleteDeal(did){
+  if(!can.adminFinance()) { notify('Only admins can delete deals'); return; }
+  const deal = state.deals.find(d=>d.id===did);
+  if(!deal) return;
+
+  try {
+    const res = await fetch('/api/deals/'+did, {
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+auth.token}
+    });
+    const data = await res.json();
+
+    if(res.status === 403){ notify('🔒 '+data.error); return; }
+
+    if(res.status === 409 && data.warning){
+      const badges = [];
+      if(data.hasRevenueImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAID DEAL</span>');
+      if(data.hasPayImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAY IMPACT</span>');
+      const dealBodyHtml = '<strong>Delete "'+_escapeHtml(deal.name)+'"?</strong> '+badges.join(' ')+'<br><br>'+data.message;
+      const _doDeleteDeal = async function(){ closeModal('delete-confirm-modal'); await _forceDeleteDeal(did, deal.name); };
+      _showDeleteConfirm({
+        body: dealBodyHtml,
+        warning: (data.hasPayImpact||data.hasRevenueImpact) ? 'This action cannot be undone and will affect financial and pay history.' : null,
+        confirmLabel: (data.hasPayImpact||data.hasRevenueImpact) ? '\u26a0 Delete Anyway' : 'Yes, Delete',
+        onConfirm: _doDeleteDeal
+      });
+      return;
+    }
+
+    if(res.ok){
+      _removeDealFromState(did);
+      closeModal('deal-modal');
+      notify('Deal deleted');
+      renderCRM();
+    } else {
+      notify('Delete failed: '+(data.error||'Unknown error'));
+    }
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
+async function _forceDeleteDeal(did, name){
+  try {
+    const res = await fetch('/api/deals/'+did+'?force=true', {
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+auth.token}
+    });
+    const data = await res.json();
+    if(res.ok){
+      _removeDealFromState(did);
+      closeModal('deal-modal');
+      notify('Deal "'+name+'" deleted');
+      renderCRM();
+    } else {
+      notify('Delete failed: '+(data.error||'Unknown error'));
+    }
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
+function _removeDealFromState(did){
+  state.deals = state.deals.filter(d=>d.id!==did);
 }
 
 function renderPage(name){
@@ -10826,6 +10992,9 @@ function renderPayView(){
                  ? `<button class="btn btn-sm" onclick="finalizePayouts('${proj.id}')" style="color:var(--green);border-color:rgba(76,175,122,0.35)" title="Permanently lock all payouts for this project">⚑ Finalize Payouts</button>`
                  : ''}`
           }
+          ${auth.role==='admin'&&!isFinalized
+            ? `<button class="btn btn-sm" onclick="deleteProject('${proj.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3);font-size:9px" title="Delete this project">✕ Delete</button>`
+            : ''}
         </div>
       </div>`;
 
@@ -12146,6 +12315,13 @@ function renderProfitShareView(){
 function openDealModal(editId){
   const d=editId?state.deals.find(x=>x.id===editId):null;
   document.querySelector('#deal-modal .modal-title').childNodes[0].nodeValue=d?'Edit Deal ':'New Deal ';
+  // Show delete button only for admins editing an existing deal with no finalized payouts
+  const deleteWrap=document.getElementById('d-delete-wrap');
+  if(deleteWrap){
+    const proj=d?state.projects.find(p=>p.dealId===d.id):null;
+    deleteWrap.style.display=(d&&auth.role==='admin'&&!proj?.payoutsFinalized)?'block':'none';
+    if(d) document.getElementById('deal-modal').dataset.editId=d.id;
+  }
   document.getElementById('d-owner').innerHTML=state.team.map(m=>`<option value="${m.id}" ${d&&d.owner===m.id?'selected':''}>${m.name}</option>`).join('');
   document.getElementById('d-name').value=d?d.name:'';
   document.getElementById('d-client').value=d?d.client:'';
