@@ -488,21 +488,138 @@ app.patch('/api/deals/:id', requireAuth, requireAdmin, async (req, res) => {
 
 app.delete('/api/deals/:id', requireAuth, requireCanDelete, async (req, res) => {
   try {
+    const force = req.query.force === 'true';
     const { data: deal } = await supabase.from('deals').select('*').eq('id', req.params.id).single();
-    // Block deletion if the linked project has finalized payouts
-    const { data: proj } = await supabase.from('projects').select('payouts_finalized,name').eq('deal_id', req.params.id).maybeSingle();
+    if (!deal) return res.status(404).json({ error: 'Deal not found.' });
+
+    // Hard block — finalized payouts
+    const { data: proj } = await supabase.from('projects')
+      .select('id,name,payouts_finalized').eq('deal_id', req.params.id).maybeSingle();
     if (proj?.payouts_finalized) {
-      await auditLog(req.user, 'BLOCKED_DELETE_FINALIZED_DEAL', 'deals', req.params.id, { name: deal?.name });
+      await auditLog(req.user, 'BLOCKED_DELETE_FINALIZED_DEAL', 'deals', req.params.id, { name: deal.name });
       return res.status(403).json({ error: `Cannot delete — project "${proj.name}" payouts are finalized.` });
     }
-    await auditLog(req.user, 'DELETE_DEAL', 'deals', req.params.id, { name: deal?.name });
+
+    // Check tasks with pay impact
+    let assignedTaskCount = 0, totalHours = 0, taskCount = 0;
+    if (proj) {
+      const { data: tasks } = await supabase.from('tasks')
+        .select('id,assignee_id,est_hours').eq('project_id', proj.id);
+      taskCount = (tasks||[]).length;
+      const assigned = (tasks||[]).filter(t=>t.assignee_id&&t.est_hours>0);
+      assignedTaskCount = assigned.length;
+      totalHours = assigned.reduce((s,t)=>s+(t.est_hours||0),0);
+    }
+
+    const isClosedWon = deal.stage === 'Closed Won';
+    const isPaid = deal.invoice_status === 'paid';
+    const hasPayImpact = isClosedWon && assignedTaskCount > 0;
+    const hasRevenueImpact = isClosedWon && (deal.value||0) > 0;
+
+    if ((hasPayImpact || hasRevenueImpact || isPaid) && !force) {
+      const warnings = [];
+      if (isPaid) warnings.push(`This deal is marked Paid in Full (${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(deal.value||0)}) and will be removed from revenue history.`);
+      if (hasPayImpact) warnings.push(`Linked project "${proj?.name}" has ${assignedTaskCount} assigned task${assignedTaskCount!==1?'s':''} (${totalHours}h) that will be deleted — this will affect production pool pay history.`);
+      else if (taskCount > 0) warnings.push(`Linked project "${proj?.name}" has ${taskCount} task${taskCount!==1?'s':''} that will be deleted.`);
+      return res.status(409).json({
+        warning: true,
+        dealName: deal.name,
+        hasPayImpact,
+        hasRevenueImpact: isPaid,
+        message: warnings.join(' '),
+        taskCount, assignedTaskCount, totalHours,
+        value: deal.value,
+      });
+    }
+
+    await auditLog(req.user, 'DELETE_DEAL', 'deals', req.params.id, {
+      name: deal.name, stage: deal.stage, value: deal.value, hasPayImpact
+    });
     const { error } = await supabase.from('deals').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── PROJECTS ────────────────────────────────────────────────────────────────
+// DELETE project — admin only, with safeguards
+app.delete('/api/projects/:id', requireAuth, async (req, res) => {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Only admins can delete projects.' });
+  }
+  try {
+    const force = req.query.force === 'true';
+    const { data: proj } = await supabase.from('projects')
+      .select('id,name,payouts_finalized,deal_id').eq('id', req.params.id).single();
+    if (!proj) return res.status(404).json({ error: 'Project not found.' });
+
+    // Hard block — finalized payouts can never be deleted
+    if (proj.payouts_finalized) {
+      return res.status(403).json({
+        error: `"${proj.name}" has finalized payouts and cannot be deleted. Override payouts first if you need to remove this project.`
+      });
+    }
+
+    // Check tasks
+    const { data: tasks } = await supabase.from('tasks')
+      .select('id,title,assignee_id,est_hours,status').eq('project_id', req.params.id);
+    const assignedTasks = (tasks||[]).filter(t => t.assignee_id && t.est_hours > 0);
+    const totalHours = assignedTasks.reduce((s,t)=>s+(t.est_hours||0),0);
+
+    // Check if linked deal is Closed Won — pay impact
+    let dealName = null, isClosedWon = false;
+    if (proj.deal_id) {
+      const { data: deal } = await supabase.from('deals')
+        .select('name,stage,invoice_status').eq('id', proj.deal_id).single();
+      dealName = deal?.name;
+      isClosedWon = deal?.stage === 'Closed Won';
+    }
+
+    const hasPayImpact = isClosedWon && assignedTasks.length > 0;
+
+    // If there's pay impact and not forced — return warning for frontend to show
+    if (hasPayImpact && !force) {
+      return res.status(409).json({
+        warning: true,
+        projectName: proj.name,
+        dealName,
+        taskCount: (tasks||[]).length,
+        assignedTaskCount: assignedTasks.length,
+        totalHours,
+        message: `"${proj.name}" has ${assignedTasks.length} assigned task${assignedTasks.length!==1?'s':''} totalling ${totalHours}h on a Closed Won deal. Deleting this project will remove those hours from production pool calculations and affect pay history.`
+      });
+    }
+
+    // Warn (not block) for tasks with no pay impact — also needs force
+    if ((tasks||[]).length > 0 && !force) {
+      return res.status(409).json({
+        warning: true,
+        projectName: proj.name,
+        dealName,
+        taskCount: (tasks||[]).length,
+        assignedTaskCount: assignedTasks.length,
+        totalHours,
+        message: `"${proj.name}" has ${(tasks||[]).length} task${(tasks||[]).length!==1?'s':''} that will be permanently deleted.`
+      });
+    }
+
+    // Proceed with deletion — cascade manually for clarity
+    await auditLog(req.user, 'DELETE_PROJECT', 'projects', req.params.id, {
+      name: proj.name, taskCount: (tasks||[]).length, assignedTaskCount: assignedTasks.length, totalHours
+    });
+    // Delete in order (FK constraints)
+    const taskIds = (tasks||[]).map(t=>t.id);
+    if (taskIds.length) {
+      await supabase.from('task_deliverables').delete().in('task_id', taskIds);
+      await supabase.from('task_comments').delete().in('task_id', taskIds);
+      await supabase.from('tasks').delete().eq('project_id', req.params.id);
+    }
+    await supabase.from('deliverables').delete().eq('project_id', req.params.id);
+    await supabase.from('expenses').delete().eq('project_id', req.params.id);
+    const { error } = await supabase.from('projects').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true, deleted: { tasks: taskIds.length } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.post('/api/projects', requireAuth, async (req, res) => {
   // Admin, Class A, and VA can create projects
