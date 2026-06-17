@@ -3973,63 +3973,55 @@ function _showDeleteConfirm(opts){
 }
 
 async function deleteProject(pid){
-  if(!can.adminFinance()) { notify('Only admins can delete projects'); return; }
+  if(auth.role!=='admin') { notify('Only admins can delete projects'); return; }
   const proj = state.projects.find(p=>p.id===pid);
   if(!proj) return;
-
-  // First attempt — check for warnings
   try {
-    const res = await fetch('/api/projects/'+pid, {
-      method:'DELETE',
-      headers:{'Authorization':'Bearer '+auth.token}
-    });
-    const data = await res.json();
-
-    if(res.status === 403){ notify('🔒 '+data.error); return; }
-
-    if(res.status === 409 && data.warning){
-      // Show warning dialog — user must confirm twice
-      const hasPayImpact = data.assignedTaskCount > 0;
+    await api('DELETE', '/projects/'+pid);
+    // Clean delete — no tasks, no warnings
+    _removeProjectFromState(pid);
+    notify('Project deleted');
+    _afterProjectDelete();
+  } catch(e){
+    if(e.error && /finalized/i.test(e.error)){ notify('🔒 '+e.error); return; }
+    if(e.warning){
+      const hasPayImpact = e.assignedTaskCount > 0;
       const bodyHtml = '<strong>Delete "'+_escapeHtml(proj.name)+'"?</strong><br><br>'
-        + data.taskCount+' task'+(data.taskCount!==1?'s':'')+' will be permanently deleted.'
-        + (hasPayImpact ? '<br><br><strong style="color:var(--red)">⚠ Pay impact:</strong> '
-            + data.assignedTaskCount+' assigned task'+(data.assignedTaskCount!==1?'s':'')+' ('+data.totalHours+'h) will be removed from production pool calculations.' : '');
+        + e.taskCount+' task'+(e.taskCount!==1?'s':'')+' will be permanently deleted.'
+        + (hasPayImpact ? '<br><br><strong style="color:var(--red)">\u26a0 Pay impact:</strong> '
+            + e.assignedTaskCount+' assigned task'+(e.assignedTaskCount!==1?'s':'')+' ('+e.totalHours+'h) will be removed from production pool calculations.' : '');
       const _doDeleteProject = async function(){ closeModal('delete-confirm-modal'); await _forceDeleteProject(pid, proj.name); };
       _showDeleteConfirm({
         body: bodyHtml,
-        warning: hasPayImpact ? data.message : null,
+        warning: hasPayImpact ? e.message : null,
         confirmLabel: hasPayImpact ? '\u26a0 Delete Anyway' : 'Yes, Delete',
         onConfirm: _doDeleteProject
       });
       return;
     }
-
-    if(res.ok){
-      // Clean delete — no tasks, no warnings
-      _removeProjectFromState(pid);
-      notify('Project deleted');
-      setProjTab('grid');
-    } else {
-      notify('Delete failed: '+(data.error||'Unknown error'));
-    }
-  } catch(e){ notify('Delete failed: '+e.message); }
+    notify('Delete failed: '+(e.error||e.message||'Unknown error'));
+  }
 }
 
 async function _forceDeleteProject(pid, name){
   try {
-    const res = await fetch('/api/projects/'+pid+'?force=true', {
-      method:'DELETE',
-      headers:{'Authorization':'Bearer '+auth.token}
-    });
-    const data = await res.json();
-    if(res.ok){
-      _removeProjectFromState(pid);
-      notify('Project "'+name+'" deleted');
-      setProjTab('grid');
-    } else {
-      notify('Delete failed: '+(data.error||'Unknown error'));
-    }
-  } catch(e){ notify('Delete failed: '+e.message); }
+    await api('DELETE', '/projects/'+pid+'?force=true');
+    _removeProjectFromState(pid);
+    notify('Project "'+name+'" deleted');
+    _afterProjectDelete();
+  } catch(e){ notify('Delete failed: '+(e.error||e.message||'Unknown error')); }
+}
+
+// After deleting a project, return to a sensible list view depending on where we are
+function _afterProjectDelete(){
+  if(state.projectTab==='detail'){
+    state.projectTab='monthly';
+    state.activeProjectId=null;
+  }
+  if(state.currentPage==='projects'){
+    if(state.projectTab==='monthly') renderProjMonthly();
+    else renderProjects();
+  }
 }
 
 function _removeProjectFromState(pid){
@@ -4039,65 +4031,47 @@ function _removeProjectFromState(pid){
   state.deliverables = state.deliverables.filter(d=>d.projectId!==pid);
   state.taskDeliverables = state.taskDeliverables.filter(td=>!taskIds.has(td.taskId));
   state.projects = state.projects.filter(p=>p.id!==pid);
-  renderProjects(); renderProjMonthly(); updateBadges();
+  updateBadges();
 }
 
 async function deleteDeal(did){
-  if(!can.adminFinance()) { notify('Only admins can delete deals'); return; }
+  if(auth.role!=='admin') { notify('Only admins can delete deals'); return; }
   const deal = state.deals.find(d=>d.id===did);
   if(!deal) return;
-
   try {
-    const res = await fetch('/api/deals/'+did, {
-      method:'DELETE',
-      headers:{'Authorization':'Bearer '+auth.token}
-    });
-    const data = await res.json();
-
-    if(res.status === 403){ notify('🔒 '+data.error); return; }
-
-    if(res.status === 409 && data.warning){
+    await api('DELETE', '/deals/'+did);
+    _removeDealFromState(did);
+    closeModal('deal-modal');
+    notify('Deal deleted');
+    renderCRM();
+  } catch(e){
+    if(e.error && /finalized/i.test(e.error)){ notify('🔒 '+e.error); return; }
+    if(e.warning){
       const badges = [];
-      if(data.hasRevenueImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAID DEAL</span>');
-      if(data.hasPayImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAY IMPACT</span>');
-      const dealBodyHtml = '<strong>Delete "'+_escapeHtml(deal.name)+'"?</strong> '+badges.join(' ')+'<br><br>'+data.message;
+      if(e.hasRevenueImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAID DEAL</span>');
+      if(e.hasPayImpact) badges.push('<span style="background:rgba(224,90,90,0.12);color:var(--red);font-family:\'DM Mono\',monospace;font-size:9px;padding:2px 6px;border-radius:3px;letter-spacing:.06em">PAY IMPACT</span>');
+      const dealBodyHtml = '<strong>Delete "'+_escapeHtml(deal.name)+'"?</strong> '+badges.join(' ')+'<br><br>'+e.message;
       const _doDeleteDeal = async function(){ closeModal('delete-confirm-modal'); await _forceDeleteDeal(did, deal.name); };
       _showDeleteConfirm({
         body: dealBodyHtml,
-        warning: (data.hasPayImpact||data.hasRevenueImpact) ? 'This action cannot be undone and will affect financial and pay history.' : null,
-        confirmLabel: (data.hasPayImpact||data.hasRevenueImpact) ? '\u26a0 Delete Anyway' : 'Yes, Delete',
+        warning: (e.hasPayImpact||e.hasRevenueImpact) ? 'This action cannot be undone and will affect financial and pay history.' : null,
+        confirmLabel: (e.hasPayImpact||e.hasRevenueImpact) ? '\u26a0 Delete Anyway' : 'Yes, Delete',
         onConfirm: _doDeleteDeal
       });
       return;
     }
-
-    if(res.ok){
-      _removeDealFromState(did);
-      closeModal('deal-modal');
-      notify('Deal deleted');
-      renderCRM();
-    } else {
-      notify('Delete failed: '+(data.error||'Unknown error'));
-    }
-  } catch(e){ notify('Delete failed: '+e.message); }
+    notify('Delete failed: '+(e.error||e.message||'Unknown error'));
+  }
 }
 
 async function _forceDeleteDeal(did, name){
   try {
-    const res = await fetch('/api/deals/'+did+'?force=true', {
-      method:'DELETE',
-      headers:{'Authorization':'Bearer '+auth.token}
-    });
-    const data = await res.json();
-    if(res.ok){
-      _removeDealFromState(did);
-      closeModal('deal-modal');
-      notify('Deal "'+name+'" deleted');
-      renderCRM();
-    } else {
-      notify('Delete failed: '+(data.error||'Unknown error'));
-    }
-  } catch(e){ notify('Delete failed: '+e.message); }
+    await api('DELETE', '/deals/'+did+'?force=true');
+    _removeDealFromState(did);
+    closeModal('deal-modal');
+    notify('Deal "'+name+'" deleted');
+    renderCRM();
+  } catch(e){ notify('Delete failed: '+(e.error||e.message||'Unknown error')); }
 }
 
 function _removeDealFromState(did){
@@ -10206,6 +10180,9 @@ function renderProjMonthly(){
                   :''}
                 ${auth.role==='admin'&&isFinalized
                   ?`<button class="btn btn-sm" onclick="unfinalizePayouts('${p.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3)" title="Admin override — unlock finalized project for corrections">⚠ Override Unlock</button>`
+                  :''}
+                ${auth.role==='admin'&&!isFinalized
+                  ?`<button class="btn btn-sm" onclick="deleteProject('${p.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3)" title="Delete this project">✕</button>`
                   :''}
               </div>
             </div>`;
