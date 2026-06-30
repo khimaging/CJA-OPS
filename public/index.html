@@ -4852,6 +4852,9 @@ function _bulkImportReset(){
   document.getElementById('bi-step-preview').style.display='none';
   document.getElementById('bi-step-progress').style.display='none';
   document.getElementById('bi-step-results').style.display='none';
+  // Reset the Preview Folder button so it isn't stuck disabled/loading from a prior batch
+  const prevBtn=document.querySelector('#bi-step-folder button.btn-primary');
+  if(prevBtn){ prevBtn.disabled=false; prevBtn.textContent='Preview Folder'; }
   _bulkPreviewCache=null;
 }
 
@@ -4871,6 +4874,8 @@ async function _bulkImportPreview(btn){
     _renderBulkPreview(result);
   } catch(e){
     notify('Preview failed: '+e.message);
+  } finally {
+    // Always restore the button so subsequent batches work
     if(btn){ btn.disabled=false; btn.textContent=originalText; }
   }
 }
@@ -5223,8 +5228,36 @@ async function _payrollExportAll(){
         paid:l.payKey?!!state.payStatus[l.payKey]:null,
         detail:l.detail||'',
       }));
+      // ── Reimbursements owed to this member ────────────────────────────
+      // Unreimbursed reimbursement-type expenses they submitted, on projects
+      // whose deal closeDate falls within the pay period.
+      const myReimb=(state.expenses||[]).filter(e=>{
+        if(e.paymentType!=='reimbursement') return false;
+        if(e.reimbursed) return false;
+        if(e.submittedBy!==m.id) return false;
+        // Match to a project whose deal falls in the period
+        const proj=state.projects.find(p=>p.id===e.projectId);
+        if(!proj) return false;
+        const deal=state.deals.find(d=>d.id===proj.dealId);
+        if(!deal) return false;
+        return monthFilter(deal);
+      });
+      const reimbTotal=myReimb.reduce((s,e)=>s+(e.amount||0),0);
+      if(reimbTotal>0){
+        const projNames=[...new Set(myReimb.map(e=>{
+          const proj=state.projects.find(p=>p.id===e.projectId);
+          return proj?proj.name:'';
+        }).filter(Boolean))];
+        items.push({
+          label:'Reimbursements',
+          type:'Reimbursement',
+          amount:reimbTotal,
+          paid:null,
+          detail:`${myReimb.length} receipt${myReimb.length===1?'':'s'} · ${projNames.join(', ')}`,
+        });
+      }
       const total=items.reduce((s,it)=>s+it.amount,0);
-      return{memberId:m.id,memberName:m.name,items,total};
+      return{memberId:m.id,memberName:m.name,items,total,reimbTotal};
     }).filter(m=>m.items.length>0);
 
     if(!members.length){notify('No pay data found for this period');return;}
@@ -7027,10 +7060,11 @@ function renderFinancialDashboard(){
   const rateColor=r=>r===null?'var(--text3)':r>=targetRate?'var(--green)':r>=targetRate*0.75?'var(--amber)':'var(--red)';
 
   // ── Forecast metrics ──────────────────────────────────────
-  const retainerDeals=allDeals.filter(d=>d.stage==='Retainer');
-  // Committed retainer for next 3 months from today
-  const next3mStart=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  const next3mEnd=(()=>{const d=new Date(now.getFullYear(),now.getMonth()+3,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
+  const retainerDeals=allDeals.filter(d=>d.stage==='Retainer'&&d.isRetainer);
+  // Committed retainer for the next 3 calendar months (current month + next 2)
+  const _ym=(d)=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const next3mStart=_ym(new Date(now.getFullYear(),now.getMonth(),1));
+  const next3mEnd=_ym(new Date(now.getFullYear(),now.getMonth()+3,1)); // exclusive
   const next3mRetainerNet=retainerDeals
     .filter(d=>{const mo=(d.closeDate||'').substring(0,7);return mo>=next3mStart&&mo<next3mEnd;})
     .reduce((s,d)=>s+netRev(d),0);
@@ -7046,17 +7080,44 @@ function renderFinancialDashboard(){
   // Projected annual: YTD actual + (avg monthly × remaining months)
   const remainingMonths=12-monthsElapsed;
   const projectedAnnual=ytdNet+(avgMonthlyNet*remainingMonths);
-  // Retainer ARR: all deals (Retainer stage + Closed Won) for clients with active retainer contracts
-  // This correctly counts the full contract value regardless of which months have been activated
-  const retainerClientSet=new Set(retainerDeals.map(d=>d.client));
-  const retainerARR=[...retainerDeals,
-    ...allDeals.filter(d=>d.stage==='Closed Won'&&retainerClientSet.has(d.client))
-  ].reduce((s,d)=>s+(d.value||0),0);
-  // Coverage: retainer monthly avg as % of run rate
-  const retainerMonthlyAvg=retainerClientSet.size>0
-    ? retainerARR/Math.max(1,[...retainerDeals,...allDeals.filter(d=>d.stage==='Closed Won'&&retainerClientSet.has(d.client))].length)
-    : 0;
-  const retainerCoverage=avgMonthlyNet>0?Math.round(retainerMonthlyAvg/avgMonthlyNet*100):0;
+
+  // ── Retainer metrics — sourced from retainer CONTRACTS (authoritative) ──
+  const contracts=state.retainerContracts||[];
+  // For each contract, compute its total value (override or sum of linked deals) and monthly value
+  let retainerARR=0;            // annualized recurring value across all active contracts
+  let retainerMonthlyRecurring=0; // current monthly recurring revenue from active contracts
+  const currentYM=_ym(now);
+  contracts.forEach(c=>{
+    // Linked deals: same client, within contract month range
+    const linked=allDeals.filter(d=>{
+      if(d.client!==c.client) return false;
+      const mo=(d.closeDate||'').substring(0,7);
+      return mo>=c.startMonth&&mo<=c.endMonth;
+    });
+    const contractValue=c.totalValue||linked.reduce((s,d)=>s+(d.value||0),0);
+    // Contract duration in months (inclusive)
+    const [sy,sm]=c.startMonth.split('-').map(Number);
+    const [ey,em]=c.endMonth.split('-').map(Number);
+    const durationMonths=Math.max(1,(ey-sy)*12+(em-sm)+1);
+    const monthlyValue=contractValue/durationMonths;
+    // Only count contracts that are currently active (today falls within the contract window)
+    const isActive=currentYM>=c.startMonth&&currentYM<=c.endMonth;
+    if(isActive){
+      retainerMonthlyRecurring+=monthlyValue;
+      retainerARR+=monthlyValue*12; // annualized run-rate of active contracts
+    }
+  });
+  // If no contracts are defined yet, fall back to retainer-stage deals so the metric isn't empty
+  if(contracts.length===0){
+    const retainerClientSet=new Set(retainerDeals.map(d=>d.client));
+    const fallbackMonthly=retainerDeals
+      .filter(d=>{const mo=(d.closeDate||'').substring(0,7);return mo===currentYM;})
+      .reduce((s,d)=>s+(d.value||0),0);
+    retainerMonthlyRecurring=fallbackMonthly;
+    retainerARR=fallbackMonthly*12;
+  }
+  // Coverage: what % of the monthly run rate is covered by recurring retainer revenue
+  const retainerCoverage=avgMonthlyNet>0?Math.round(retainerMonthlyRecurring/avgMonthlyNet*100):0;
 
   el.innerHTML=`
     <!-- Controls bar -->
@@ -7135,15 +7196,15 @@ function renderFinancialDashboard(){
         },
         {
           label:'Retainer ARR',
-          val:fmt(retainerARR),
-          sub:`${retainerClientSet.size} retainer client${retainerClientSet.size===1?'':'s'} · all months`,
+          val:fmt(Math.round(retainerARR)),
+          sub:`${contracts.filter(c=>currentYM>=c.startMonth&&currentYM<=c.endMonth).length} active contract${contracts.filter(c=>currentYM>=c.startMonth&&currentYM<=c.endMonth).length===1?'':'s'} · annualized`,
           color:'var(--purple)',
           accent:false,
         },
         {
           label:'Retainer Coverage',
           val:`${retainerCoverage}%`,
-          sub:'of monthly run rate',
+          sub:`${fmt(Math.round(retainerMonthlyRecurring))}/mo recurring`,
           color:retainerCoverage>=80?'var(--green)':retainerCoverage>=50?'var(--amber)':'var(--text2)',
           accent:false,
         },
