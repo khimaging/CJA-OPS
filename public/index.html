@@ -5091,13 +5091,9 @@ function _renderPayrollBody(){
       </div>
       <button class="btn btn-sm" onclick="_payrollToggleAll(true)">Select All</button>
       <button class="btn btn-sm" onclick="_payrollToggleAll(false)">Clear</button>
-      <button class="btn btn-primary" onclick="_payrollGenerateDocx()" ${selectedCount===0?'disabled':''} style="padding:9px 16px">
+      <button class="btn btn-primary" onclick="_payrollGenerateDocx()" style="padding:9px 16px" title="Generate a full pay stub for every member with earnings this period — replicates the team monthly view and includes reimbursements">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         Generate Pay Stubs
-      </button>
-      <button class="btn" onclick="_payrollExportAll()" style="padding:9px 16px" title="Export full pay record for all team members in this period — includes both paid and unpaid line items">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
-        Export Pay Records
       </button>
       <button class="btn btn-primary" onclick="_payrollMarkPaid()" ${selectedCount===0?'disabled':''} style="padding:9px 16px;background:var(--green);border-color:var(--green)">
         Mark Selected Paid
@@ -5156,15 +5152,83 @@ function _payrollToggleAll(select){
   _renderPayrollBody();
 }
 
+// Build the full per-member pay breakdown for a period — matches the team monthly view
+// exactly (actual + projected line items, regardless of project completion status),
+// and appends a single Reimbursements line per member for that period.
+// memberFilter: optional Set of memberIds to include; if null, includes all.
+function _buildPayrollBreakdown(from, to, memberFilter){
+  const fromYM=from.substring(0,7);
+  const toYM=to.substring(0,7);
+  const monthFilter=d=>{
+    if(!d.closeDate) return false;
+    const ym=d.closeDate.substring(0,7);
+    return ym>=fromYM&&ym<=toYM;
+  };
+  const eligibleDeals=state.deals.filter(d=>{
+    if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
+    if(!monthFilter(d)) return false;
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    return proj&&proj.status==='complete';
+  });
+  const projectedDeals=state.deals.filter(d=>{
+    if(d.stage!=='Closed Won') return false;
+    if(!monthFilter(d)) return false;
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    if(!proj||proj.archived) return false;
+    const tasks=state.tasks.filter(t=>t.projectId===proj.id);
+    const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
+    if(d.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return false;
+    return true;
+  });
+
+  return state.team.map(m=>{
+    if(memberFilter&&!memberFilter.has(m.id)) return null;
+    const lines=_getMemberProjectBreakdown(m.id, monthFilter, eligibleDeals, projectedDeals);
+    const items=lines.map(l=>({
+      label:l.label,
+      type:l.kind==='profitShare'?'Profit Share':(l.type==='actual'?'Actual':'Projected'),
+      amount:l.amt,
+      paid:l.payKey?!!state.payStatus[l.payKey]:null,
+      detail:l.detail||'',
+    }));
+    // Reimbursements owed — ALL reimbursement-type expenses this member submitted on
+    // projects whose deal falls in the period, regardless of reimbursed/paid status.
+    const myReimb=(state.expenses||[]).filter(e=>{
+      if(e.paymentType!=='reimbursement') return false;
+      if(e.submittedBy!==m.id) return false;
+      const proj=state.projects.find(p=>p.id===e.projectId);
+      if(!proj) return false;
+      const deal=state.deals.find(d=>d.id===proj.dealId);
+      if(!deal) return false;
+      return monthFilter(deal);
+    });
+    const reimbTotal=myReimb.reduce((s,e)=>s+(e.amount||0),0);
+    if(reimbTotal>0){
+      const projNames=[...new Set(myReimb.map(e=>{
+        const proj=state.projects.find(p=>p.id===e.projectId);
+        return proj?proj.name:'';
+      }).filter(Boolean))];
+      items.push({
+        label:'Reimbursements',
+        type:'Reimbursement',
+        amount:reimbTotal,
+        paid:null,
+        detail:`${myReimb.length} receipt${myReimb.length===1?'':'s'} · ${projNames.join(', ')}`,
+      });
+    }
+    const total=items.reduce((s,it)=>s+it.amount,0);
+    return{memberId:m.id,memberName:m.name,items,total,reimbTotal};
+  }).filter(m=>m&&m.items.length>0);
+}
+
 async function _payrollGenerateDocx(){
   const data=state.payrollData;
   if(!data) return;
-  const members=data.members.map(m=>{
-    const items=m.items.filter(it=>state.payrollSelected.has(it.payKey));
-    const total=items.reduce((s,it)=>s+it.amount,0);
-    return{memberId:m.memberId,memberName:m.memberName,items,total};
-  }).filter(m=>m.items.length>0);
-  if(!members.length){notify('Nothing selected');return;}
+  // Pay stubs are a full replica of each member's monthly view for the period —
+  // they include actual + projected (incomplete) projects and a reimbursements line,
+  // independent of the unpaid-selection model used by "Mark Selected Paid".
+  const members=_buildPayrollBreakdown(data.from, data.to, null);
+  if(!members.length){notify('No pay data found for this period');return;}
   notify('Generating pay stubs…');
   try{
     const { files }=await api('POST','/payroll/generate-docx',{
@@ -5191,75 +5255,8 @@ async function _payrollExportAll(){
   if(!from||!to){notify('Select a period first');return;}
   notify('Building pay records…');
   try{
-    // Build the same month context that renderTeamMonthly uses so totals match the team page.
-    // The period filter spans all months covered by the from→to range.
-    const fromYM=from.substring(0,7);
-    const toYM=to.substring(0,7);
-    const monthFilter=d=>{
-      if(!d.closeDate) return false;
-      const ym=d.closeDate.substring(0,7);
-      return ym>=fromYM&&ym<=toYM;
-    };
-
-    // Eligible deals: Closed Won, paid invoice, complete project — same as team monthly
-    const eligibleDeals=state.deals.filter(d=>{
-      if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
-      if(!monthFilter(d)) return false;
-      const proj=state.projects.find(p=>p.dealId===d.id);
-      return proj&&proj.status==='complete';
-    });
-    const projectedDeals=state.deals.filter(d=>{
-      if(d.stage!=='Closed Won') return false;
-      if(!monthFilter(d)) return false;
-      const proj=state.projects.find(p=>p.dealId===d.id);
-      if(!proj||proj.archived) return false;
-      const tasks=state.tasks.filter(t=>t.projectId===proj.id);
-      const allDone=tasks.length===0||tasks.every(t=>t.status==='done');
-      if(d.invoiceStatus==='paid'&&proj.status==='complete'&&allDone) return false;
-      return true;
-    });
-
-    const members=state.team.map(m=>{
-      const lines=_getMemberProjectBreakdown(m.id, monthFilter, eligibleDeals, projectedDeals);
-      const items=lines.map(l=>({
-        label:l.label,
-        type:l.kind==='profitShare'?'Profit Share':(l.type==='actual'?'Actual':'Projected'),
-        amount:l.amt,
-        paid:l.payKey?!!state.payStatus[l.payKey]:null,
-        detail:l.detail||'',
-      }));
-      // ── Reimbursements owed to this member ────────────────────────────
-      // Unreimbursed reimbursement-type expenses they submitted, on projects
-      // whose deal closeDate falls within the pay period.
-      const myReimb=(state.expenses||[]).filter(e=>{
-        if(e.paymentType!=='reimbursement') return false;
-        if(e.reimbursed) return false;
-        if(e.submittedBy!==m.id) return false;
-        // Match to a project whose deal falls in the period
-        const proj=state.projects.find(p=>p.id===e.projectId);
-        if(!proj) return false;
-        const deal=state.deals.find(d=>d.id===proj.dealId);
-        if(!deal) return false;
-        return monthFilter(deal);
-      });
-      const reimbTotal=myReimb.reduce((s,e)=>s+(e.amount||0),0);
-      if(reimbTotal>0){
-        const projNames=[...new Set(myReimb.map(e=>{
-          const proj=state.projects.find(p=>p.id===e.projectId);
-          return proj?proj.name:'';
-        }).filter(Boolean))];
-        items.push({
-          label:'Reimbursements',
-          type:'Reimbursement',
-          amount:reimbTotal,
-          paid:null,
-          detail:`${myReimb.length} receipt${myReimb.length===1?'':'s'} · ${projNames.join(', ')}`,
-        });
-      }
-      const total=items.reduce((s,it)=>s+it.amount,0);
-      return{memberId:m.id,memberName:m.name,items,total,reimbTotal};
-    }).filter(m=>m.items.length>0);
-
+    // Full monthly-view replica for ALL members (incl. incomplete projects + reimbursements)
+    const members=_buildPayrollBreakdown(from, to, null);
     if(!members.length){notify('No pay data found for this period');return;}
     const{files}=await api('POST','/payroll/generate-docx',{from,to,members});
     for(const f of files||[]){
