@@ -797,7 +797,7 @@
       </div>
       <div class="nav-item" onclick="switchView('payroll')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><path d="M6 15h2M10 15h4"/></svg>
-        Run Payroll
+        Payroll Records
       </div>
       <div class="nav-item" onclick="switchView('auditlog')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="16" r="1" fill="currentColor"/></svg>
@@ -1098,8 +1098,8 @@
   <div id="view-payroll" class="view">
     <div class="topbar">
       <div>
-        <div class="page-title">Run Payroll</div>
-        <div class="page-sub">Review unpaid distributions, generate pay stubs, mark batch paid</div>
+        <div class="page-title">Payroll Records</div>
+        <div class="page-sub">Load any period to see the full pay breakdown, mark items paid, and re-pull stubs</div>
       </div>
     </div>
     <div class="content"><div id="payroll-content"></div></div>
@@ -5052,18 +5052,16 @@ async function _loadPayroll(){
     state.payrollTo=toEl.value;
   }
   const body=document.getElementById('payroll-body');
-  body.innerHTML=`<div style="padding:40px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">Loading unpaid items…</div>`;
-  let result;
-  try{
-    result=await api('GET',`/payroll/unpaid?from=${state.payrollFrom}&to=${state.payrollTo}`);
-  } catch(e){
-    body.innerHTML=`<div class="empty-state"><div class="empty-title">Failed to load</div><div class="empty-sub">${e.message}</div></div>`;
-    return;
-  }
-  state.payrollData=result;
-  // Initialize selected set — all selected by default
+  body.innerHTML=`<div style="padding:40px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px">Loading period records…</div>`;
+  // Build the full historical breakdown client-side — this is the same data that
+  // appears on the pay stubs (actual + projected + reimbursements), for every member.
+  const members=_buildPayrollBreakdown(state.payrollFrom, state.payrollTo, null);
+  state.payrollData={from:state.payrollFrom, to:state.payrollTo, members};
+  // Selection defaults to only the UNPAID line items (that's what "Mark Selected Paid" acts on)
   state.payrollSelected=new Set();
-  (result.members||[]).forEach(m=>m.items.forEach(it=>state.payrollSelected.add(it.payKey)));
+  members.forEach(m=>m.items.forEach(it=>{
+    if(it.payKey&&it.paid===false) state.payrollSelected.add(it.payKey);
+  }));
   _renderPayrollBody();
 }
 
@@ -5072,24 +5070,43 @@ function _renderPayrollBody(){
   const data=state.payrollData||{members:[]};
   if(!data.members||data.members.length===0){
     body.innerHTML=`<div class="empty-state">
-      <div class="empty-title">Nothing to pay</div>
-      <div class="empty-sub">No unpaid production pool or fees for ${data.from} – ${data.to}</div>
+      <div class="empty-title">No records this period</div>
+      <div class="empty-sub">No earnings, fees, profit share, or reimbursements for ${data.from} – ${data.to}</div>
     </div>`;
     return;
   }
 
-  const selectedTotal=data.members.reduce((s,m)=>s+m.items.filter(it=>state.payrollSelected.has(it.payKey)).reduce((ss,it)=>ss+it.amount,0),0);
+  // ── Period totals ──
+  const grandTotal=data.members.reduce((s,m)=>s+m.total,0);
+  const paidTotal=data.members.reduce((s,m)=>s+m.items.filter(it=>it.paid===true).reduce((ss,it)=>ss+it.amount,0),0);
+  const unpaidTotal=data.members.reduce((s,m)=>s+m.items.filter(it=>it.paid===false).reduce((ss,it)=>ss+it.amount,0),0);
+  const reimbTotal=data.members.reduce((s,m)=>s+(m.reimbTotal||0),0);
+  const selectedTotal=data.members.reduce((s,m)=>s+m.items.filter(it=>it.payKey&&state.payrollSelected.has(it.payKey)).reduce((ss,it)=>ss+it.amount,0),0);
   const selectedCount=Array.from(state.payrollSelected).length;
+  const typeTag=(t)=>t==='Actual'?'priority-low':t==='Projected'?'priority-med':t==='Reimbursement'?'priority-high':'priority-med';
 
   body.innerHTML=`
+    <!-- Period summary -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
+      ${[
+        {label:'Period Total',val:fmt(grandTotal),color:'var(--text)'},
+        {label:'Paid',val:fmt(paidTotal),color:'var(--green)'},
+        {label:'Unpaid',val:fmt(unpaidTotal),color:unpaidTotal>0?'var(--amber)':'var(--text3)'},
+        {label:'Reimbursements',val:fmt(reimbTotal),color:reimbTotal>0?'var(--blue)':'var(--text3)'},
+      ].map(k=>`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:5px">${k.label}</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:${k.color};letter-spacing:-0.02em">${k.val}</div>
+      </div>`).join('')}
+    </div>
+
     <!-- Batch actions -->
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 20px;margin-bottom:18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-      <div style="flex:1;min-width:200px">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Selected Total</div>
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;color:var(--green)">${fmt(selectedTotal)}</div>
-        <div style="font-size:11px;color:var(--text3)">${selectedCount} line item${selectedCount===1?'':'s'} across ${data.members.filter(m=>m.items.some(it=>state.payrollSelected.has(it.payKey))).length} member${data.members.length===1?'':'s'}</div>
+      <div style="flex:1;min-width:180px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Selected to Mark Paid</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;color:var(--green)">${fmt(selectedTotal)}</div>
+        <div style="font-size:11px;color:var(--text3)">${selectedCount} unpaid line item${selectedCount===1?'':'s'} selected</div>
       </div>
-      <button class="btn btn-sm" onclick="_payrollToggleAll(true)">Select All</button>
+      <button class="btn btn-sm" onclick="_payrollToggleAll(true)">Select All Unpaid</button>
       <button class="btn btn-sm" onclick="_payrollToggleAll(false)">Clear</button>
       <button class="btn btn-primary" onclick="_payrollGenerateDocx()" style="padding:9px 16px" title="Generate a full pay stub for every member with earnings this period — replicates the team monthly view and includes reimbursements">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -5103,39 +5120,64 @@ function _renderPayrollBody(){
     <!-- Per-member cards -->
     ${data.members.map(m=>{
       const mem=state.team.find(tm=>tm.id===m.memberId);
-      const selAmt=m.items.filter(it=>state.payrollSelected.has(it.payKey)).reduce((s,it)=>s+it.amount,0);
+      const memPaid=m.items.filter(it=>it.paid===true).reduce((s,it)=>s+it.amount,0);
+      const memUnpaid=m.items.filter(it=>it.paid===false).reduce((s,it)=>s+it.amount,0);
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:14px">
         <!-- Member header -->
         <div style="display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--bg);border-bottom:1px solid var(--border)">
           <div class="user-avatar" style="background:${mem?.color||'#555'};width:36px;height:36px;font-size:13px">${m.memberName.split(' ').map(n=>n[0]).join('')}</div>
           <div style="flex:1">
             <div style="font-size:14px;font-weight:600;color:var(--text)">${m.memberName}</div>
-            <div style="font-size:10px;color:var(--text3)">${m.items.length} line item${m.items.length===1?'':'s'} · Total unpaid: ${fmt(m.total)}</div>
+            <div style="font-size:10px;color:var(--text3)">${m.items.length} line item${m.items.length===1?'':'s'} · ${memUnpaid>0?`<span style="color:var(--amber)">${fmt(memUnpaid)} unpaid</span> · `:''}${fmt(memPaid)} paid</div>
           </div>
           <div style="text-align:right">
-            <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Selected</div>
-            <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:var(--green)">${fmt(selAmt)}</div>
+            <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3)">Period Total</div>
+            <div style="font-family:'DM Mono',monospace;font-size:18px;font-weight:700;color:var(--text)">${fmt(m.total)}</div>
           </div>
         </div>
         <!-- Items table -->
-        <div style="display:grid;grid-template-columns:40px 1fr 100px 120px;padding:8px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+        <div style="display:grid;grid-template-columns:40px 1fr 110px 90px 120px;padding:8px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
           <span></span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Item</span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Type</span>
+          <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">Status</span>
           <span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--green);text-align:right">Amount</span>
         </div>
         ${m.items.map(it=>{
-          const sel=state.payrollSelected.has(it.payKey);
-          return`<div style="display:grid;grid-template-columns:40px 1fr 100px 120px;padding:10px 20px;border-bottom:1px solid var(--border);align-items:center">
-            <input type="checkbox" ${sel?'checked':''} onchange="_payrollToggle('${it.payKey}')" style="cursor:pointer">
-            <span style="font-size:12px;color:var(--text)">${it.label}</span>
-            <span><span class="task-tag ${it.type==='production'?'priority-low':'priority-med'}">${it.type}</span></span>
-            <span style="font-family:'DM Mono',monospace;font-size:13px;color:var(--green);text-align:right">${fmt(it.amount)}</span>
+          const sel=it.payKey&&state.payrollSelected.has(it.payKey);
+          const canToggle=can.markPaid()&&it.payKey;
+          // Status: paid / unpaid / — (reimbursements & projected fees with no payKey have no paid state)
+          const statusHtml=it.paid===true
+            ? `<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--green)">● PAID</span>`
+            : it.paid===false
+              ? `<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--amber)">○ UNPAID</span>`
+              : `<span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--text3)">—</span>`;
+          // Checkbox only for unpaid items with a payKey (selectable for batch mark-paid)
+          const checkboxHtml=it.payKey&&it.paid===false
+            ? `<input type="checkbox" ${sel?'checked':''} onchange="_payrollToggle('${it.payKey}')" style="cursor:pointer">`
+            : it.paid===true&&canToggle
+              ? `<input type="checkbox" checked onchange="_payrollInlineUnmark('${it.projId}','${it.memberId}','${it.payKey}',this)" title="Uncheck to mark unpaid" style="cursor:pointer;accent-color:var(--green)">`
+              : `<span></span>`;
+          return`<div style="display:grid;grid-template-columns:40px 1fr 110px 90px 120px;padding:10px 20px;border-bottom:1px solid var(--border);align-items:center;${it.paid===true?'opacity:0.75':''}">
+            ${checkboxHtml}
+            <span style="font-size:12px;color:var(--text)">${it.label}${it.detail?`<br><span style="font-size:9px;color:var(--text3);font-family:'DM Mono',monospace">${it.detail}</span>`:''}</span>
+            <span><span class="task-tag ${typeTag(it.type)}">${it.type}</span></span>
+            <span>${statusHtml}</span>
+            <span style="font-family:'DM Mono',monospace;font-size:13px;color:${it.paid===true?'var(--text3)':'var(--green)'};text-align:right">${fmt(it.amount)}</span>
           </div>`;
         }).join('')}
       </div>`;
     }).join('')}
   `;
+}
+
+// Inline unmark from the payroll page — mirrors togglePaid's unmark path
+async function _payrollInlineUnmark(projId, memberId, payKey, checkboxEl){
+  if(checkboxEl) checkboxEl.checked=true; // keep checked until confirmed
+  const isPs=payKey&&payKey.includes('_ps_');
+  await togglePaid(projId, memberId, false, isPs?payKey:undefined);
+  // Rebuild the period so paid/unpaid totals reflect the change
+  _loadPayroll();
 }
 
 function _payrollToggle(key){
@@ -5147,7 +5189,10 @@ function _payrollToggle(key){
 function _payrollToggleAll(select){
   state.payrollSelected=new Set();
   if(select&&state.payrollData){
-    state.payrollData.members.forEach(m=>m.items.forEach(it=>state.payrollSelected.add(it.payKey)));
+    // Only unpaid line items with a payKey can be marked paid
+    state.payrollData.members.forEach(m=>m.items.forEach(it=>{
+      if(it.payKey&&it.paid===false) state.payrollSelected.add(it.payKey);
+    }));
   }
   _renderPayrollBody();
 }
@@ -5190,6 +5235,10 @@ function _buildPayrollBreakdown(from, to, memberFilter){
       amount:l.amt,
       paid:l.payKey?!!state.payStatus[l.payKey]:null,
       detail:l.detail||'',
+      payKey:l.payKey||null,
+      projId:l.projId||null,
+      memberId:l.memberId||m.id,
+      kind:l.kind||null,
     }));
     // Reimbursements owed — ALL reimbursement-type expenses this member submitted on
     // projects whose deal falls in the period, regardless of reimbursed/paid status.
@@ -5280,25 +5329,32 @@ async function _payrollMarkPaid(){
   const items=[];
   data.members.forEach(m=>{
     m.items.forEach(it=>{
-      if(state.payrollSelected.has(it.payKey)){
+      if(it.payKey&&it.paid===false&&state.payrollSelected.has(it.payKey)){
         items.push({
-          memberId:m.memberId, memberName:m.memberName,
-          payKey:it.payKey, amount:it.amount, type:it.type,
-          projectId:it.projectId, projectName:it.projectName,
+          memberId:it.memberId||m.memberId,
+          projId:it.projId,
+          payKey:it.payKey,
+          amount:it.amount,
           label:it.label,
+          isPs:it.payKey.includes('_ps_'),
         });
       }
     });
   });
   if(!items.length){notify('Nothing selected');return;}
-  if(!confirm(`Mark ${items.length} item${items.length===1?'':'s'} as paid? This will create pay_log entries and cannot be easily undone.`)) return;
-  try{
-    const result=await api('POST','/payroll/mark-paid',{items});
-    notify(`Marked ${result.processed} item${result.processed===1?'':'s'} as paid ✓`);
-    // Refresh both local pay_status and the list
-    if(typeof refreshTable==='function'){refreshTable('pay-status');refreshTable('pay-log');}
-    _loadPayroll();
-  } catch(e){notify('Failed: '+e.message);}
+  if(!confirm(`Mark ${items.length} item${items.length===1?'':'s'} as paid? This creates pay log entries for the period.`)) return;
+  notify(`Marking ${items.length} item${items.length===1?'':'s'} paid…`);
+  let ok=0, fail=0;
+  // Use the same togglePaid mechanism as the team monthly view so pay_log entries
+  // and rate snapshots are created identically regardless of where you mark paid.
+  for(const it of items){
+    try{
+      await togglePaid(it.projId, it.memberId, true, it.isPs?it.payKey:undefined);
+      ok++;
+    } catch(e){ fail++; }
+  }
+  notify(`Marked ${ok} paid${fail?` · ${fail} failed`:''} ✓`);
+  _loadPayroll();
 }
 
 // ============================================================
