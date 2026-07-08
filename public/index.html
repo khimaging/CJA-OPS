@@ -3170,19 +3170,45 @@ async function toggleMemberActive(id) {
 
 async function updateMemberPsPct(mid, val) {
   const m = state.team.find(x => x.id === mid);
-  if (m) m.profitSharePct = parseFloat(val) || 0;
+  if (!m) return;
+  const oldPct = m.profitSharePct || 0;
+  const newPct = parseFloat(val) || 0;
+  // Before changing the live rate, freeze any already-PAID profit share for this member
+  // that lacks a snapshot — so past payments keep the rate they were paid at and are not
+  // retroactively recalculated. New rate then only affects unpaid / current / future periods.
+  state.payStatusSnapshots = state.payStatusSnapshots || {};
+  const backfill = [];
+  Object.keys(state.payStatus || {}).forEach(key => {
+    if (!key.includes('_ps_')) return;
+    if (!key.endsWith('_' + mid)) return;
+    if (!state.payStatus[key]) return; // only paid items
+    if (state.payStatusSnapshots[key] != null) return; // already snapshotted
+    state.payStatusSnapshots[key] = oldPct;
+    backfill.push(key);
+  });
+  m.profitSharePct = newPct;
   // Update the validation badge without full re-render (avoids resetting other inputs)
   const totalPsPct = state.team.filter(x => x.active !== false).reduce((s,x) => s + (x.profitSharePct||0), 0);
   const pctValid = Math.abs(totalPsPct - 100) < 0.5;
   document.querySelectorAll('.ps-total-badge').forEach(el => {
-    el.textContent = `Profit share total: ${Math.round(totalPsPct*10)/10}% ${pctValid ? '✓' : '— must total 100%'}`;
+    el.textContent = `Active member profit share total: ${Math.round(totalPsPct*10)/10}% ${pctValid ? '✓' : '— must total 100%'}`;
     el.style.color = pctValid ? 'var(--text3)' : 'var(--red)';
     el.style.borderColor = pctValid ? 'var(--border)' : 'rgba(224,90,90,0.4)';
   });
   // Debounce API write (wait 800ms after last keystroke)
   clearTimeout(m._psTimer);
   m._psTimer = setTimeout(async () => {
-    try { await api('PATCH', '/team/' + mid, { profitSharePct: m.profitSharePct }); }
+    try {
+      // Persist any backfilled snapshots first so the freeze is durable server-side
+      for (const key of backfill) {
+        const parts = key.split('_ps_');
+        const projId = parts[0];
+        try { await api('POST','/pay-status',{ projectId:projId, memberId:mid, paid:true, payKey:key, psPctSnapshot: state.payStatusSnapshots[key] }); }
+        catch(se) { console.warn('Snapshot backfill failed for', key, se.message); }
+      }
+      await api('PATCH', '/team/' + mid, { profitSharePct: m.profitSharePct });
+      if (backfill.length) notify(`Rate updated · ${backfill.length} paid item${backfill.length===1?'':'s'} kept at ${oldPct}%`);
+    }
     catch(e) { notify('Save failed: ' + e.message); }
   }, 800);
 }
@@ -11507,13 +11533,10 @@ function renderTeamOverview(){
           ?`<div style="background:var(--bg3);border:1px solid var(--gold-dim2);border-radius:6px;padding:8px 12px;margin-bottom:12px">
               <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Profit Share %</div>
               <div style="display:flex;align-items:center;gap:8px">
-                ${(()=>{ const psLocked=_hasPsPaid(m.id);
-                  return psLocked
-                    ? `<span style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;display:inline-flex;align-items:center;gap:4px">🔒 ${m.profitSharePct||0}%</span>`
-                    : `<input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">`;
-                })()}
+                <input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">
                 <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">% of pool</span>
               </div>
+              ${_hasPsPaid(m.id)?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:6px;line-height:1.4">Changes apply to current & future periods only. Already-paid profit share keeps its locked rate.</div>`:''}
             </div>`
           :`<div class="pay-row" style="margin-bottom:4px"><span class="pay-row-label">Profit share allocation</span><span class="pay-row-value" style="color:var(--green)">${m.profitSharePct||0}%</span></div>`
         }
