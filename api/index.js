@@ -330,7 +330,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       expensesRes, payStatusRes, psStatusRes, payLogRes,
       clientsRes, delivTypesRes, delivsRes, taskDelivsRes,
     ] = await Promise.all([
-      supabase.from('team_members').select('id,name,role,color,profit_share_pct,month_cap,active,auth_role').order('name'),
+      supabase.from('team_members').select('id,name,role,color,profit_share_pct,ps_rate_history,month_cap,active,auth_role').order('name'),
       supabase.from('deals').select('*').order('created_at', { ascending: false }),
       supabase.from('projects').select('*').order('created_at', { ascending: false }),
       supabase.from('tasks').select('*').order('created_at', { ascending: false }),
@@ -952,11 +952,19 @@ app.get('/api/audit-log', requireAuth, requireAdmin, async (req, res) => {
 
 app.post('/api/team', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, role, profitSharePct, active, color, pin, monthCap } = req.body;
+    const { name, role, profitSharePct, active, color, pin, monthCap, psEffectiveMonth } = req.body;
     if (!pin) return res.status(400).json({ error: 'PIN is required for new members' });
     const pin_hash = await bcrypt.hash(String(pin), 10);
+    // Seed the rate history so a new member's profit share only counts from their
+    // start month forward (not retroactively across earlier periods).
+    const effMonth = psEffectiveMonth ||
+      (new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0'));
+    const psHistory = (profitSharePct || 0) > 0
+      ? [{ effectiveMonth: effMonth, pct: profitSharePct }]
+      : [];
     const { data, error } = await supabase.from('team_members').insert({
       name, role: role || '', profit_share_pct: profitSharePct || 0,
+      ps_rate_history: psHistory,
       month_cap: monthCap != null ? parseInt(monthCap) : 180,
       active: active !== false, color: color || '#c9a84c',
       auth_role: 'member', pin_hash,
@@ -972,24 +980,13 @@ app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
     if (req.params.id === req.user.sub && req.body.authRole && req.body.authRole !== 'admin') {
       return res.status(400).json({ error: "You cannot remove your own admin access" });
     }
-    // Block profit share % changes if this member has any paid profit share
-    if (req.body.profitSharePct !== undefined) {
-      const { data: current } = await supabase.from('team_members').select('profit_share_pct,name').eq('id', req.params.id).single();
-      if (current && current.profit_share_pct !== req.body.profitSharePct) {
-        const locked = await isProfitSharePaid(req.params.id);
-        if (locked) {
-          await auditLog(req.user, 'BLOCKED_PS_PCT_CHANGE', 'team_members', req.params.id, {
-            from: current.profit_share_pct, to: req.body.profitSharePct,
-            reason: 'profit share already paid out'
-          });
-          return res.status(403).json({ error: `${current.name}'s profit share % is locked — they have a paid profit share distribution. Unmark it as paid first.` });
-        }
-      }
-    }
+    // NOTE: profit share % changes are no longer hard-blocked when paid PS exists.
+    // Rates are effective-dated (ps_rate_history) so a change only affects the current
+    // month forward; prior periods keep the rate that was in effect then, and already-paid
+    // distributions keep their snapshotted rate. See ps_rate_history handling below.
     const updates = {};
     if (req.body.name           !== undefined) updates.name             = req.body.name;
     if (req.body.role           !== undefined) updates.role             = req.body.role;
-    if (req.body.profitSharePct !== undefined) updates.profit_share_pct = req.body.profitSharePct;
     if (req.body.monthCap       !== undefined) updates.month_cap        = parseInt(req.body.monthCap)||180;
     if (req.body.active         !== undefined) updates.active           = req.body.active;
     if (req.body.authRole !== undefined) {
@@ -998,15 +995,52 @@ app.patch('/api/team/:id', requireAuth, requireAdmin, async (req, res) => {
       updates.auth_role = req.body.authRole;
     }
     if (req.body.pin) updates.pin_hash = await bcrypt.hash(String(req.body.pin), 10);
+
     const { data: current } = await supabase.from('team_members').select('*').eq('id', req.params.id).single();
-    const { data, error } = await supabase.from('team_members').update(updates).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    // Audit profit share % changes even when allowed
-    if (updates.profit_share_pct !== undefined && current?.profit_share_pct !== updates.profit_share_pct) {
-      await auditLog(req.user, 'EDIT_TEAM_PS_PCT', 'team_members', req.params.id, {
-        name: data.name, from: current.profit_share_pct, to: updates.profit_share_pct
+
+    // ── Effective-dated profit share rate change (calendar-locked) ────────────
+    // A rate change only ever takes effect from the CURRENT month forward. Closed
+    // months (anything before the current month) are locked and never recalculated.
+    // We ignore any client-supplied effectiveMonth that points at a past month.
+    if (req.body.profitSharePct !== undefined && current) {
+      const newPct = req.body.profitSharePct;
+      const curMonth = new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0');
+      // Effective month is the current month (a change is always "this period forward").
+      // A future effectiveMonth is allowed (scheduling ahead); a past one is clamped to now.
+      let effMonth = req.body.psEffectiveMonth || curMonth;
+      if (effMonth < curMonth) effMonth = curMonth;
+      if (current.profit_share_pct !== newPct || req.body.psEffectiveMonth) {
+        updates.profit_share_pct = newPct;
+        let history = Array.isArray(current.ps_rate_history) ? [...current.ps_rate_history] : [];
+        if (!history.length) {
+          // Pre-migration safety: freeze prior periods at the existing scalar rate
+          history.push({ effectiveMonth: '2000-01', pct: current.profit_share_pct || 0 });
+        }
+        // Replace any segment already starting at this effective month, then add the new one.
+        history = history.filter(h => h.effectiveMonth !== effMonth);
+        history.push({ effectiveMonth: effMonth, pct: newPct });
+        history.sort((a,b) => a.effectiveMonth < b.effectiveMonth ? -1 : 1);
+        updates.ps_rate_history = history;
+        await auditLog(req.user, 'EDIT_TEAM_PS_PCT', 'team_members', req.params.id, {
+          name: current.name, from: current.profit_share_pct, to: newPct, effectiveMonth: effMonth
+        });
+      }
+    }
+    // Allow direct replacement of the full history (used by the rate-history editor).
+    // The editor is the only way to touch closed periods, and it's admin-gated + audited.
+    if (req.body.psRateHistory !== undefined && Array.isArray(req.body.psRateHistory)) {
+      const hist = req.body.psRateHistory
+        .filter(h => h && typeof h.effectiveMonth === 'string' && typeof h.pct === 'number')
+        .sort((a,b) => a.effectiveMonth < b.effectiveMonth ? -1 : 1);
+      updates.ps_rate_history = hist;
+      if (hist.length) updates.profit_share_pct = hist[hist.length-1].pct;
+      await auditLog(req.user, 'EDIT_TEAM_PS_HISTORY', 'team_members', req.params.id, {
+        name: current?.name, segments: hist.length
       });
     }
+
+    const { data, error } = await supabase.from('team_members').update(updates).eq('id', req.params.id).select().single();
+    if (error) throw error;
     res.json(mapTeamMember(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2376,6 +2410,7 @@ function mapTeamMember(m) {
     role:           m.role,
     color:          m.color,
     profitSharePct: m.profit_share_pct,
+    psRateHistory:  Array.isArray(m.ps_rate_history) ? m.ps_rate_history : [],
     monthCap:       m.month_cap != null ? m.month_cap : 180,
     active:         m.active,
     authRole:       m.auth_role,
