@@ -2059,6 +2059,27 @@ function _hasPsPaid(memberId) {
   );
 }
 
+// Look up the profit share % that was in effect for a member during a given month.
+// Uses ps_rate_history (effective-dated segments) so past periods are calculated at
+// the rate that applied then — a rate change is non-retroactive. Falls back to the
+// scalar profitSharePct if no history exists (pre-migration data).
+// monthKey format: 'YYYY-MM'. If the month precedes all segments, returns 0
+// (member was not participating at that rate yet).
+function _psRateForMonth(member, monthKey){
+  if(!member) return 0;
+  const hist=Array.isArray(member.psRateHistory)?member.psRateHistory:[];
+  if(!hist.length) return member.profitSharePct||0; // pre-migration fallback
+  if(!monthKey) return member.profitSharePct||0;
+  // Find the latest segment whose effectiveMonth is <= monthKey
+  let rate=null;
+  for(const seg of hist){
+    if(seg.effectiveMonth<=monthKey){
+      if(rate===null||seg.effectiveMonth>rate.effectiveMonth) rate=seg;
+    }
+  }
+  return rate?rate.pct:0; // before first segment → not yet participating
+}
+
 // "Team Payouts Finalized" = permanent hard lock — no one can change anything, ever
 function isPayoutsFinalized(projectId){
   const proj = state.projects.find(p => p.id === projectId);
@@ -3050,7 +3071,7 @@ async function toggleProfitSharePaid(pkey, checked) {
         const psB=d.buckets?.find(b=>b.name==='Profit Share');
         return sum+(psB?netRev(d)*psB.pct/100:netRev(d)*0.175);
       },0);
-    const _psPct = _psMember ? (_psMember.profitSharePct||0) : 0;
+    const _psPct = _psMember ? _psRateForMonth(_psMember, quarterKey) : 0;
     const _allocation = Math.round(_pool*_psPct/100*100)/100;
 
     await api('POST', '/profit-share-status', {
@@ -3171,21 +3192,9 @@ async function toggleMemberActive(id) {
 async function updateMemberPsPct(mid, val) {
   const m = state.team.find(x => x.id === mid);
   if (!m) return;
-  const oldPct = m.profitSharePct || 0;
   const newPct = parseFloat(val) || 0;
-  // Before changing the live rate, freeze any already-PAID profit share for this member
-  // that lacks a snapshot — so past payments keep the rate they were paid at and are not
-  // retroactively recalculated. New rate then only affects unpaid / current / future periods.
-  state.payStatusSnapshots = state.payStatusSnapshots || {};
-  const backfill = [];
-  Object.keys(state.payStatus || {}).forEach(key => {
-    if (!key.includes('_ps_')) return;
-    if (!key.endsWith('_' + mid)) return;
-    if (!state.payStatus[key]) return; // only paid items
-    if (state.payStatusSnapshots[key] != null) return; // already snapshotted
-    state.payStatusSnapshots[key] = oldPct;
-    backfill.push(key);
-  });
+  // Calendar-locked model: the API effective-dates this change to the current month.
+  // Closed periods keep their historical rate; only the current month forward changes.
   m.profitSharePct = newPct;
   // Update the validation badge without full re-render (avoids resetting other inputs)
   const totalPsPct = state.team.filter(x => x.active !== false).reduce((s,x) => s + (x.profitSharePct||0), 0);
@@ -3199,15 +3208,11 @@ async function updateMemberPsPct(mid, val) {
   clearTimeout(m._psTimer);
   m._psTimer = setTimeout(async () => {
     try {
-      // Persist any backfilled snapshots first so the freeze is durable server-side
-      for (const key of backfill) {
-        const parts = key.split('_ps_');
-        const projId = parts[0];
-        try { await api('POST','/pay-status',{ projectId:projId, memberId:mid, paid:true, payKey:key, psPctSnapshot: state.payStatusSnapshots[key] }); }
-        catch(se) { console.warn('Snapshot backfill failed for', key, se.message); }
-      }
-      await api('PATCH', '/team/' + mid, { profitSharePct: m.profitSharePct });
-      if (backfill.length) notify(`Rate updated · ${backfill.length} paid item${backfill.length===1?'':'s'} kept at ${oldPct}%`);
+      const updated = await api('PATCH', '/team/' + mid, { profitSharePct: m.profitSharePct });
+      // Keep local rate history in sync with what the server effective-dated
+      if (updated && updated.psRateHistory) m.psRateHistory = updated.psRateHistory;
+      const cm = new Date().getFullYear() + '-' + String(new Date().getMonth()+1).padStart(2,'0');
+      notify(`Rate set to ${m.profitSharePct}% effective ${cm} — prior periods unchanged`);
     }
     catch(e) { notify('Save failed: ' + e.message); }
   }, 800);
@@ -11226,9 +11231,14 @@ async function togglePaid(projId,memberId,checked,explicitKey){
   if (explicitKey && explicitKey.includes('_ps_')) {
     payload.payKey = explicitKey;
     if (checked) {
-      // Snapshot the current member rate at the moment of payment
+      // Snapshot the rate that was in effect for THIS deal's month (calendar-locked),
+      // not the live scalar — so the payment freezes at the correct historical rate.
       const mem = state.team.find(m => m.id === memberId);
-      payload.psPctSnapshot = mem?.profitSharePct || 0;
+      const psProjId = explicitKey.split('_ps_')[0];
+      const proj = state.projects.find(p => p.id === psProjId);
+      const deal = proj ? state.deals.find(d => d.id === proj.dealId) : null;
+      const dealMonth = deal ? (deal.closeDate||'').substring(0,7) : null;
+      payload.psPctSnapshot = _psRateForMonth(mem, dealMonth);
       // Mirror snapshot into local state so UI reflects the lock instantly
       state.payStatusSnapshots = state.payStatusSnapshots || {};
       state.payStatusSnapshots[key] = payload.psPctSnapshot;
@@ -11415,7 +11425,9 @@ function calcActualEarnings(filterFn){
     deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
   });
 
-  // Actual profit share — paid + complete project + all tasks done
+  // Actual profit share — paid + complete project + all tasks done.
+  // Computed per-deal using the profit share rate that was in effect for each deal's
+  // month (calendar-locked), so closed periods keep their historical rate.
   const eligibleDeals=state.deals.filter(d=>{
     if(d.stage!=='Closed Won'||d.invoiceStatus!=='paid') return false;
     const proj=state.projects.find(p=>p.dealId===d.id);
@@ -11424,8 +11436,19 @@ function calcActualEarnings(filterFn){
     if(tasks.length>0&&tasks.some(t=>t.status!=='done')) return false;
     return filterFn?filterFn(d):true;
   });
-  const totalPsPool=eligibleDeals.reduce((s,d)=>{const psB=d.buckets.find(b=>b.name==='Profit Share');return s+netRev(d)*(psB?psB.pct:17.5)/100;},0);
-  state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
+  eligibleDeals.forEach(d=>{
+    const psB=d.buckets.find(b=>b.name==='Profit Share');
+    const pool=netRev(d)*(psB?psB.pct:17.5)/100;
+    const proj=state.projects.find(p=>p.dealId===d.id);
+    const dealMonth=(d.closeDate||'').substring(0,7);
+    state.team.forEach(m=>{
+      const payKey=proj?`${proj.id}_ps_${m.id}`:null;
+      const paid=payKey?!!state.payStatus[payKey]:false;
+      const snap=paid&&state.payStatusSnapshots&&state.payStatusSnapshots[payKey]!=null?state.payStatusSnapshots[payKey]:null;
+      const pct=snap!=null?snap:_psRateForMonth(m,dealMonth);
+      psPay[m.id]+=pool*pct/100;
+    });
+  });
 
   return{prodPay,feePay,psPay,eligibleDeals};
 }
@@ -11468,7 +11491,8 @@ function calcProjectedEarnings(filterFn){
     deal.buckets.filter(b=>b.isPersonal&&b.assignedTo).forEach(b=>{if(feePay[b.assignedTo]!==undefined)feePay[b.assignedTo]+=netRev(deal)*b.pct/100;});
   });
 
-  // Projected profit share — eligible deals not yet fully earned
+  // Projected profit share — eligible deals not yet fully earned.
+  // Per-deal using the effective-dated rate for each deal's month.
   const projectedDeals=state.deals.filter(d=>{
     if(!isProjectionEligible(d)) return false;
     const proj=state.projects.find(p=>p.dealId===d.id);
@@ -11477,8 +11501,12 @@ function calcProjectedEarnings(filterFn){
     if(d.invoiceStatus==='paid'&&proj?.status==='complete'&&allDone) return false;
     return filterFn?filterFn(d):true;
   });
-  const totalPsPool=projectedDeals.reduce((s,d)=>{const psB=d.buckets.find(b=>b.name==='Profit Share');return s+netRev(d)*(psB?psB.pct:17.5)/100;},0);
-  state.team.forEach(m=>{psPay[m.id]=totalPsPool*(m.profitSharePct||0)/100;});
+  projectedDeals.forEach(d=>{
+    const psB=d.buckets.find(b=>b.name==='Profit Share');
+    const pool=netRev(d)*(psB?psB.pct:17.5)/100;
+    const dealMonth=(d.closeDate||'').substring(0,7);
+    state.team.forEach(m=>{ psPay[m.id]+=pool*_psRateForMonth(m,dealMonth)/100; });
+  });
 
   return{prodPay,feePay,psPay,projectedDeals};
 }
@@ -11536,7 +11564,7 @@ function renderTeamOverview(){
                 <input type="number" value="${m.profitSharePct||0}" min="0" max="100" step="0.5" style="width:70px;background:var(--bg4);border:1px solid var(--gold-dim2);border-radius:4px;padding:5px 8px;color:var(--gold);font-family:'DM Mono',monospace;font-size:13px;text-align:right;outline:none" oninput="updateMemberPsPct('${m.id}',this.value)">
                 <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">% of pool</span>
               </div>
-              ${_hasPsPaid(m.id)?`<div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:6px;line-height:1.4">Changes apply to current & future periods only. Already-paid profit share keeps its locked rate.</div>`:''}
+              <div style="font-family:'DM Mono',monospace;font-size:8px;color:var(--text3);margin-top:6px;line-height:1.4">Applies from the current month forward. Closed periods keep the rate that was in effect then.</div>
             </div>`
           :`<div class="pay-row" style="margin-bottom:4px"><span class="pay-row-label">Profit share allocation</span><span class="pay-row-value" style="color:var(--green)">${m.profitSharePct||0}%</span></div>`
         }
@@ -11647,12 +11675,14 @@ function calcPaidEarnings(filterFn){
     const psB=deal.buckets.find(b=>b.name==='Profit Share');
     const psPct=psB?psB.pct:17.5;
     const pool=netRev(deal)*psPct/100;
+    const dealMonth=(deal.closeDate||'').substring(0,7);
     state.team.forEach(m=>{
       const pk=`${proj.id}_ps_${m.id}`;
       if(!state.payStatus[pk]) return;
+      // Prefer the snapshot locked at payment time; otherwise the rate in effect for the deal's month
       const lockedPct=state.payStatusSnapshots&&state.payStatusSnapshots[pk]!=null
         ? state.payStatusSnapshots[pk]
-        : (m.profitSharePct||0);
+        : _psRateForMonth(m,dealMonth);
       psPaid[m.id]+=(pool*lockedPct/100);
     });
   });
@@ -11732,7 +11762,9 @@ function _getMemberProjectBreakdown(memberId, monthFilter, eligibleDeals, projec
     const payKey=proj?`${proj.id}_ps_${memberId}`:null;
     const paid=payKey?!!state.payStatus[payKey]:false;
     const lockedPct=paid&&state.payStatusSnapshots&&state.payStatusSnapshots[payKey]!=null?state.payStatusSnapshots[payKey]:null;
-    const effectivePct=lockedPct!=null?lockedPct:(mem?.profitSharePct||0);
+    // Paid items keep their snapshot; unpaid items use the rate in effect for the deal's month
+    const dealMonth=(d.closeDate||'').substring(0,7);
+    const effectivePct=lockedPct!=null?lockedPct:_psRateForMonth(mem,dealMonth);
     const amt=Math.round(pool*effectivePct/100*100)/100;
     if(amt>0) lines.push({label:`PS — ${d.name}`,type:'actual',amt,detail:`${effectivePct}% of ${fmt(pool)} pool · ${d.client}`,payKey,projId:proj?proj.id:null,memberId,kind:'profitShare'});
   });
@@ -11743,8 +11775,10 @@ function _getMemberProjectBreakdown(memberId, monthFilter, eligibleDeals, projec
     const psPct=psB?psB.pct:17.5;
     const pool=netRev(d)*psPct/100;
     const mem=state.team.find(x=>x.id===memberId);
-    const amt=Math.round(pool*(mem?.profitSharePct||0)/100*100)/100;
-    if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${mem?.profitSharePct||0}% of ${fmt(pool)} pool · ${d.client}`,payKey:null,projId:proj?proj.id:null,memberId,kind:'profitShare'});
+    const dealMonth=(d.closeDate||'').substring(0,7);
+    const effPct=_psRateForMonth(mem,dealMonth);
+    const amt=Math.round(pool*effPct/100*100)/100;
+    if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${effPct}% of ${fmt(pool)} pool · ${d.client}`,payKey:null,projId:proj?proj.id:null,memberId,kind:'profitShare'});
   });
   return lines;
 }
