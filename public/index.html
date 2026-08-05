@@ -5273,6 +5273,7 @@ function _buildPayrollBreakdown(from, to, memberFilter){
     }));
     // Reimbursements owed — ALL reimbursement-type expenses this member submitted on
     // projects whose deal falls in the period, regardless of reimbursed/paid status.
+    // Itemized as one line per project so each project's reimbursement total is visible.
     const myReimb=(state.expenses||[]).filter(e=>{
       if(e.paymentType!=='reimbursement') return false;
       if(e.submittedBy!==m.id) return false;
@@ -5282,20 +5283,28 @@ function _buildPayrollBreakdown(from, to, memberFilter){
       if(!deal) return false;
       return monthFilter(deal);
     });
+    // Group by project
+    const reimbByProject={};
+    myReimb.forEach(e=>{
+      const proj=state.projects.find(p=>p.id===e.projectId);
+      const pid=proj?proj.id:'_none';
+      if(!reimbByProject[pid]) reimbByProject[pid]={name:proj?proj.name:'Unassigned',count:0,amount:0};
+      reimbByProject[pid].count+=1;
+      reimbByProject[pid].amount+=(e.amount||0);
+    });
     const reimbTotal=myReimb.reduce((s,e)=>s+(e.amount||0),0);
-    if(reimbTotal>0){
-      const projNames=[...new Set(myReimb.map(e=>{
-        const proj=state.projects.find(p=>p.id===e.projectId);
-        return proj?proj.name:'';
-      }).filter(Boolean))];
-      items.push({
-        label:'Reimbursements',
-        type:'Reimbursement',
-        amount:reimbTotal,
-        paid:null,
-        detail:`${myReimb.length} receipt${myReimb.length===1?'':'s'} · ${projNames.join(', ')}`,
+    // One line item per project, sorted by project name
+    Object.values(reimbByProject)
+      .sort((a,b)=>a.name.localeCompare(b.name))
+      .forEach(r=>{
+        items.push({
+          label:`Reimbursement — ${r.name}`,
+          type:'Reimbursement',
+          amount:r.amount,
+          paid:null,
+          detail:`${r.count} receipt${r.count===1?'':'s'}`,
+        });
       });
-    }
     const total=items.reduce((s,it)=>s+it.amount,0);
     return{memberId:m.id,memberName:m.name,items,total,reimbTotal};
   }).filter(m=>m&&m.items.length>0);
