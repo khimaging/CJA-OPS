@@ -799,6 +799,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/><path d="M6 15h2M10 15h4"/></svg>
         Payroll Records
       </div>
+      <div class="nav-item" onclick="switchView('opsfund')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Ops Fund
+      </div>
       <div class="nav-item" onclick="switchView('auditlog')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="16" r="1" fill="currentColor"/></svg>
         Audit Log
@@ -1103,6 +1107,17 @@
       </div>
     </div>
     <div class="content"><div id="payroll-content"></div></div>
+  </div>
+
+  <!-- OPS FUND -->
+  <div id="view-opsfund" class="view">
+    <div class="topbar">
+      <div>
+        <div class="page-title">Ops Fund</div>
+        <div class="page-sub">Operations account inflows, adjustments, and surplus disbursements</div>
+      </div>
+    </div>
+    <div class="content"><div id="opsfund-content"></div></div>
   </div>
 
   <!-- EXPENSES -->
@@ -2042,6 +2057,53 @@ function netRev(deal){
   return Math.max(0,gross-exp);
 }
 
+// ── OPS FUND CALCULATIONS ────────────────────────────────────────────────────
+// The Operations Account bucket sets aside a % of each deal's net revenue.
+// Returns the ops-bucket dollar amount for a single deal (0 if no ops bucket).
+function opsBucketAmount(deal){
+  const b=(deal.buckets||[]).find(x=>x.name==='Operations Account');
+  if(!b) return 0;
+  return netRev(deal)*(b.pct||0)/100;
+}
+
+// Compute the ops fund picture, optionally scoped to a month range [fromYM, toYM].
+// Inflows are recognized when a deal is COLLECTED (Closed Won + paid). "Committed"
+// = Closed Won not yet paid (in the pipeline but not yet in the fund).
+// Outflows = manual adjustments (signed) + disbursements. Running total nets them.
+function calcOpsFund(fromYM, toYM){
+  const inRange=(ym)=>{
+    if(!ym) return false;
+    if(fromYM&&ym<fromYM) return false;
+    if(toYM&&ym>toYM) return false;
+    return true;
+  };
+  let collected=0, committed=0;
+  (state.deals||[]).forEach(d=>{
+    const amt=opsBucketAmount(d);
+    if(amt<=0) return;
+    const ym=(d.closeDate||'').substring(0,7);
+    if(fromYM||toYM){ if(!inRange(ym)) return; }
+    if(d.stage==='Closed Won'&&d.invoiceStatus==='paid') collected+=amt;
+    else if(d.stage==='Closed Won') committed+=amt;
+  });
+  // Manual adjustments (signed: negative = outflow)
+  let adjustments=0;
+  (state.opsAdjustments||[]).forEach(a=>{
+    const ym=(a.entryDate||'').substring(0,7);
+    if(fromYM||toYM){ if(!inRange(ym)) return; }
+    adjustments+=Number(a.amount)||0;
+  });
+  // Disbursements (always outflows)
+  let disbursed=0;
+  (state.opsDisbursements||[]).forEach(d=>{
+    const ym=d.periodMonth||(d.createdAt||'').substring(0,7);
+    if(fromYM||toYM){ if(!inRange(ym)) return; }
+    disbursed+=Number(d.totalAmount)||0;
+  });
+  const running=collected+adjustments-disbursed;
+  return { collected, committed, adjustments, disbursed, running };
+}
+
 // Helpers for profitSharePaidStatus — values are now {paid, psPct, allocationAmount} objects
 function _isPsPaid(pkey) {
   const v = state.profitSharePaidStatus[pkey];
@@ -2117,7 +2179,7 @@ function updateNetRevPreview(){
 }
 
 let state={
-  deals:[],projects:[],tasks:[],payStatus:{},payStatusSnapshots:{},profitSharePaidStatus:{},payLog:[],
+  deals:[],projects:[],tasks:[],payStatus:{},payStatusSnapshots:{},profitSharePaidStatus:{},payLog:[],opsAdjustments:[],opsDisbursements:[],
   expenses:[],
   isAdmin:false,
   team:[
@@ -2303,6 +2365,8 @@ async function bootstrapState() {
   state.payStatusSnapshots    = data.payStatusSnapshots || {};
   state.profitSharePaidStatus = data.profitSharePaidStatus || {};
   state.payLog = data.payLog || [];
+  state.opsAdjustments = data.opsAdjustments || [];
+  state.opsDisbursements = data.opsDisbursements || [];
   state.clients               = data.clients || [];
   state.deliverableTypes      = data.deliverableTypes || [];
   state.deliverables          = data.deliverables || [];
@@ -3228,7 +3292,7 @@ async function updateMemberPsPct(mid, val) {
 // ============================================================
 //  NAV
 // ============================================================
-const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team',paylog:'Pay Log',auditlog:'Audit Log',health:'Health Dashboard',workload:'Workload',prodcal:'Production Calendar',
+const PAGE_LABELS={crm:'CRM',projects:'Projects',tasks:'Tasks',pay:'Pay Calc',profitshare:'Profit Share',expenses:'Expenses',buckets:'Buckets',team:'Team',paylog:'Pay Log',auditlog:'Audit Log',opsfund:'Ops Fund',health:'Health Dashboard',workload:'Workload',prodcal:'Production Calendar',
 };
 
 function switchView(name){
@@ -4127,6 +4191,7 @@ function renderPage(name){
   if(name==='expenses'){renderExpensesView();}
   if(name==='pending-expenses'){renderPendingExpenses();}
   if(name==='payroll'){renderPayrollView();}
+  if(name==='opsfund'){renderOpsFundView();}
   if(name==='buckets')renderBucketsView();
   if(name==='team')renderTeamView();
   if(name==='you'){renderYouDashboard();}
@@ -4297,7 +4362,7 @@ function _fmtDate(iso) {
 }
 
 function _typeBadge(type) {
-  const labels = { production:'Production', fee:'Fee', profit_share:'Profit Share', manual:'Manual' };
+  const labels = { production:'Production', fee:'Fee', profit_share:'Profit Share', manual:'Manual', ops_disbursement:'Surplus' };
   return `<span class="pl-type-badge pl-type-${type}">${labels[type]||type}</span>`;
 }
 
@@ -5020,6 +5085,278 @@ function _bulkImportDone(){
 //  RUN PAYROLL
 // ============================================================
 
+// ============================================================
+//  OPS FUND
+// ============================================================
+
+function renderOpsFundView(){
+  const el=document.getElementById('opsfund-content');
+  if(!el) return;
+  if(auth.role!=='admin'){
+    el.innerHTML=`<div class="empty-state"><div class="empty-title">Admin access required</div></div>`;
+    return;
+  }
+  // Initialize period to current calendar year if unset
+  const now=new Date();
+  if(!state.opsFundFrom||!state.opsFundTo){
+    state.opsFundFrom=now.getFullYear()+'-01';
+    state.opsFundTo=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  }
+  const allTime=calcOpsFund(null,null);
+  const period=calcOpsFund(state.opsFundFrom,state.opsFundTo);
+
+  el.innerHTML=`
+    <!-- Reconciliation note -->
+    <div style="background:rgba(90,143,212,0.08);border:1px solid rgba(90,143,212,0.25);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--text2);line-height:1.5">
+      <strong style="color:var(--blue)">How this is calculated:</strong> Inflows are each deal's Operations Account bucket (the % set on that deal) recognized when the deal is <strong>collected</strong> (Closed Won + paid). Real ops expenses that live in your accounting aren't here automatically — log them as <strong>adjustments</strong> below to keep the running total reconciled. This reflects what the app can see, not a bank balance.
+    </div>
+
+    <!-- Running total (all-time) -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:14px">
+      <div style="background:var(--bg2);border:1px solid var(--gold-dim2);border-radius:12px;padding:18px 20px;grid-column:span 1">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Running Total <span style="color:var(--text3)">· all-time</span></div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:700;color:${allTime.running>=0?'var(--gold)':'var(--red)'};letter-spacing:-0.02em">${fmt(allTime.running)}</div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">estimated funds set aside</div>
+      </div>
+      ${_opsKpi('Collected Inflows',allTime.collected,'var(--green)','all-time, paid deals')}
+      ${_opsKpi('Committed (unpaid)',allTime.committed,'var(--amber)','Closed Won, not yet collected')}
+      ${_opsKpi('Adjustments',allTime.adjustments,allTime.adjustments<0?'var(--red)':'var(--text2)','manual ledger entries')}
+      ${_opsKpi('Disbursed',allTime.disbursed*-1,'var(--purple)','paid out as surplus')}
+    </div>
+
+    <!-- Period selector + period totals -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin-bottom:22px">
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Period From</label>
+          <input class="form-input" type="month" id="of-from" value="${state.opsFundFrom}" style="padding:7px 12px;font-size:12px">
+        </div>
+        <div>
+          <label style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);display:block;margin-bottom:4px">Period To</label>
+          <input class="form-input" type="month" id="of-to" value="${state.opsFundTo}" style="padding:7px 12px;font-size:12px">
+        </div>
+        <button class="btn btn-primary" onclick="_loadOpsFundPeriod()" style="padding:9px 16px">Apply</button>
+        <div style="display:flex;gap:6px;margin-left:auto">
+          <button class="btn btn-sm" onclick="_opsFundQuickRange('ytd')">YTD</button>
+          <button class="btn btn-sm" onclick="_opsFundQuickRange('q')">This Quarter</button>
+          <button class="btn btn-sm" onclick="_opsFundQuickRange('m')">This Month</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+        ${_opsKpi('Period Net',period.running,period.running>=0?'var(--gold)':'var(--red)','inflows − outflows')}
+        ${_opsKpi('Period Collected',period.collected,'var(--green)','')}
+        ${_opsKpi('Period Committed',period.committed,'var(--amber)','')}
+        ${_opsKpi('Period Adjustments',period.adjustments,period.adjustments<0?'var(--red)':'var(--text2)','')}
+        ${_opsKpi('Period Disbursed',period.disbursed*-1,'var(--purple)','')}
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="_openOpsDisbursementModal()" style="padding:9px 16px">+ New Surplus Disbursement</button>
+      <button class="btn" onclick="_openOpsAdjustmentModal()" style="padding:9px 16px">+ Log Adjustment</button>
+    </div>
+
+    <!-- Disbursements -->
+    <div style="margin-bottom:26px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Surplus Disbursements</div>
+      ${_renderOpsDisbursements()}
+    </div>
+
+    <!-- Adjustments ledger -->
+    <div>
+      <div style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text3);margin-bottom:10px">Adjustments Ledger</div>
+      ${_renderOpsAdjustments()}
+    </div>
+  `;
+}
+
+function _opsKpi(label,val,color,sub){
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+    <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:5px">${label}</div>
+    <div style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:600;color:${color};letter-spacing:-0.02em">${fmt(val)}</div>
+    ${sub?`<div style="font-size:9px;color:var(--text3);margin-top:3px">${sub}</div>`:''}
+  </div>`;
+}
+
+function _renderOpsDisbursements(){
+  const list=(state.opsDisbursements||[]);
+  if(!list.length) return `<div style="padding:24px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;background:var(--bg2);border:1px solid var(--border);border-radius:10px">No disbursements yet</div>`;
+  return list.map(d=>{
+    const allocRows=(d.allocations||[]).map(a=>
+      `<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:11px;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text2)">${a.memberName} <span style="color:var(--text3);font-family:'DM Mono',monospace;font-size:9px">${a.pct}%</span></span>
+        <span style="font-family:'DM Mono',monospace;color:var(--text)">${fmt(a.amount)}</span>
+      </div>`).join('');
+    const monthLbl=(()=>{const[y,mm]=d.periodMonth.split('-');return MONTHS[parseInt(mm)-1].substring(0,3)+' '+y;})();
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${_escapeHtml(d.label)}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);margin-top:2px">Period ${monthLbl} · split by that period's profit share %</div>
+          ${d.notes?`<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:4px">${_escapeHtml(d.notes)}</div>`:''}
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;color:var(--purple)">${fmt(d.totalAmount)}</div>
+          <button class="btn btn-sm" onclick="_deleteOpsDisbursement('${d.id}')" style="color:var(--red);border-color:rgba(224,90,90,0.3);margin-top:4px;font-size:9px">Delete</button>
+        </div>
+      </div>
+      <div style="background:var(--bg);border-radius:6px;padding:8px 14px">${allocRows}</div>
+    </div>`;
+  }).join('');
+}
+
+function _renderOpsAdjustments(){
+  const list=(state.opsAdjustments||[]);
+  if(!list.length) return `<div style="padding:24px;text-align:center;color:var(--text3);font-family:'DM Mono',monospace;font-size:11px;background:var(--bg2);border:1px solid var(--border);border-radius:10px">No adjustments logged. Use these to record ops expenses from your accounting so the running total reconciles.</div>`;
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+    <div style="display:grid;grid-template-columns:110px 1fr 130px 120px 60px;padding:9px 20px;background:var(--bg);border-bottom:1px solid var(--border2)">
+      ${['Date','Description','Category','Amount','']. map(h=>`<span style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)">${h}</span>`).join('')}
+    </div>
+    ${list.map(a=>{
+      const isOut=a.amount<0;
+      return `<div style="display:grid;grid-template-columns:110px 1fr 130px 120px 60px;padding:11px 20px;border-bottom:1px solid var(--border);align-items:center">
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--text3)">${a.entryDate}</span>
+        <span style="font-size:12px;color:var(--text)">${_escapeHtml(a.label)}${a.notes?`<br><span style="font-size:9px;color:var(--text3)">${_escapeHtml(a.notes)}</span>`:''}</span>
+        <span style="font-size:10px;color:var(--text3)">${a.category?_escapeHtml(a.category):'—'}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:13px;color:${isOut?'var(--red)':'var(--green)'};text-align:right">${isOut?'−':'+'}${fmt(Math.abs(a.amount))}</span>
+        <span style="text-align:right"><button onclick="_deleteOpsAdjustment('${a.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕</button></span>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function _loadOpsFundPeriod(){
+  const f=document.getElementById('of-from'), t=document.getElementById('of-to');
+  if(f&&t){ state.opsFundFrom=f.value; state.opsFundTo=t.value; }
+  renderOpsFundView();
+}
+
+function _opsFundQuickRange(kind){
+  const now=new Date();
+  if(kind==='ytd'){ state.opsFundFrom=now.getFullYear()+'-01'; state.opsFundTo=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'); }
+  else if(kind==='m'){ const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'); state.opsFundFrom=ym; state.opsFundTo=ym; }
+  else if(kind==='q'){ const q=Math.floor(now.getMonth()/3); const sm=q*3; state.opsFundFrom=now.getFullYear()+'-'+String(sm+1).padStart(2,'0'); state.opsFundTo=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0'); }
+  renderOpsFundView();
+}
+
+// ── Adjustment modal ──
+function _openOpsAdjustmentModal(){
+  const today=new Date().toISOString().substring(0,10);
+  document.getElementById('ofa-label').value='';
+  document.getElementById('ofa-amount').value='';
+  document.getElementById('ofa-date').value=today;
+  document.getElementById('ofa-category').value='';
+  document.getElementById('ofa-notes').value='';
+  document.getElementById('ofa-direction').value='out';
+  openModal('ops-adjustment-modal');
+}
+
+async function _saveOpsAdjustment(){
+  const label=document.getElementById('ofa-label').value.trim();
+  const rawAmt=parseFloat(document.getElementById('ofa-amount').value);
+  const dir=document.getElementById('ofa-direction').value;
+  const entryDate=document.getElementById('ofa-date').value;
+  const category=document.getElementById('ofa-category').value.trim();
+  const notes=document.getElementById('ofa-notes').value.trim();
+  if(!label||isNaN(rawAmt)||rawAmt<=0){ notify('Description and a positive amount are required'); return; }
+  if(!entryDate){ notify('Date is required'); return; }
+  const amount=dir==='out'?-Math.abs(rawAmt):Math.abs(rawAmt);
+  closeModal('ops-adjustment-modal');
+  try{
+    const saved=await api('POST','/ops-adjustments',{label,amount,entryDate,category:category||null,notes:notes||null});
+    state.opsAdjustments.unshift(saved);
+    notify('Adjustment logged ✓');
+    renderOpsFundView();
+  } catch(e){ notify('Save failed: '+e.message); }
+}
+
+async function _deleteOpsAdjustment(id){
+  if(!confirm('Delete this adjustment?')) return;
+  try{
+    await api('DELETE','/ops-adjustments/'+id);
+    state.opsAdjustments=state.opsAdjustments.filter(a=>a.id!==id);
+    notify('Adjustment deleted');
+    renderOpsFundView();
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
+// ── Disbursement modal ──
+function _openOpsDisbursementModal(){
+  const now=new Date();
+  const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('ofd-label').value='';
+  document.getElementById('ofd-amount').value='';
+  document.getElementById('ofd-period').value=ym;
+  document.getElementById('ofd-notes').value='';
+  _renderOpsDisbursementPreview();
+  openModal('ops-disbursement-modal');
+}
+
+// Live preview of how the entered total splits across active members by their
+// profit share % for the selected period.
+function _renderOpsDisbursementPreview(){
+  const total=parseFloat(document.getElementById('ofd-amount').value)||0;
+  const period=document.getElementById('ofd-period').value;
+  const el=document.getElementById('ofd-preview');
+  if(!el) return;
+  const active=state.team.filter(m=>m.active!==false);
+  const rows=active.map(m=>{
+    const pct=_psRateForMonth(m,period);
+    return {m,pct,amount:Math.round(total*pct/100*100)/100};
+  }).filter(r=>r.pct>0);
+  const allocSum=rows.reduce((s,r)=>s+r.amount,0);
+  const totalPct=rows.reduce((s,r)=>s+r.pct,0);
+  if(!rows.length){ el.innerHTML=`<div style="color:var(--text3);font-size:11px;font-style:italic">No active members have a profit share % for ${period}</div>`; return; }
+  el.innerHTML=`
+    <div style="font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Split preview · ${period} rates</div>
+    ${rows.map(r=>`<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:12px;border-bottom:1px solid var(--border)">
+      <span style="color:var(--text2)">${r.m.name} <span style="color:var(--text3);font-family:'DM Mono',monospace;font-size:9px">${r.pct}%</span></span>
+      <span style="font-family:'DM Mono',monospace;color:var(--gold)">${fmt(r.amount)}</span>
+    </div>`).join('')}
+    <div style="display:flex;justify-content:space-between;padding:8px 0 0;font-size:11px;color:var(--text3)">
+      <span>${totalPct.toFixed(1)}% allocated${Math.abs(totalPct-100)>0.5?' — ⚠ does not total 100%':''}</span>
+      <span style="font-family:'DM Mono',monospace">${fmt(allocSum)}${Math.abs(allocSum-total)>0.5?` of ${fmt(total)}`:''}</span>
+    </div>`;
+}
+
+async function _saveOpsDisbursement(){
+  const label=document.getElementById('ofd-label').value.trim();
+  const total=parseFloat(document.getElementById('ofd-amount').value);
+  const period=document.getElementById('ofd-period').value;
+  const notes=document.getElementById('ofd-notes').value.trim();
+  if(!label||isNaN(total)||total<=0){ notify('Label and a positive total are required'); return; }
+  if(!period){ notify('Period month is required'); return; }
+  const active=state.team.filter(m=>m.active!==false);
+  const allocations=active.map(m=>{
+    const pct=_psRateForMonth(m,period);
+    return {memberId:m.id,memberName:m.name,pct,amount:Math.round(total*pct/100*100)/100,paid:false};
+  }).filter(a=>a.pct>0&&a.amount>0);
+  if(!allocations.length){ notify('No members have a profit share % for that period'); return; }
+  const allocSum=allocations.reduce((s,a)=>s+a.amount,0);
+  if(!confirm(`Disburse ${fmt(total)} as surplus profit share?\n\n${allocations.length} members will receive a total of ${fmt(allocSum)} split by their ${period} profit share rates. This draws down the ops fund and appears in each member's totals.`)) return;
+  closeModal('ops-disbursement-modal');
+  try{
+    const saved=await api('POST','/ops-disbursements',{label,totalAmount:total,periodMonth:period,allocations,notes:notes||null});
+    state.opsDisbursements.unshift(saved);
+    // Refresh pay log locally if it was loaded
+    try{ const pl=await api('GET','/pay-log'); state.payLog=pl; }catch(e){}
+    notify('Surplus disbursement recorded ✓');
+    renderOpsFundView();
+  } catch(e){ notify('Save failed: '+e.message); }
+}
+
+async function _deleteOpsDisbursement(id){
+  if(!confirm('Delete this disbursement? It will be removed from member totals and the pay log.')) return;
+  try{
+    await api('DELETE','/ops-disbursements/'+id);
+    state.opsDisbursements=state.opsDisbursements.filter(d=>d.id!==id);
+    try{ const pl=await api('GET','/pay-log'); state.payLog=pl; }catch(e){}
+    notify('Disbursement deleted');
+    renderOpsFundView();
+  } catch(e){ notify('Delete failed: '+e.message); }
+}
+
 async function renderPayrollView(){
   const el=document.getElementById('payroll-content');
   if(!el) return;
@@ -5262,7 +5599,7 @@ function _buildPayrollBreakdown(from, to, memberFilter){
     const lines=_getMemberProjectBreakdown(m.id, monthFilter, eligibleDeals, projectedDeals);
     const items=lines.map(l=>({
       label:l.label,
-      type:l.kind==='profitShare'?'Profit Share':(l.type==='actual'?'Actual':'Projected'),
+      type:l.kind==='opsDisbursement'?'Surplus':(l.kind==='profitShare'?'Profit Share':(l.type==='actual'?'Actual':'Projected')),
       amount:l.amt,
       paid:l.payKey?!!state.payStatus[l.payKey]:null,
       detail:l.detail||'',
@@ -11789,6 +12126,23 @@ function _getMemberProjectBreakdown(memberId, monthFilter, eligibleDeals, projec
     const amt=Math.round(pool*effPct/100*100)/100;
     if(amt>0) lines.push({label:`PS — ${d.name}`,type:'projected',amt,detail:`${effPct}% of ${fmt(pool)} pool · ${d.client}`,payKey:null,projId:proj?proj.id:null,memberId,kind:'profitShare'});
   });
+  // Ops fund surplus disbursements — allocated share for this member, if the
+  // disbursement's period falls within the current month filter. These are one-time
+  // profit-share distributions of accumulated operations surplus (not deal revenue).
+  (state.opsDisbursements||[]).forEach(disb=>{
+    // Build a synthetic "deal" carrying the disbursement's period month so the
+    // existing monthFilter (which reads closeDate) includes/excludes it correctly.
+    if(monthFilter && !monthFilter({closeDate:disb.periodMonth})) return;
+    const alloc=(disb.allocations||[]).find(a=>a.memberId===memberId);
+    if(!alloc||!(alloc.amount>0)) return;
+    lines.push({
+      label:`Surplus Disbursement — ${disb.label}`,
+      type:'actual',
+      amt:Math.round(alloc.amount*100)/100,
+      detail:`${alloc.pct}% of ${fmt(disb.totalAmount)} ops surplus`,
+      payKey:null, projId:null, memberId, kind:'opsDisbursement',
+    });
+  });
   return lines;
 }
 
@@ -12964,6 +13318,88 @@ initLogin();
       <div class="modal-footer">
         <button class="btn" onclick="closeModal('paylog-modal')">Cancel</button>
         <button class="btn btn-primary" onclick="savePayLogEntry()">Save Entry</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPS ADJUSTMENT MODAL -->
+  <div id="ops-adjustment-modal" class="modal-overlay">
+    <div class="modal" style="max-width:460px">
+      <div class="modal-header">
+        <div class="modal-title">Log Ops Adjustment <span style="font-size:12px;color:var(--text3);font-family:'DM Mono',monospace">outflow or correction</span></div>
+        <button class="modal-close" onclick="closeModal('ops-adjustment-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <input class="form-input" id="ofa-label" type="text" placeholder="e.g. Software subscriptions, Q2 reconciliation">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Direction</label>
+            <select class="form-select" id="ofa-direction">
+              <option value="out">Outflow (−) expense</option>
+              <option value="in">Inflow (+) correction</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Amount ($)</label>
+            <input class="form-input" id="ofa-amount" type="number" min="0" step="0.01" placeholder="0.00">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Date</label>
+            <input class="form-input" id="ofa-date" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Category (optional)</label>
+            <input class="form-input" id="ofa-category" type="text" placeholder="e.g. software, tax">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes (optional)</label>
+          <input class="form-input" id="ofa-notes" type="text" placeholder="Reference or explanation">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('ops-adjustment-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="_saveOpsAdjustment()">Log Adjustment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPS DISBURSEMENT MODAL -->
+  <div id="ops-disbursement-modal" class="modal-overlay">
+    <div class="modal" style="max-width:500px">
+      <div class="modal-header">
+        <div class="modal-title">New Surplus Disbursement <span style="font-size:12px;color:var(--text3);font-family:'DM Mono',monospace">distribute ops fund as profit share</span></div>
+        <button class="modal-close" onclick="closeModal('ops-disbursement-modal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Label</label>
+          <input class="form-input" id="ofd-label" type="text" placeholder="e.g. Q2 2026 Surplus Disbursement">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Total to Disburse ($)</label>
+            <input class="form-input" id="ofd-amount" type="number" min="0" step="0.01" placeholder="0.00" oninput="_renderOpsDisbursementPreview()">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Period (rate basis)</label>
+            <input class="form-input" id="ofd-period" type="month" oninput="_renderOpsDisbursementPreview()">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Notes (optional)</label>
+          <input class="form-input" id="ofd-notes" type="text" placeholder="Reference or explanation">
+        </div>
+        <div id="ofd-preview" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:8px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('ops-disbursement-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="_saveOpsDisbursement()">Record Disbursement</button>
       </div>
     </div>
   </div>
