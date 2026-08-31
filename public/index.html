@@ -11796,6 +11796,16 @@ function calcActualEarnings(filterFn){
     });
   });
 
+  // Ops fund surplus disbursements — one-time profit-share distributions of
+  // accumulated operations surplus. Counted as actual profit share for the
+  // disbursement's period so they roll into member totals wherever this runs.
+  (state.opsDisbursements||[]).forEach(disb=>{
+    if(filterFn && !filterFn({closeDate:disb.periodMonth})) return;
+    (disb.allocations||[]).forEach(a=>{
+      if(psPay[a.memberId]!==undefined && a.amount>0) psPay[a.memberId]+=a.amount;
+    });
+  });
+
   return{prodPay,feePay,psPay,eligibleDeals};
 }
 
