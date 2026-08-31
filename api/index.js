@@ -329,6 +329,7 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       teamRes, dealsRes, projectsRes, tasksRes,
       expensesRes, payStatusRes, psStatusRes, payLogRes,
       clientsRes, delivTypesRes, delivsRes, taskDelivsRes,
+      opsAdjRes, opsDisbRes,
     ] = await Promise.all([
       supabase.from('team_members').select('id,name,role,color,profit_share_pct,ps_rate_history,month_cap,active,auth_role').order('name'),
       supabase.from('deals').select('*').order('created_at', { ascending: false }),
@@ -342,11 +343,16 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       supabase.from('deliverable_types').select('id,name,project_id,active,publishable,default_assignee_id,default_est_hours,default_tag').eq('active', true).order('name'),
       supabase.from('deliverables').select('*').order('sort_order'),
       supabase.from('task_deliverables').select('*'),
+      supabase.from('ops_adjustments').select('*').order('entry_date', { ascending: false }),
+      supabase.from('ops_disbursements').select('*').order('created_at', { ascending: false }),
     ]);
 
     for (const r of [teamRes, dealsRes, projectsRes, tasksRes, expensesRes, payStatusRes, psStatusRes, payLogRes, clientsRes, delivTypesRes, delivsRes, taskDelivsRes]) {
       if (r.error) throw r.error;
     }
+    // Ops fund tables are optional — if the migration hasn't run yet, don't hard-fail bootstrap.
+    const opsAdjustments = opsAdjRes.error ? [] : (opsAdjRes.data || []);
+    const opsDisbursements = opsDisbRes.error ? [] : (opsDisbRes.data || []);
 
     // Reshape payStatus into the key-value map the frontend expects.
     // Profit-share rows (pay_key contains '_ps_') also expose their locked ps_pct_snapshot
@@ -383,6 +389,8 @@ app.get('/api/bootstrap', requireAuth, async (req, res) => {
       deliverableTypes:     delivTypesRes.data.map(mapDeliverableType),
       deliverables:         delivsRes.data.map(mapDeliverable),
       taskDeliverables:     taskDelivsRes.data.map(r => ({ taskId: r.task_id, deliverableId: r.deliverable_id })),
+      opsAdjustments:       opsAdjustments.map(mapOpsAdjustment),
+      opsDisbursements:     opsDisbursements.map(mapOpsDisbursement),
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -929,6 +937,99 @@ app.delete('/api/pay-log/:id', requireAuth, requireAdmin, async (req, res) => {
       member: entry?.member_name, amount: entry?.amount
     });
     const { error } = await supabase.from('pay_log').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── OPS FUND ENDPOINTS ──────────────────────────────────────────────────────
+
+// Manual adjustments (outflows / corrections against the ops fund)
+app.get('/api/ops-adjustments', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ops_adjustments').select('*').order('entry_date', { ascending: false });
+    if (error) throw error;
+    res.json(data.map(mapOpsAdjustment));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ops-adjustments', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { label, amount, entryDate, category, notes } = req.body;
+    if (!label || amount === undefined || amount === null || isNaN(Number(amount))) {
+      return res.status(400).json({ error: 'Label and a numeric amount are required.' });
+    }
+    if (!entryDate) return res.status(400).json({ error: 'Entry date is required.' });
+    const { data, error } = await supabase.from('ops_adjustments').insert({
+      label, amount: Number(amount), entry_date: entryDate,
+      category: category || null, notes: notes || null, created_by: req.user.sub,
+    }).select().single();
+    if (error) throw error;
+    await auditLog(req.user, 'CREATE_OPS_ADJUSTMENT', 'ops_adjustments', data.id, { label, amount: Number(amount) });
+    res.json(mapOpsAdjustment(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ops-adjustments/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: entry } = await supabase.from('ops_adjustments').select('*').eq('id', req.params.id).single();
+    await auditLog(req.user, 'DELETE_OPS_ADJUSTMENT', 'ops_adjustments', req.params.id, { label: entry?.label, amount: entry?.amount });
+    const { error } = await supabase.from('ops_adjustments').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Surplus disbursements — distribute ops fund to the team as profit share
+app.get('/api/ops-disbursements', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ops_disbursements').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data.map(mapOpsDisbursement));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/ops-disbursements', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { label, totalAmount, periodMonth, allocations, notes } = req.body;
+    if (!label || !totalAmount || isNaN(Number(totalAmount))) {
+      return res.status(400).json({ error: 'Label and a numeric total amount are required.' });
+    }
+    if (!periodMonth) return res.status(400).json({ error: 'Period month is required.' });
+    if (!Array.isArray(allocations) || !allocations.length) {
+      return res.status(400).json({ error: 'At least one member allocation is required.' });
+    }
+    const { data, error } = await supabase.from('ops_disbursements').insert({
+      label, total_amount: Number(totalAmount), period_month: periodMonth,
+      allocations, notes: notes || null, created_by: req.user.sub,
+    }).select().single();
+    if (error) throw error;
+    // Log each member allocation to the pay log so it appears in payment history
+    for (const a of allocations) {
+      try {
+        await supabase.from('pay_log').insert({
+          member_id: a.memberId, member_name: a.memberName,
+          pay_type: 'ops_disbursement', amount: a.amount,
+          notes: `${label} — ${a.pct}% share`,
+          is_manual: true, source_key: `opsdisb_${data.id}_${a.memberId}`,
+          paid_at: new Date().toISOString(),
+        });
+      } catch (le) { /* non-critical — pay log entry */ }
+    }
+    await auditLog(req.user, 'CREATE_OPS_DISBURSEMENT', 'ops_disbursements', data.id, {
+      label, total: Number(totalAmount), members: allocations.length
+    });
+    res.json(mapOpsDisbursement(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/ops-disbursements/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: entry } = await supabase.from('ops_disbursements').select('*').eq('id', req.params.id).single();
+    // Remove the linked pay log entries
+    await supabase.from('pay_log').delete().like('source_key', `opsdisb_${req.params.id}_%`);
+    await auditLog(req.user, 'DELETE_OPS_DISBURSEMENT', 'ops_disbursements', req.params.id, { label: entry?.label });
+    const { error } = await supabase.from('ops_disbursements').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2402,6 +2503,32 @@ app.get('/api/portal/data', requirePortalAuth, async (req, res) => {
 });
 
 
+
+function mapOpsAdjustment(a) {
+  return {
+    id: a.id,
+    label: a.label,
+    amount: Number(a.amount),
+    entryDate: a.entry_date,
+    category: a.category || null,
+    notes: a.notes || null,
+    createdBy: a.created_by || null,
+    createdAt: a.created_at,
+  };
+}
+
+function mapOpsDisbursement(d) {
+  return {
+    id: d.id,
+    label: d.label,
+    totalAmount: Number(d.total_amount),
+    periodMonth: d.period_month,
+    allocations: Array.isArray(d.allocations) ? d.allocations : [],
+    notes: d.notes || null,
+    createdBy: d.created_by || null,
+    createdAt: d.created_at,
+  };
+}
 
 function mapTeamMember(m) {
   return {
