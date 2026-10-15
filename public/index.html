@@ -5342,6 +5342,7 @@ async function openBoard(boardId){
     state.activeBoard=data.board;
     state.activeBoardItems=data.items||[];
     state.boardLock=data.lock||null;
+    _boardUndoReset();   // fresh undo history per board-open
     if(typeof _renderBoardCanvas==='function'){ _renderBoardCanvas(); }
     else if(root){ root.innerHTML=`<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text3)">Canvas coming in the next build stage. Board "${_escapeHtml(data.board.name)}" loaded with ${data.items.length} items.</div>`; }
   }catch(e){
@@ -5394,6 +5395,8 @@ function _renderBoardCanvas(){
           <button class="bt-btn" style="border:none;border-radius:0;background:${state.boardView==='canvas'?'var(--bg4)':'transparent'}" onclick="_boardSetView('canvas')">Canvas</button>
           <button class="bt-btn" style="border:none;border-radius:0;background:${state.boardView==='sequence'?'var(--bg4)':'transparent'}" onclick="_boardSetView('sequence')">Storyboard</button>
         </div>
+        ${_boardCanInteract?`<button class="bt-btn" id="board-undo-btn" title="Undo (⌘Z)" style="opacity:0.4;pointer-events:none" onclick="_boardUndo()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 015 5v0a5 5 0 01-5 5H9"/></svg></button>
+        <button class="bt-btn" id="board-redo-btn" title="Redo (⌘⇧Z)" style="opacity:0.4;pointer-events:none" onclick="_boardRedo()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 00-5 5v0a5 5 0 005 5h6"/></svg></button>`:''}
         <button class="bt-btn" onclick="_boardZoom(-1)">−</button>
         <span id="board-zoom-lbl" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);min-width:38px;text-align:center">${Math.round(state.boardCanvas.zoom*100)}%</span>
         <button class="bt-btn" onclick="_boardZoom(1)">+</button>
@@ -5428,6 +5431,7 @@ function _renderBoardCanvas(){
   _boardBindViewport();
   _boardRenderItems();
   _boardApplyCamera();
+  _boardUpdateUndoButtons();   // reflect current undo/redo availability on the rebuilt toolbar
   // Claim the lock + start heartbeat only once per board-open (not on every re-render)
   if(_boardCanInteract && !(state.boardLock&&state.boardLock.mine)) _boardStartHeartbeatIfNeeded();
   else if(_boardCanInteract && state.boardLock&&state.boardLock.mine) _boardStartHeartbeat();
@@ -5519,10 +5523,18 @@ function _boardBindViewport(){
 
 function _boardSetView(v){ state.boardView=v; _boardRenderItems(); if(_boardCanInteract) api('PATCH','/boards/'+state.activeBoard.id,{defaultView:v}).catch(()=>{}); }
 
-// Keyboard: delete selected item (when not editing text), Esc deselects
+// Keyboard: delete selected item (when not editing text), Esc deselects, undo/redo
 document.addEventListener('keydown',e=>{
   if(state.currentPage!=='board-canvas'||!state.activeBoard) return;
-  if(document.activeElement&&document.activeElement.isContentEditable) return;
+  const editingText = (document.activeElement&&document.activeElement.isContentEditable);
+  // Undo/redo — only when NOT typing in a card (native undo handles in-card text)
+  if(!editingText && (e.metaKey||e.ctrlKey) && (e.key==='z'||e.key==='Z')){
+    e.preventDefault();
+    if(e.shiftKey) _boardRedo(); else _boardUndo();
+    return;
+  }
+  if(!editingText && (e.metaKey||e.ctrlKey) && (e.key==='y'||e.key==='Y')){ e.preventDefault(); _boardRedo(); return; }
+  if(editingText) return;
   const tag=(document.activeElement&&document.activeElement.tagName)||'';
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
   if((e.key==='Delete'||e.key==='Backspace')&&_boardSel&&_boardCanInteract){ e.preventDefault(); _boardDeleteItem(_boardSel); }
@@ -5593,7 +5605,9 @@ function _boardItemEl(it){
 
 // Inner HTML per card type
 function _boardItemInner(it){
-  const ed=_boardCanInteract?'contenteditable="true"':'';
+  // Editable fields start NON-editable so a single click drags the card; double-click
+  // (wired in _boardWireEditable) flips contentEditable on. 'data-editable' marks them.
+  const ed=_boardCanInteract?'data-editable="1"':'';
   switch(it.itemType){
     case 'note':{
       const sz=(it.meta&&it.meta.fontSize)||14;
@@ -5676,6 +5690,58 @@ function _boardShowControls(id){
 }
 
 // ── Drag ──
+// ═══════════════ UNDO / REDO (session-scoped, 10 steps) ═══════════════
+// Each stack entry is { undo:fn, redo:fn, label }. Applying an undo pushes the
+// matching redo onto the redo stack, and vice-versa. Lives per board-open only.
+const BOARD_UNDO_MAX=10;
+let _boardUndoStack=[];
+let _boardRedoStack=[];
+function _boardUndoReset(){ _boardUndoStack=[]; _boardRedoStack=[]; _boardUpdateUndoButtons(); }
+function _boardPushUndo(entry){
+  _boardUndoStack.push(entry);
+  if(_boardUndoStack.length>BOARD_UNDO_MAX) _boardUndoStack.shift();
+  _boardRedoStack=[];            // a new action invalidates the redo chain
+  _boardUpdateUndoButtons();
+}
+async function _boardUndo(){
+  if(!_boardCanInteract||!_boardUndoStack.length) return;
+  const entry=_boardUndoStack.pop();
+  try{ await entry.undo(); _boardRedoStack.push(entry); }catch(e){ notify('Undo failed: '+(e.message||'')); }
+  _boardUpdateUndoButtons();
+}
+async function _boardRedo(){
+  if(!_boardCanInteract||!_boardRedoStack.length) return;
+  const entry=_boardRedoStack.pop();
+  try{ await entry.redo(); _boardUndoStack.push(entry); }catch(e){ notify('Redo failed: '+(e.message||'')); }
+  _boardUpdateUndoButtons();
+}
+function _boardUpdateUndoButtons(){
+  const u=document.getElementById('board-undo-btn'), r=document.getElementById('board-redo-btn');
+  if(u){ u.style.opacity=_boardUndoStack.length?'1':'0.4'; u.style.pointerEvents=_boardUndoStack.length?'auto':'none'; }
+  if(r){ r.style.opacity=_boardRedoStack.length?'1':'0.4'; r.style.pointerEvents=_boardRedoStack.length?'auto':'none'; }
+}
+// Helpers to recreate / remove items during undo-redo, keeping state + DOM in sync.
+async function _boardRecreateItem(payload){
+  const item=await api('POST','/boards/'+state.activeBoard.id+'/items',payload.body);
+  if(payload.imageUrl) item.imageUrl=payload.imageUrl;
+  state.activeBoardItems.push(item);
+  _boardRenderItems();
+  return item;
+}
+async function _boardRemoveItemSilent(id){
+  try{ await api('DELETE','/boards/'+state.activeBoard.id+'/items/'+id); }catch(e){}
+  state.activeBoardItems=state.activeBoardItems.filter(i=>i.id!==id);
+  if(_boardSel===id) _boardSel=null;
+  _boardRenderItems();
+}
+// Snapshot the fields needed to recreate an item (minus id)
+function _boardItemPayload(it){
+  return { body:{ itemType:it.itemType, x:Math.round(it.x), y:Math.round(it.y), w:Math.round(it.w), h:Math.round(it.h),
+    z:it.z||0, rotation:it.rotation||0, seqOrder:it.seqOrder, title:it.title||null, body:it.body||null,
+    color:it.color||null, url:it.url||null, storagePath:it.storagePath||null, imageW:it.imageW||null,
+    imageH:it.imageH||null, taskId:it.taskId||null, meta:it.meta||{} }, imageUrl:it.imageUrl||null };
+}
+
 function _boardStartDrag(e,it,el){
   e.preventDefault();
   const cam=_boardCam();
@@ -5689,23 +5755,41 @@ function _boardStartDrag(e,it,el){
   }
   function up(){
     window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
-    if(moved) _boardPersistGeom(it);
+    if(moved){
+      const id=it.id, px=it.x, py=it.y;
+      _boardPushUndo({ label:'move',
+        undo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.x=ox;t.y=oy; _boardRenderItems(); await _boardPersistGeomSilent(t); },
+        redo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.x=px;t.y=py; _boardRenderItems(); await _boardPersistGeomSilent(t); },
+      });
+      _boardPersistGeom(it);
+    }
   }
   window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+}
+function _boardPersistGeomSilent(it){
+  return api('PATCH','/boards/'+state.activeBoard.id+'/items/'+it.id,{x:Math.round(it.x),y:Math.round(it.y),w:Math.round(it.w),h:Math.round(it.h)}).catch(()=>{});
 }
 // ── Resize ──
 function _boardStartResize(e,it,el){
   e.preventDefault();
   const cam=_boardCam();
   const startX=e.clientX,startY=e.clientY, ow=it.w, oh=it.h;
+  let changed=false;
   function mv(ev){
     const dw=(ev.clientX-startX)/cam.zoom, dh=(ev.clientY-startY)/cam.zoom;
     it.w=Math.max(60,ow+dw); it.h=Math.max(40,oh+dh);
     el.style.width=it.w+'px'; el.style.height=it.h+'px';
-    // keep swatch hex readable; keep image aspect optional (free resize)
+    changed=true;
   }
   function up(){
     window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+    if(changed){
+      const id=it.id, nw=it.w, nh=it.h;
+      _boardPushUndo({ label:'resize',
+        undo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.w=ow;t.h=oh; _boardRenderItems(); await _boardPersistGeomSilent(t); },
+        redo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.w=nw;t.h=nh; _boardRenderItems(); await _boardPersistGeomSilent(t); },
+      });
+    }
     _boardPersistGeom(it);
   }
   window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
@@ -5717,23 +5801,46 @@ function _boardPersistGeom(it){
 
 // ── Editable text fields (plain + rich) ──
 function _boardWireEditable(el,it){
-  el.querySelectorAll('[contenteditable=true][data-field]').forEach(f=>{
+  el.querySelectorAll('[data-editable="1"][data-field]').forEach(f=>{
     const field=f.getAttribute('data-field');
     const isRich=f.getAttribute('data-rich')==='1';
-    f.addEventListener('mousedown',e=>e.stopPropagation()); // don't start drag when clicking into text
-    f.addEventListener('focus',()=>{ if(isRich) _boardShowFmt(f); });
+    f.style.cursor='text';
+    let editStartVal=null;    // value captured when editing begins (for undo)
+    // Double-click enters edit mode; a single click/drag moves the card instead.
+    f.addEventListener('dblclick',e=>{
+      e.stopPropagation();
+      editStartVal = field==='title'? (it.title||'') : (it.body||'');
+      f.setAttribute('contenteditable','true');
+      f.focus();
+      // place caret where clicked
+      try{
+        const sel=window.getSelection(); const range=document.caretRangeFromPoint?document.caretRangeFromPoint(e.clientX,e.clientY):null;
+        if(range){ sel.removeAllRanges(); sel.addRange(range); } else { document.execCommand('selectAll',false,null); sel.collapseToEnd(); }
+      }catch(err){}
+      if(isRich) _boardShowFmt(f);
+    });
+    // While editing, don't let mousedown bubble up to start a drag.
+    f.addEventListener('mousedown',e=>{ if(f.getAttribute('contenteditable')==='true') e.stopPropagation(); });
     f.addEventListener('blur',()=>{
       _boardHideFmt();
+      f.removeAttribute('contenteditable');       // back to drag-first state
       let val = isRich ? _boardSanitize(f.innerHTML) : f.textContent.trim();
       if(isRich) f.innerHTML=val;
       const cur = field==='title'? (it.title||'') : (it.body||'');
       if(val!==cur){
+        const before = editStartVal!=null? editStartVal : cur;
         if(field==='title') it.title=val; else it.body=val;
         const patch={}; patch[field]=val;
         api('PATCH','/boards/'+state.activeBoard.id+'/items/'+it.id,patch).catch(()=>{});
+        // One undo entry per editing session (not per keystroke — native undo covers that)
+        const itemId=it.id, fld=field, after=val;
+        _boardPushUndo({ label:'text',
+          undo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===itemId); if(!t)return; if(fld==='title')t.title=before;else t.body=before; _boardRenderItems(); const p={};p[fld]=before; await api('PATCH','/boards/'+state.activeBoard.id+'/items/'+itemId,p).catch(()=>{}); },
+          redo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===itemId); if(!t)return; if(fld==='title')t.title=after;else t.body=after; _boardRenderItems(); const p={};p[fld]=after; await api('PATCH','/boards/'+state.activeBoard.id+'/items/'+itemId,p).catch(()=>{}); },
+        });
       }
+      editStartVal=null;
     });
-    // paste as plain-ish for rich fields (avoid importing styled junk)
     if(isRich){
       f.addEventListener('paste',e=>{
         e.preventDefault();
@@ -5808,6 +5915,12 @@ async function _boardAdd(type,extra){
     state.activeBoardItems.push(item);
     _boardSel=item.id;
     _boardRenderItems();
+    // Undo an add = delete it; redo = recreate from its payload
+    let payload=_boardItemPayload(item);
+    _boardPushUndo({ label:'add',
+      undo:async()=>{ await _boardRemoveItemSilent(item.id); },
+      redo:async()=>{ const ni=await _boardRecreateItem(payload); payload=_boardItemPayload(ni); },
+    });
   }catch(e){ notify('Add failed: '+(e.message||'')); }
 }
 function _boardAddLinkPrompt(){
@@ -5850,24 +5963,68 @@ async function _boardUploadFiles(files,wx,wy){
       state.activeBoardItems.push(item);
       offset+=24;
       _boardRenderItems();
+      // Undo = delete the image; redo = re-upload the cached pixels + recreate.
+      const cachedDataUrl=dataUrl, cmime=mime, iw=w, ih=h;
+      let payload=_boardItemPayload(item);
+      let curId=item.id;
+      _boardPushUndo({ label:'image',
+        undo:async()=>{ await _boardRemoveItemSilent(curId); },
+        redo:async()=>{
+          let p={...payload, body:{...payload.body}};
+          try{ const u2=await api('POST','/boards/'+state.activeBoard.id+'/upload',{dataUrl:cachedDataUrl,mime:cmime,imageW:iw,imageH:ih}); p.body.storagePath=u2.storagePath; p.imageUrl=u2.imageUrl; }catch(e){}
+          const ni=await _boardRecreateItem(p); curId=ni.id; payload=_boardItemPayload(ni);
+        },
+      });
     }catch(e){ notify('Upload failed: '+(e.message||'')); }
   }
 }
-// Resize/compress an image file in-browser to keep storage + egress small
+// Resize/compress an image file in-browser to keep storage + egress small and to
+// stay comfortably under the API body limit. GIFs are passed through (animation
+// would be lost if re-encoded); everything else is re-encoded as JPEG with
+// adaptive quality that steps down until the payload is small enough.
 function _boardCompressImage(file){
   return new Promise((resolve,reject)=>{
+    // Preserve animated GIFs as-is (re-encoding would lose animation). Guard size:
+    // a GIF over ~3 MB would exceed the serverless body cap, so reject with a clear note.
+    if(file.type==='image/gif'){
+      if(file.size>3*1024*1024){ reject(new Error('GIF is too large (over 3 MB). Try a smaller/shorter GIF.')); return; }
+      const r=new FileReader();
+      r.onload=()=>{
+        const im=new Image();
+        im.onload=()=>resolve({dataUrl:r.result,w:im.naturalWidth,h:im.naturalHeight,mime:'image/gif'});
+        im.onerror=()=>resolve({dataUrl:r.result,w:null,h:null,mime:'image/gif'});
+        im.src=r.result;
+      };
+      r.onerror=()=>reject(new Error('Could not read image'));
+      r.readAsDataURL(file);
+      return;
+    }
     const img=new Image();
     const url=URL.createObjectURL(file);
     img.onload=()=>{
       URL.revokeObjectURL(url);
-      const MAX=2000; let w=img.naturalWidth,h=img.naturalHeight;
+      const MAX=1600; let w=img.naturalWidth,h=img.naturalHeight;
       if(w>MAX||h>MAX){ if(w>=h){ h=Math.round(h*MAX/w); w=MAX; } else { w=Math.round(w*MAX/h); h=MAX; } }
       const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
-      canvas.getContext('2d').drawImage(img,0,0,w,h);
-      const isPng=file.type==='image/png';
-      const mime=isPng?'image/png':'image/jpeg';
-      const dataUrl=canvas.toDataURL(mime,isPng?undefined:0.85);
-      resolve({dataUrl,w,h,mime});
+      const ctx=canvas.getContext('2d');
+      // White matte so transparent PNGs don't turn black when flattened to JPEG
+      ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,w,h);
+      ctx.drawImage(img,0,0,w,h);
+      // Step quality (then dimensions) down until the base64 payload is under ~3.5 MB.
+      // This keeps us safely under Vercel's serverless request-body cap (~4.5 MB),
+      // not just the Express limit.
+      const LIMIT=3.5*1024*1024;
+      let q=0.82, dataUrl=canvas.toDataURL('image/jpeg',q);
+      while(dataUrl.length>LIMIT && q>0.35){ q-=0.1; dataUrl=canvas.toDataURL('image/jpeg',q); }
+      // If still too big at low quality, shrink dimensions and retry
+      while(dataUrl.length>LIMIT && canvas.width>700){
+        canvas.width=Math.round(canvas.width*0.8); canvas.height=Math.round(canvas.height*0.8);
+        const c2=canvas.getContext('2d'); c2.fillStyle='#ffffff'; c2.fillRect(0,0,canvas.width,canvas.height);
+        c2.drawImage(img,0,0,canvas.width,canvas.height);
+        w=canvas.width; h=canvas.height;
+        dataUrl=canvas.toDataURL('image/jpeg',0.72);
+      }
+      resolve({dataUrl,w,h,mime:'image/jpeg'});
     };
     img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('Could not read image')); };
     img.src=url;
@@ -5877,10 +6034,42 @@ function _boardCompressImage(file){
 // ── Delete ──
 async function _boardDeleteItem(id){
   if(!_boardCanInteract) return;
+  const it=state.activeBoardItems.find(i=>i.id===id);
+  const payload=it?_boardItemPayload(it):null;
+  // For images, the storage object is purged on delete — cache the pixels so undo
+  // can re-upload. Best-effort: if the fetch fails, undo recreates a placeholder.
+  let cachedImageDataUrl=null;
+  if(it&&it.itemType==='image'&&it.imageUrl){
+    try{
+      const resp=await fetch(it.imageUrl);
+      const blob=await resp.blob();
+      cachedImageDataUrl=await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>res(null); r.readAsDataURL(blob); });
+    }catch(e){}
+  }
   try{ await api('DELETE','/boards/'+state.activeBoard.id+'/items/'+id); }catch(e){}
   state.activeBoardItems=state.activeBoardItems.filter(i=>i.id!==id);
   if(_boardSel===id) _boardSel=null;
   _boardRenderItems();
+  if(payload){
+    // Undo a delete = recreate the item; redo = delete the recreated one.
+    const recreate=async()=>{
+      let p={...payload, body:{...payload.body}};
+      if(p.body.itemType==='image'&&cachedImageDataUrl){
+        // re-upload the cached pixels to get a fresh storage path + url
+        try{
+          const up=await api('POST','/boards/'+state.activeBoard.id+'/upload',{dataUrl:cachedImageDataUrl,mime:'image/jpeg',imageW:p.body.imageW,imageH:p.body.imageH});
+          p.body.storagePath=up.storagePath; p.imageUrl=up.imageUrl;
+        }catch(e){}
+      }
+      const ni=await _boardRecreateItem(p);
+      return ni;
+    };
+    let recreatedId=null;   // per-entry closure: survives across this undo/redo pair
+    _boardPushUndo({ label:'delete',
+      undo:async()=>{ const ni=await recreate(); recreatedId=ni.id; },
+      redo:async()=>{ if(recreatedId) await _boardRemoveItemSilent(recreatedId); },
+    });
+  }
 }
 
 // ── Rename board ──
@@ -5919,7 +6108,7 @@ function _boardRenderSequence(world){
     el.innerHTML=`<div class="bitem-seq" style="width:100%;height:100%">
         <div class="bsq-num">${i+1}</div>
         <div class="bsq-img" style="background-image:${it.imageUrl?`url('${it.imageUrl}')`:'none'}"></div>
-        <div class="bsq-cap" ${_boardCanInteract?'contenteditable="true"':''} data-field="title" data-plain="1">${_escapeHtml(cap)}</div>
+        <div class="bsq-cap" ${_boardCanInteract?'data-editable="1"':''} data-field="title" data-plain="1">${_escapeHtml(cap)}</div>
       </div>`;
     el.addEventListener('mousedown',e=>{ if(e.target.isContentEditable) return; _boardSelect(it.id); if(_boardCanInteract) _boardSeqDrag(e,it,seq); });
     if(_boardCanInteract){
@@ -6043,23 +6232,77 @@ function _boardItemControls(it){
   const curColor=it.color||'#4cbfc9';
   const curSize=(it.meta&&it.meta.fontSize)||(it.itemType==='heading'?28:it.itemType==='note'?14:13);
   return `<div class="bitem-ctl" style="position:absolute;top:-40px;left:0;display:flex;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:7px;padding:4px 6px;box-shadow:0 4px 14px rgba(0,0,0,0.4);z-index:7" onmousedown="event.stopPropagation()">
-    ${hasColor?`<input type="color" value="${curColor}" title="Color" style="width:26px;height:24px;padding:0;border:none;background:none;cursor:pointer" oninput="_boardSetColor('${it.id}',this.value)">`:''}
+    ${hasColor?`<input type="color" value="${curColor}" data-oldcolor="${curColor}" title="Color" style="width:26px;height:24px;padding:0;border:none;background:none;cursor:pointer" oninput="_boardSetColor('${it.id}',this.value)" onchange="_boardColorCommitted('${it.id}',this)">`:''}
     ${hasSize?`<button class="bt-btn" style="padding:3px 7px" onclick="_boardSetSize('${it.id}',-2)">A−</button><button class="bt-btn" style="padding:3px 7px" onclick="_boardSetSize('${it.id}',2)">A+</button>`:''}
   </div>`;
 }
+// Live color update WITHOUT re-rendering the board (re-rendering would destroy the
+// color input mid-drag and snap it shut). We mutate the selected card's DOM in place,
+// then persist on a debounce.
 function _boardSetColor(id,hex){
   const it=state.activeBoardItems.find(i=>i.id===id); if(!it) return;
   it.color=hex;
-  _boardRenderItems();
-  api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{color:hex}).catch(()=>{});
+  const el=document.querySelector('.bitem[data-id="'+id+'"]');
+  if(el){
+    if(it.itemType==='swatch'){
+      const chip=el.querySelector('.bs-chip'); if(chip) chip.style.background=hex;
+      const hx=el.querySelector('.bs-hex'); if(hx) hx.textContent=hex.toUpperCase();
+    } else if(it.itemType==='note'){
+      const note=el.querySelector('.bitem-note'); if(note){ note.style.background=_boardBg(hex); note.style.borderColor=hex; }
+    } else if(it.itemType==='heading'){
+      const t=el.querySelector('.bh-text'); if(t) t.style.color=hex;
+    } else if(it.itemType==='text'){
+      const t=el.querySelector('.btx-text'); if(t) t.style.color=hex;
+    } else if(it.itemType==='frame'){
+      const fr=el.querySelector('.bitem-frame'); if(fr) fr.style.borderColor=hex;
+      const lbl=el.querySelector('.bf-label'); // label keeps its own color
+    }
+  }
+  clearTimeout(_boardSetColor._t);
+  _boardSetColor._t=setTimeout(()=>{
+    api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{color:hex}).catch(()=>{});
+  },400);
+}
+// Fires once when the color picker closes — record a single undo for the whole change.
+function _boardColorCommitted(id,inputEl){
+  const oldColor=inputEl.getAttribute('data-oldcolor');
+  const newColor=inputEl.value;
+  inputEl.setAttribute('data-oldcolor',newColor);
+  if(oldColor===newColor) return;
+  _boardPushUndo({ label:'color',
+    undo:async()=>{ _boardSetColor(id,oldColor); await api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{color:oldColor}).catch(()=>{}); },
+    redo:async()=>{ _boardSetColor(id,newColor); await api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{color:newColor}).catch(()=>{}); },
+  });
+}
+function _boardApplySizeDom(id,nv,type){
+  const el=document.querySelector('.bitem[data-id="'+id+'"]'); if(!el) return;
+  if(type==='note'){
+    const ti=el.querySelector('.bn-title'); if(ti) ti.style.fontSize=(nv+1)+'px';
+    const bo=el.querySelector('.bn-body'); if(bo) bo.style.fontSize=(nv-1)+'px';
+  } else if(type==='heading'){
+    const t=el.querySelector('.bh-text'); if(t) t.style.fontSize=nv+'px';
+  } else if(type==='text'){
+    const t=el.querySelector('.btx-text'); if(t) t.style.fontSize=nv+'px';
+  }
+}
+function _boardPersistSize(id,meta){
+  clearTimeout(_boardPersistSize['_t'+id]);
+  _boardPersistSize['_t'+id]=setTimeout(()=>{ api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{meta}).catch(()=>{}); },400);
 }
 function _boardSetSize(id,delta){
   const it=state.activeBoardItems.find(i=>i.id===id); if(!it) return;
   const base=(it.meta&&it.meta.fontSize)||(it.itemType==='heading'?28:it.itemType==='note'?14:13);
   const nv=Math.max(9,Math.min(72,base+delta));
+  if(nv===base) return;
   it.meta=it.meta||{}; it.meta.fontSize=nv;
-  _boardRenderItems();
-  api('PATCH','/boards/'+state.activeBoard.id+'/items/'+id,{meta:it.meta}).catch(()=>{});
+  _boardApplySizeDom(id,nv,it.itemType);
+  _boardPersistSize(id,it.meta);
+  const type=it.itemType;
+  _boardPushUndo({ label:'size',
+    undo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.meta=t.meta||{}; t.meta.fontSize=base; _boardApplySizeDom(id,base,type); _boardPersistSize(id,t.meta); },
+    redo:async()=>{ const t=state.activeBoardItems.find(i=>i.id===id); if(!t)return; t.meta=t.meta||{}; t.meta.fontSize=nv; _boardApplySizeDom(id,nv,type); _boardPersistSize(id,t.meta); },
+  });
+  return;
 }
 
 function renderOpsFundView(){
