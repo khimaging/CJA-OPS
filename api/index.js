@@ -4,7 +4,7 @@ const cors      = require('cors');
 const bcrypt    = require('bcryptjs');
 const jwt       = require('jsonwebtoken');
 const supabase  = require('../lib/supabase');
-const { signToken, requireAuth, requireAdmin, requireCanDelete } = require('../lib/auth');
+const { signToken, verifyToken, requireAuth, requireAdmin, requireCanDelete } = require('../lib/auth');
 const totpLib = require('../lib/totp');
 
 const app  = express();
@@ -1395,6 +1395,21 @@ app.post('/api/boards/:id/unlock', requireAuth, async (req, res) => {
       .delete().eq('board_id', req.params.id).eq('holder_id', req.user.sub);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Beacon unlock — called from beforeunload via navigator.sendBeacon, which cannot
+// set an Authorization header, so the JWT is passed in the body. Best-effort; the
+// 90s heartbeat-staleness model is the real safety net if this never arrives.
+app.post('/api/boards/:id/unlock-beacon', async (req, res) => {
+  try {
+    const token = req.body && req.body.token;
+    if (!token) return res.status(204).end();
+    let user;
+    try { user = verifyToken(token); } catch (e) { return res.status(204).end(); }
+    await supabase.from('board_locks')
+      .delete().eq('board_id', req.params.id).eq('holder_id', user.sub);
+    res.status(204).end();
+  } catch (e) { res.status(204).end(); }
 });
 
 // ─── AUDIT LOG ENDPOINT ──────────────────────────────────────────────────────
