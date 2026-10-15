@@ -1035,6 +1035,368 @@ app.delete('/api/ops-disbursements/:id', requireAuth, requireAdmin, async (req, 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CREATIVE BOARDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Helper: attach a signed image URL to an item that has a storage_path.
+// Signed URLs are time-limited; the frontend refetches a board if they expire.
+async function _attachImageUrl(item) {
+  if (!item.storage_path) return item;
+  try {
+    const { data } = await supabase.storage
+      .from('board-images')
+      .createSignedUrl(item.storage_path, 60 * 60 * 6); // 6h
+    item.imageUrl = data ? data.signedUrl : null;
+  } catch (e) { item.imageUrl = null; }
+  return item;
+}
+
+// Compute lock state for a board: returns { locked, holder, stale } where a
+// stale lock (no heartbeat within the window) is treated as available.
+function _lockState(lockRow, forUserId) {
+  if (!lockRow) return { locked: false };
+  const age = Date.now() - new Date(lockRow.last_heartbeat).getTime();
+  const stale = age > BOARD_LOCK_STALE_MS;
+  const mine = lockRow.holder_id === forUserId;
+  return {
+    locked: !stale && !mine,
+    stale,
+    mine,
+    holderId: lockRow.holder_id,
+    holderName: lockRow.holder_name,
+    lastHeartbeat: lockRow.last_heartbeat,
+    ageMs: age,
+  };
+}
+
+// ── GALLERY: list all boards (lightweight) ──
+app.get('/api/boards', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('boards')
+      .select('*').order('updated_at', { ascending: false });
+    if (error) throw error;
+    // Attach item counts + lock state in one pass
+    const ids = (data || []).map(b => b.id);
+    let counts = {}, locks = {};
+    if (ids.length) {
+      const { data: itemRows } = await supabase.from('board_items')
+        .select('board_id').in('board_id', ids);
+      (itemRows || []).forEach(r => { counts[r.board_id] = (counts[r.board_id] || 0) + 1; });
+      const { data: lockRows } = await supabase.from('board_locks')
+        .select('*').in('board_id', ids);
+      (lockRows || []).forEach(r => { locks[r.board_id] = r; });
+    }
+    // Thumbnails: sign the thumbnail image for each board that has one
+    const out = [];
+    for (const b of (data || [])) {
+      const board = mapBoard(b);
+      board.itemCount = counts[b.id] || 0;
+      board.lock = _lockState(locks[b.id], req.user.sub);
+      if (b.thumbnail_item_id) {
+        const { data: thumb } = await supabase.from('board_items')
+          .select('storage_path').eq('id', b.thumbnail_item_id).maybeSingle();
+        if (thumb && thumb.storage_path) {
+          try {
+            const { data: su } = await supabase.storage.from('board-images')
+              .createSignedUrl(thumb.storage_path, 60 * 60 * 6);
+            board.thumbnailUrl = su ? su.signedUrl : null;
+          } catch (e) { board.thumbnailUrl = null; }
+        }
+      }
+      out.push(board);
+    }
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Create a board ──
+app.post('/api/boards', requireAuth, async (req, res) => {
+  try {
+    const { name, projectId, description, defaultView } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Board name is required.' });
+    // Denormalize client from the project
+    let client = '';
+    if (projectId) {
+      const { data: proj } = await supabase.from('projects')
+        .select('client, deal_id').eq('id', projectId).maybeSingle();
+      if (proj) {
+        client = proj.client || '';
+        if (!client && proj.deal_id) {
+          const { data: deal } = await supabase.from('deals').select('client').eq('id', proj.deal_id).maybeSingle();
+          client = deal?.client || '';
+        }
+      }
+    }
+    const { data, error } = await supabase.from('boards').insert({
+      name: name.trim(), project_id: projectId || null, client,
+      description: description || null, default_view: defaultView || 'canvas',
+      created_by: req.user.sub,
+    }).select().single();
+    if (error) throw error;
+    await auditLog(req.user, 'CREATE_BOARD', 'boards', data.id, { name: data.name });
+    res.json(mapBoard(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Get one board with all items (and signed image URLs) + lock state ──
+app.get('/api/boards/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: board, error } = await supabase.from('boards')
+      .select('*').eq('id', req.params.id).single();
+    if (error || !board) return res.status(404).json({ error: 'Board not found.' });
+    const { data: items } = await supabase.from('board_items')
+      .select('*').eq('board_id', req.params.id).order('z', { ascending: true });
+    const mapped = [];
+    for (const it of (items || [])) {
+      mapped.push(await _attachImageUrl(mapBoardItem(it)));
+    }
+    const { data: lockRow } = await supabase.from('board_locks')
+      .select('*').eq('board_id', req.params.id).maybeSingle();
+    res.json({
+      board: mapBoard(board),
+      items: mapped,
+      lock: _lockState(lockRow, req.user.sub),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Update board (name, description, viewport, default view, thumbnail, archive) ──
+app.patch('/api/boards/:id', requireAuth, async (req, res) => {
+  try {
+    const u = {};
+    const b = req.body;
+    if (b.name !== undefined) u.name = b.name;
+    if (b.description !== undefined) u.description = b.description;
+    if (b.canvasZoom !== undefined) u.canvas_zoom = b.canvasZoom;
+    if (b.canvasPanX !== undefined) u.canvas_pan_x = b.canvasPanX;
+    if (b.canvasPanY !== undefined) u.canvas_pan_y = b.canvasPanY;
+    if (b.defaultView !== undefined) u.default_view = b.defaultView;
+    if (b.thumbnailItemId !== undefined) u.thumbnail_item_id = b.thumbnailItemId;
+    if (b.archived !== undefined) u.archived = b.archived;
+    if (b.projectId !== undefined) {
+      u.project_id = b.projectId || null;
+      // Re-denormalize client
+      if (b.projectId) {
+        const { data: proj } = await supabase.from('projects').select('client, deal_id').eq('id', b.projectId).maybeSingle();
+        let client = proj?.client || '';
+        if (!client && proj?.deal_id) {
+          const { data: deal } = await supabase.from('deals').select('client').eq('id', proj.deal_id).maybeSingle();
+          client = deal?.client || '';
+        }
+        u.client = client;
+      } else { u.client = ''; }
+    }
+    if (!Object.keys(u).length) return res.status(400).json({ error: 'Nothing to update.' });
+    const { data, error } = await supabase.from('boards').update(u).eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(mapBoard(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Delete a board (cascades items; also purges its storage objects) ──
+app.delete('/api/boards/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: board } = await supabase.from('boards').select('name').eq('id', req.params.id).maybeSingle();
+    // Collect storage paths to remove from the bucket
+    const { data: imgs } = await supabase.from('board_items')
+      .select('storage_path').eq('board_id', req.params.id).not('storage_path', 'is', null);
+    const paths = (imgs || []).map(r => r.storage_path).filter(Boolean);
+    if (paths.length) {
+      try { await supabase.storage.from('board-images').remove(paths); } catch (e) { /* non-fatal */ }
+    }
+    await auditLog(req.user, 'DELETE_BOARD', 'boards', req.params.id, { name: board?.name });
+    const { error } = await supabase.from('boards').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Create a board item ──
+app.post('/api/boards/:id/items', requireAuth, async (req, res) => {
+  try {
+    const b = req.body;
+    if (!b.itemType) return res.status(400).json({ error: 'itemType is required.' });
+    const row = {
+      board_id: req.params.id,
+      item_type: b.itemType,
+      x: b.x ?? 0, y: b.y ?? 0,
+      w: b.w ?? 220, h: b.h ?? 160,
+      z: b.z ?? 0, rotation: b.rotation ?? 0,
+      seq_order: b.seqOrder ?? null,
+      title: b.title || null, body: b.body || null,
+      color: b.color || null, url: b.url || null,
+      storage_path: b.storagePath || null,
+      image_w: b.imageW || null, image_h: b.imageH || null,
+      task_id: b.taskId || null,
+      meta: b.meta && typeof b.meta === 'object' ? b.meta : {},
+      created_by: req.user.sub,
+    };
+    const { data, error } = await supabase.from('board_items').insert(row).select().single();
+    if (error) throw error;
+    // Touch the board's updated_at so the gallery re-sorts
+    await supabase.from('boards').update({ updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    res.json(await _attachImageUrl(mapBoardItem(data)));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Update a board item ──
+app.patch('/api/boards/:id/items/:itemId', requireAuth, async (req, res) => {
+  try {
+    const b = req.body; const u = {};
+    const map = {
+      x:'x', y:'y', w:'w', h:'h', z:'z', rotation:'rotation', seqOrder:'seq_order',
+      title:'title', body:'body', color:'color', url:'url',
+      storagePath:'storage_path', imageW:'image_w', imageH:'image_h', taskId:'task_id',
+    };
+    for (const [k, col] of Object.entries(map)) {
+      if (b[k] !== undefined) u[col] = b[k];
+    }
+    if (b.meta !== undefined && typeof b.meta === 'object') u.meta = b.meta;
+    if (!Object.keys(u).length) return res.status(400).json({ error: 'Nothing to update.' });
+    const { data, error } = await supabase.from('board_items')
+      .update(u).eq('id', req.params.itemId).eq('board_id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(await _attachImageUrl(mapBoardItem(data)));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Bulk-update item geometry (drag many / reorder sequence) in one call ──
+app.patch('/api/boards/:id/items-bulk', requireAuth, async (req, res) => {
+  try {
+    const updates = Array.isArray(req.body.updates) ? req.body.updates : [];
+    if (!updates.length) return res.json({ ok: true, updated: 0 });
+    let n = 0;
+    for (const up of updates) {
+      if (!up.id) continue;
+      const u = {};
+      ['x','y','w','h','z','rotation'].forEach(k => { if (up[k] !== undefined) u[k] = up[k]; });
+      if (up.seqOrder !== undefined) u.seq_order = up.seqOrder;
+      if (!Object.keys(u).length) continue;
+      const { error } = await supabase.from('board_items')
+        .update(u).eq('id', up.id).eq('board_id', req.params.id);
+      if (!error) n++;
+    }
+    res.json({ ok: true, updated: n });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Delete a board item (removes its storage object if it's an image) ──
+app.delete('/api/boards/:id/items/:itemId', requireAuth, async (req, res) => {
+  try {
+    const { data: item } = await supabase.from('board_items')
+      .select('storage_path').eq('id', req.params.itemId).eq('board_id', req.params.id).maybeSingle();
+    if (item && item.storage_path) {
+      try { await supabase.storage.from('board-images').remove([item.storage_path]); } catch (e) { /* non-fatal */ }
+    }
+    const { error } = await supabase.from('board_items')
+      .delete().eq('id', req.params.itemId).eq('board_id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Upload an image to a board (base64 body → Storage → returns signed URL) ──
+// The client compresses/resizes before sending; we still enforce a hard ceiling.
+app.post('/api/boards/:id/upload', requireAuth, async (req, res) => {
+  try {
+    const { dataUrl, mime, imageW, imageH } = req.body;
+    if (!dataUrl) return res.status(400).json({ error: 'No image data provided.' });
+    const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: 'Malformed image data.' });
+    const contentType = mime || m[1] || 'image/jpeg';
+    const allowed = ['image/jpeg','image/png','image/webp','image/gif'];
+    if (!allowed.includes(contentType)) return res.status(400).json({ error: 'Unsupported image type.' });
+    const buffer = Buffer.from(m[2], 'base64');
+    const MAX = 15 * 1024 * 1024;
+    if (buffer.length > MAX) return res.status(413).json({ error: 'Image exceeds 15 MB after compression. Try a smaller image.' });
+    const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : contentType === 'image/gif' ? 'gif' : 'jpg';
+    const path = `${req.params.id}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('board-images')
+      .upload(path, buffer, { contentType, upsert: false });
+    if (upErr) throw upErr;
+    const { data: su } = await supabase.storage.from('board-images').createSignedUrl(path, 60 * 60 * 6);
+    res.json({ storagePath: path, imageUrl: su ? su.signedUrl : null, imageW: imageW || null, imageH: imageH || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Refresh signed URLs for a board's images (when they expire mid-session) ──
+app.get('/api/boards/:id/image-urls', requireAuth, async (req, res) => {
+  try {
+    const { data: items } = await supabase.from('board_items')
+      .select('id, storage_path').eq('board_id', req.params.id).not('storage_path', 'is', null);
+    const out = {};
+    for (const it of (items || [])) {
+      try {
+        const { data: su } = await supabase.storage.from('board-images').createSignedUrl(it.storage_path, 60 * 60 * 6);
+        out[it.id] = su ? su.signedUrl : null;
+      } catch (e) { out[it.id] = null; }
+    }
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOARD LOCKS  (soft, self-healing single-editor lock)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Claim the editing lock. Succeeds if no lock, the lock is mine, or the existing
+// lock is stale (abandoned). Pass force=true to take over a stale lock explicitly.
+app.post('/api/boards/:id/lock', requireAuth, async (req, res) => {
+  try {
+    const force = !!req.body.force;
+    const { data: existing } = await supabase.from('board_locks')
+      .select('*').eq('board_id', req.params.id).maybeSingle();
+    const st = _lockState(existing, req.user.sub);
+    if (existing && st.locked && !st.stale && !force) {
+      // Someone else holds a live lock
+      return res.status(409).json({
+        locked: true, holderId: existing.holder_id, holderName: existing.holder_name,
+        lastHeartbeat: existing.last_heartbeat,
+      });
+    }
+    // Acquire or take over
+    const { data: me } = await supabase.from('team_members').select('name').eq('id', req.user.sub).maybeSingle();
+    const row = {
+      board_id: req.params.id,
+      holder_id: req.user.sub,
+      holder_name: me?.name || 'Someone',
+      acquired_at: new Date().toISOString(),
+      last_heartbeat: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('board_locks')
+      .upsert(row, { onConflict: 'board_id' });
+    if (error) throw error;
+    if (existing && existing.holder_id !== req.user.sub) {
+      await auditLog(req.user, 'TAKEOVER_BOARD_LOCK', 'boards', req.params.id, { from: existing.holder_name });
+    }
+    res.json({ ok: true, holderId: req.user.sub, holderName: row.holder_name });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Heartbeat — keep my lock alive. Returns 409 if someone else took it over.
+app.post('/api/boards/:id/heartbeat', requireAuth, async (req, res) => {
+  try {
+    const { data: existing } = await supabase.from('board_locks')
+      .select('*').eq('board_id', req.params.id).maybeSingle();
+    if (!existing || existing.holder_id !== req.user.sub) {
+      return res.status(409).json({ lost: true, holderName: existing?.holder_name || null });
+    }
+    await supabase.from('board_locks')
+      .update({ last_heartbeat: new Date().toISOString() }).eq('board_id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Release my lock (on close / navigate away).
+app.post('/api/boards/:id/unlock', requireAuth, async (req, res) => {
+  try {
+    await supabase.from('board_locks')
+      .delete().eq('board_id', req.params.id).eq('holder_id', req.user.sub);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── AUDIT LOG ENDPOINT ──────────────────────────────────────────────────────
 
 app.get('/api/audit-log', requireAuth, requireAdmin, async (req, res) => {
@@ -2529,6 +2891,55 @@ function mapOpsDisbursement(d) {
     createdAt: d.created_at,
   };
 }
+
+function mapBoard(b) {
+  return {
+    id: b.id,
+    name: b.name,
+    projectId: b.project_id || null,
+    client: b.client || '',
+    description: b.description || null,
+    canvasZoom: b.canvas_zoom != null ? Number(b.canvas_zoom) : 1,
+    canvasPanX: b.canvas_pan_x != null ? Number(b.canvas_pan_x) : 0,
+    canvasPanY: b.canvas_pan_y != null ? Number(b.canvas_pan_y) : 0,
+    defaultView: b.default_view || 'canvas',
+    thumbnailItemId: b.thumbnail_item_id || null,
+    archived: !!b.archived,
+    createdBy: b.created_by || null,
+    createdAt: b.created_at,
+    updatedAt: b.updated_at,
+  };
+}
+
+function mapBoardItem(it) {
+  return {
+    id: it.id,
+    boardId: it.board_id,
+    itemType: it.item_type,
+    x: Number(it.x), y: Number(it.y),
+    w: Number(it.w), h: Number(it.h),
+    z: it.z || 0,
+    rotation: Number(it.rotation || 0),
+    seqOrder: it.seq_order,
+    title: it.title || null,
+    body: it.body || null,
+    color: it.color || null,
+    url: it.url || null,
+    storagePath: it.storage_path || null,
+    imageW: it.image_w || null,
+    imageH: it.image_h || null,
+    taskId: it.task_id || null,
+    meta: it.meta && typeof it.meta === 'object' ? it.meta : {},
+    createdBy: it.created_by || null,
+    createdAt: it.created_at,
+    updatedAt: it.updated_at,
+    // imageUrl is attached by the endpoint (signed URL) when storage_path is set
+  };
+}
+
+// How long (ms) a board lock may go without a heartbeat before it's considered
+// abandoned and another user may take it over.
+const BOARD_LOCK_STALE_MS = 90 * 1000;
 
 function mapTeamMember(m) {
   return {
