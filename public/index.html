@@ -824,6 +824,10 @@
         Tasks
         <span class="nav-badge" id="task-badge">0</span>
       </div>
+      <div class="nav-item" onclick="switchView('boards')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Boards
+      </div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Finance</div>
@@ -866,10 +870,6 @@
       <div class="nav-item" onclick="switchView('opsfund')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
         Ops Fund
-      </div>
-      <div class="nav-item" onclick="switchView('boards')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-        Boards
       </div>
       <div class="nav-item" onclick="switchView('auditlog')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12h6M9 16h6M9 8h6M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="5" cy="16" r="1" fill="currentColor"/></svg>
@@ -1300,6 +1300,7 @@
           <option value="Negotiation">Negotiation</option>
           <option value="Retainer">Retainer</option>
           <option value="Closed Won">Closed Won</option>
+          <option value="Closed Lost">Closed Lost</option>
         </select>
       </div>
     </div>
@@ -2120,8 +2121,8 @@ let DEFAULT_BUCKETS=(()=>{
     {name:'Project Manager Fee',color:'#d47a3a',pct:7.5, isPersonal:true},
   ];
 })();
-const STAGES=['Lead','Qualified','Proposal','Negotiation','Retainer','Closed Won'];
-const STAGE_COLORS=['#5a5a6a','#5a8fd4','#d4a65a','#d47a3a','#9561e2','#4caf7a'];
+const STAGES=['Lead','Qualified','Proposal','Negotiation','Retainer','Closed Won','Closed Lost'];
+const STAGE_COLORS=['#5a5a6a','#5a8fd4','#d4a65a','#d47a3a','#9561e2','#4caf7a','#e05a5a'];
 const INV_LBL={none:'Not Invoiced',sent:'Invoice Sent',deposit:'Deposit Collected',paid:'Paid in Full'};
 const INV_CLS={none:'inv-none',sent:'inv-sent',deposit:'inv-deposit',paid:'inv-paid'};
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -3850,6 +3851,64 @@ function _calcBucketConsumed(bucket){
   return bucket.manualConsumed||0;
 }
 
+// Status-aware version: splits consumption into completed vs planned (in-flight),
+// mirroring how project pages distinguish done work from upcoming work.
+// Returns { completed, planned, manual, total } in the bucket's units.
+function _calcBucketConsumedByStatus(bucket){
+  const isHours = bucket.unitType === 'hours';
+  const manual = bucket.manualConsumed || 0;
+
+  if(isHours){
+    const taskTag = bucket.taskTag || 'post-production';
+    const tasks=state.tasks||[]; const projects=state.projects||[]; const deals=state.deals||[];
+    const contract=(state.retainerContracts||[]).find(c=>(c.buckets||[]).some(b=>b.id===bucket.id));
+    const contractClient=contract?.client||null;
+    const phaseStart=bucket.phaseStartMonth||contract?.startMonth||null;
+    const phaseEnd=bucket.phaseEndMonth||contract?.endMonth||null;
+    let completed=0, planned=0;
+    tasks.forEach(t=>{
+      if(taskTag!=='any'&&t.tag!==taskTag) return;
+      const proj=projects.find(p=>p.id===t.projectId); if(!proj) return;
+      const deal=deals.find(d=>d.id===proj.dealId); if(!deal?.isRetainer) return;
+      if(contractClient&&deal.client!==contractClient) return;
+      const dealMo=(deal.closeDate||'').substring(0,7); if(!dealMo) return;
+      if(phaseStart&&dealMo<phaseStart) return;
+      if(phaseEnd&&dealMo>phaseEnd) return;
+      const h=t.estHours||0;
+      if(t.status==='done') completed+=h; else planned+=h;
+    });
+    completed=Math.round(completed*10)/10; planned=Math.round(planned*10)/10;
+    // Manual offset is treated as already-completed pre-system work
+    return { completed:completed+manual, planned, manual, total:completed+planned+manual };
+  }
+
+  if(bucket.deliverableTypeId){
+    const delivs=state.deliverables||[]; const projects=state.projects||[];
+    const taskDelivLinks=state.taskDeliverables||[]; const tasks=state.tasks||[];
+    let completed=0, planned=0;
+    delivs.forEach(d=>{
+      if(d.typeId!==bucket.deliverableTypeId) return;
+      if(d.status==='cancelled') return;
+      // phase filtering (same logic as _calcBucketConsumed)
+      if(bucket.phaseStartMonth||bucket.phaseEndMonth){
+        const linkedTaskIds=taskDelivLinks.filter(td=>td.deliverableId===d.id).map(td=>td.taskId);
+        const linkedTasks=tasks.filter(t=>linkedTaskIds.includes(t.id)&&t.due);
+        let workMonth;
+        if(linkedTasks.length){ workMonth=linkedTasks.map(t=>t.due).sort()[0].substring(0,7); }
+        else { const proj=projects.find(p=>p.id===d.projectId); const deal=(state.deals||[]).find(x=>x.id===proj?.dealId); workMonth=(deal?.closeDate||'').substring(0,7); }
+        if(!workMonth) return;
+        if(bucket.phaseStartMonth&&workMonth<bucket.phaseStartMonth) return;
+        if(bucket.phaseEndMonth&&workMonth>bucket.phaseEndMonth) return;
+      }
+      if(d.status==='published') completed+=1; else planned+=1;
+    });
+    return { completed:completed+manual, planned, manual, total:completed+planned+manual };
+  }
+
+  // Manual-only bucket: all manual counts as completed
+  return { completed:manual, planned:0, manual, total:manual };
+}
+
 function _renderRetainerContract(c){
   const deals=state.deals||[];
   const projects=state.projects||[];
@@ -3906,33 +3965,27 @@ function _renderRetainerContract(c){
     const phase=entry[0]; const buckets=entry[1];
     const bucketRowsHtml=buckets.map(function(b){
       const consumed=_calcBucketConsumed(b);
+      const byStatus=_calcBucketConsumedByStatus(b);   // {completed, planned, manual, total}
       const isHours=b.unitType==='hours';
       const autoCount=b.deliverableTypeId&&!isHours?consumed-(b.manualConsumed||0):0;
       const manualCount=b.manualConsumed||0;
       const total=b.contractedQty||1;
       const pct=Math.min(100,Math.round(consumed/total*100));
+      const completedPct=Math.min(100,Math.round((byStatus.completed/total)*100));
+      const plannedPct=Math.min(100-completedPct,Math.round((byStatus.planned/total)*100));
       const isAuto=!!b.deliverableTypeId&&!isHours;
       const col=pct>=100?'var(--red)':pct>=75?'var(--amber)':'var(--green)';
       const consumedLabel=isHours?consumed+'h':''+consumed;
       const totalLabel=isHours?total+'h':''+total;
-      let sourceLabel;
-      if(isHours){
-        sourceLabel=manualCount>0?Math.round((consumed-manualCount)*10)/10+'h auto + '+manualCount+'h manual':consumed+'h auto-tracked';
-      } else if(isAuto){
-        sourceLabel=manualCount>0?autoCount+' auto + '+manualCount+' manual':consumed+' auto-tracked';
-      } else {
-        sourceLabel=consumed+' manual';
-      }
-      // Bar HTML
-      let barInner;
-      if(isHours&&consumed>0){
-        barInner='<div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:4px" title="'+consumed+'h tracked"></div>';
-      } else if(consumed>0){
-        barInner=(isAuto&&autoCount>0?'<div style="height:100%;width:'+Math.min(100,Math.round(autoCount/total*100))+'%;background:'+col+';border-radius:4px 0 0 4px" title="'+autoCount+' auto-tracked"></div>':'')
-          +(manualCount>0?'<div style="height:100%;width:'+Math.min(100,Math.round(manualCount/total*100))+'%;background:'+col+';opacity:'+(isAuto?'0.45':'1')+';'+(isAuto?'':'border-radius:4px')+'" title="'+manualCount+' manually logged"></div>':'');
-      } else {
-        barInner='<div style="height:100%;width:0%;background:'+col+'"></div>';
-      }
+      // Bar HTML — two segments: completed (solid) + planned/in-flight (hatched, lighter).
+      // Completed = done tasks / published deliverables (+ manual pre-system work).
+      // Planned = matching tasks/deliverables not yet finished.
+      const unit=isHours?'h':'';
+      const completedSeg=completedPct>0
+        ? '<div style="height:100%;width:'+completedPct+'%;background:'+col+'" title="'+byStatus.completed+unit+' completed"></div>' : '';
+      const plannedSeg=plannedPct>0
+        ? '<div style="height:100%;width:'+plannedPct+'%;background:repeating-linear-gradient(45deg,'+col+' 0,'+col+' 3px,transparent 3px,transparent 6px);opacity:0.55" title="'+byStatus.planned+unit+' planned / in progress"></div>' : '';
+      let barInner=(completedSeg+plannedSeg)||'<div style="height:100%;width:0%;background:'+col+'"></div>';
       const ps=b.phaseStartMonth||(c&&c.startMonth)||'?';
       const pe=b.phaseEndMonth||(c&&c.endMonth)||'?';
       const phaseDateSpan=isHours?'<span style="color:var(--text3)">\u00b7 '+ps+' \u2192 '+pe+'</span>':'';
@@ -3946,9 +3999,10 @@ function _renderRetainerContract(c){
         +'<div style="font-family:\'DM Mono\',monospace;font-size:11px;color:'+col+'">'+consumedLabel+' / '+totalLabel+' <span style="color:var(--text3);font-size:9px">'+(isHours?'':b.unit)+'</span></div>'
         +'</div>'
         +'<div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden;display:flex">'+barInner+'</div>'
-        +'<div style="font-family:\'DM Mono\',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center">'
+        +'<div style="font-family:\'DM Mono\',monospace;font-size:8px;color:var(--text3);margin-top:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
         +'<span style="color:'+col+';font-weight:600">'+pct+'%</span>'
-        +'<span>'+sourceLabel+'</span>'
+        +'<span style="color:var(--green)">'+byStatus.completed+unit+' done</span>'
+        +(byStatus.planned>0?'<span style="color:var(--text2)">'+byStatus.planned+unit+' planned</span>':'')
         +phaseDateSpan+preSystemSpan+updateBtn+editBtn
         +'</div></div></div>';
     }).join('');
@@ -3989,6 +4043,9 @@ function _renderRetainerContract(c){
     +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Paid</span></div>'
     +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:var(--amber)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Current</span></div>'
     +'<div style="display:flex;align-items:center;gap:4px"><div style="width:8px;height:8px;border-radius:2px;background:rgba(149,97,226,0.6)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Upcoming Retainer</span></div>'
+    +'<div style="width:1px;height:12px;background:var(--border);margin:0 2px"></div>'
+    +'<div style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:8px;border-radius:2px;background:var(--green)"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Completed</span></div>'
+    +'<div style="display:flex;align-items:center;gap:4px"><div style="width:10px;height:8px;border-radius:2px;background:repeating-linear-gradient(45deg,var(--green) 0,var(--green) 3px,transparent 3px,transparent 6px);opacity:0.55"></div><span style="font-family:\'DM Mono\',monospace;font-size:9px;color:var(--text3)">Planned / in progress</span></div>'
     +'</div></div>'
     +bucketsHtml
     +'<div style="padding:16px 22px;display:flex;gap:24px;flex-wrap:wrap">'+finHtml+'</div>'
@@ -5343,6 +5400,7 @@ async function openBoard(boardId){
     state.activeBoardItems=data.items||[];
     state.boardLock=data.lock||null;
     _boardUndoReset();   // fresh undo history per board-open
+    _boardImgRefreshed=false; _boardImgRefreshing=false;   // reset image-refresh guard
     if(typeof _renderBoardCanvas==='function'){ _renderBoardCanvas(); }
     else if(root){ root.innerHTML=`<div style="flex:1;display:flex;align-items:center;justify-content:center;color:var(--text3)">Canvas coming in the next build stage. Board "${_escapeHtml(data.board.name)}" loaded with ${data.items.length} items.</div>`; }
   }catch(e){
@@ -5630,9 +5688,11 @@ function _boardItemInner(it){
       </div>`;
     }
     case 'image':{
-      return `<div class="bitem-image bitem-drag" style="width:100%;height:100%">
-        ${it.imageUrl?`<img src="${it.imageUrl}" draggable="false">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px">image unavailable</div>`}
-      </div>`;
+      // Resilient load: if the signed URL is missing or fails, fetch a fresh one once.
+      const imgTag = it.storagePath
+        ? `<img src="${it.imageUrl||''}" draggable="false" data-storagepath="1" onerror="_boardRefreshImage('${it.id}',this)">`
+        : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px">image unavailable</div>`;
+      return `<div class="bitem-image bitem-drag" style="width:100%;height:100%;background:var(--bg3)">${imgTag}</div>`;
     }
     case 'link':{
       let host=''; try{ host=new URL(it.url).hostname.replace('www.',''); }catch(e){}
@@ -5676,6 +5736,28 @@ function _boardItemInner(it){
   }
 }
 function _boardBg(col){ if(col&&col.startsWith('#')) return col+'22'; return col||'var(--bg2)'; }
+
+// If a board image fails to load (expired/invalid signed URL), fetch fresh URLs
+// for the whole board once and re-point the <img>. Guarded so it retries only once.
+let _boardImgRefreshing=false, _boardImgRefreshed=false;
+async function _boardRefreshImage(itemId,imgEl){
+  if(imgEl) imgEl.onerror=null;             // prevent error loops on this element
+  if(_boardImgRefreshed){                   // already refreshed once this session — give up gracefully
+    if(imgEl){ const p=imgEl.parentElement; if(p) p.innerHTML='<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px">image unavailable</div>'; }
+    return;
+  }
+  if(_boardImgRefreshing) return;
+  _boardImgRefreshing=true;
+  try{
+    const urls=await api('GET','/boards/'+state.activeBoard.id+'/image-urls');
+    _boardImgRefreshed=true;
+    // Update state + any rendered <img> elements with fresh URLs
+    state.activeBoardItems.forEach(it=>{ if(it.storagePath && urls[it.id]) it.imageUrl=urls[it.id]; });
+    _boardRenderItems();
+  }catch(e){
+    if(imgEl){ const p=imgEl.parentElement; if(p) p.innerHTML='<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:11px">image unavailable</div>'; }
+  }finally{ _boardImgRefreshing=false; }
+}
 
 // ── Selection ──
 function _boardSelect(id){
