@@ -1044,11 +1044,12 @@ app.delete('/api/ops-disbursements/:id', requireAuth, requireAdmin, async (req, 
 async function _attachImageUrl(item) {
   if (!item.storage_path) return item;
   try {
-    const { data } = await supabase.storage
+    const { data, error } = await supabase.storage
       .from('board-images')
-      .createSignedUrl(item.storage_path, 60 * 60 * 6); // 6h
+      .createSignedUrl(item.storage_path, 60 * 60 * 24); // 24h
+    if (error) console.error('[board image] sign failed for', item.storage_path, error.message);
     item.imageUrl = data ? data.signedUrl : null;
-  } catch (e) { item.imageUrl = null; }
+  } catch (e) { console.error('[board image] sign threw', e.message); item.imageUrl = null; }
   return item;
 }
 
@@ -1099,7 +1100,7 @@ app.get('/api/boards', requireAuth, async (req, res) => {
         if (thumb && thumb.storage_path) {
           try {
             const { data: su } = await supabase.storage.from('board-images')
-              .createSignedUrl(thumb.storage_path, 60 * 60 * 6);
+              .createSignedUrl(thumb.storage_path, 60 * 60 * 24);
             board.thumbnailUrl = su ? su.signedUrl : null;
           } catch (e) { board.thumbnailUrl = null; }
         }
@@ -1315,7 +1316,7 @@ app.post('/api/boards/:id/upload', requireAuth, async (req, res) => {
     const { error: upErr } = await supabase.storage.from('board-images')
       .upload(path, buffer, { contentType, upsert: false });
     if (upErr) throw upErr;
-    const { data: su } = await supabase.storage.from('board-images').createSignedUrl(path, 60 * 60 * 6);
+    const { data: su } = await supabase.storage.from('board-images').createSignedUrl(path, 60 * 60 * 24);
     res.json({ storagePath: path, imageUrl: su ? su.signedUrl : null, imageW: imageW || null, imageH: imageH || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1328,7 +1329,7 @@ app.get('/api/boards/:id/image-urls', requireAuth, async (req, res) => {
     const out = {};
     for (const it of (items || [])) {
       try {
-        const { data: su } = await supabase.storage.from('board-images').createSignedUrl(it.storage_path, 60 * 60 * 6);
+        const { data: su } = await supabase.storage.from('board-images').createSignedUrl(it.storage_path, 60 * 60 * 24);
         out[it.id] = su ? su.signedUrl : null;
       } catch (e) { out[it.id] = null; }
     }
