@@ -11,17 +11,37 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
+// The frontend is always served from the SAME deployment as this API (API_BASE is
+// empty → same-origin calls), so any domain attached to this Vercel project should
+// just work. A request is allowed when:
+//   • it has no Origin header (curl, server-to-server), OR
+//   • its Origin is explicitly listed in ALLOWED_ORIGINS, OR
+//   • its Origin host matches the Host it is hitting (true same-origin) — this makes
+//     every custom domain pointed at this deployment work with no config change.
+// Handled manually (not the cors package) so the same-origin check can see the Host.
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-app.use(cors({
-  origin: (origin, cb) => {
-    // Allow requests with no origin (mobile apps, curl, same-origin)
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    cb(new Error(`CORS: origin ${origin} not allowed`));
-  },
-  credentials: true,
-}));
+function _originAllowed(origin, host) {
+  if (!origin) return false;            // no Origin → nothing to reflect (request still proceeds)
+  if (allowedOrigins.includes(origin)) return true;
+  try { return new URL(origin).host === host; } catch (e) { return false; }
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && _originAllowed(origin, req.headers.host)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || 'Content-Type,Authorization');
+    return res.status(204).end();
+  }
+  next();
+});
 app.use(express.json({ limit: '25mb' })); // board image uploads arrive as base64 JSON
 
 // ─── SECURITY HEADERS ────────────────────────────────────────────────────────
