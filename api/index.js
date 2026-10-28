@@ -3437,6 +3437,131 @@ app.delete('/api/retainer-buckets/:id', requireAuth, requireCanDelete, async (re
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── PERSONAL OPS LINK ───────────────────────────────────────────────────────
+// Lets Kyle's separate Personal Ops app show his CJA tasks, and optionally mark
+// them done / move due dates. One-way: this app never calls Personal Ops.
+//
+// Off unless these Vercel env vars are set:
+//   LINK_MEMBER_ID  team member id whose tasks are shared (see /api/team)
+//   LINK_READ_KEY   long random string — allows reading that member's tasks
+//   LINK_WRITE_KEY  (optional) different long random string — also allows
+//                   changing status / due date on that member's tasks
+// Requests send the key in an "X-Link-Key" header (server-to-server only).
+const crypto = require('crypto');
+function _linkKeyMatches(given, expected) {
+  if (!given || !expected) return false;
+  const a = Buffer.from(String(given)), b = Buffer.from(String(expected));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+function _linkAccess(req) {
+  const key = req.headers['x-link-key'];
+  if (_linkKeyMatches(key, process.env.LINK_WRITE_KEY)) return 'write';
+  if (_linkKeyMatches(key, process.env.LINK_READ_KEY)) return 'read';
+  return null;
+}
+function requireLink(level) {
+  return (req, res, next) => {
+    if (!process.env.LINK_MEMBER_ID || !process.env.LINK_READ_KEY) {
+      return res.status(503).json({ error: 'Personal Ops link is not configured on CJA' });
+    }
+    const access = _linkAccess(req);
+    if (!access) return res.status(401).json({ error: 'Invalid link key' });
+    if (level === 'write' && access !== 'write') return res.status(403).json({ error: 'This key is read-only' });
+    req.linkAccess = access;
+    next();
+  };
+}
+
+// Tasks assigned to the linked member: everything not done, plus anything due
+// or created in the last 60 days so recent history shows on the calendar.
+app.get('/api/link/tasks', requireLink('read'), async (req, res) => {
+  try {
+    const memberId = process.env.LINK_MEMBER_ID;
+    const since = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+    const { data: tasks, error } = await supabase.from('tasks')
+      .select('id,title,project_id,parent_id,due_date,publish_date,priority,status,est_hours,tag,updated_at,created_at')
+      .eq('assignee_id', memberId)
+      .or(`status.neq.done,due_date.gte.${since},created_at.gte.${since}`)
+      .order('due_date', { ascending: true, nullsFirst: false });
+    if (error) throw error;
+    const projIds = [...new Set((tasks || []).map(t => t.project_id).filter(Boolean))];
+    const parentIds = [...new Set((tasks || []).map(t => t.parent_id).filter(Boolean))];
+    let projects = [], parents = [];
+    if (projIds.length) {
+      const r = await supabase.from('projects').select('id,name,client,status,archived,payouts_finalized').in('id', projIds);
+      projects = r.data || [];
+    }
+    if (parentIds.length) {
+      const r = await supabase.from('tasks').select('id,title').in('id', parentIds);
+      parents = r.data || [];
+    }
+    const pMap = new Map(projects.map(p => [p.id, p]));
+    const parentMap = new Map(parents.map(p => [p.id, p.title]));
+    res.json({
+      canEdit: req.linkAccess === 'write',
+      tasks: (tasks || []).filter(t => !pMap.get(t.project_id)?.archived).map(t => {
+        const p = pMap.get(t.project_id);
+        return {
+          id: t.id, title: t.title, due: t.due_date, publishDate: t.publish_date,
+          priority: t.priority, status: t.status, estHours: Number(t.est_hours) || 0, tag: t.tag || null,
+          parentTitle: t.parent_id ? (parentMap.get(t.parent_id) || null) : null,
+          projectId: t.project_id, projectName: p?.name || null, client: p?.client || '',
+          locked: !!p?.payouts_finalized,
+          updatedAt: t.updated_at || t.created_at || null,
+        };
+      }),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Change status and/or due date — nothing else. Same lock + deliverable rules
+// as editing inside CJA, and every change is written to the audit log.
+app.patch('/api/link/tasks/:id', requireLink('write'), async (req, res) => {
+  try {
+    const memberId = process.env.LINK_MEMBER_ID;
+    const VALID_STATUS = ['todo', 'progress', 'review', 'done'];
+    const updates = {};
+    if (req.body.status !== undefined) {
+      if (!VALID_STATUS.includes(req.body.status)) return res.status(400).json({ error: 'Invalid status' });
+      updates.status = req.body.status;
+    }
+    if (req.body.dueDate !== undefined) {
+      const d = req.body.dueDate;
+      if (d !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(d))) return res.status(400).json({ error: 'dueDate must be YYYY-MM-DD or null' });
+      updates.due_date = d;
+    }
+    if (!Object.keys(updates).length) return res.status(400).json({ error: 'Only status and dueDate can be changed' });
+
+    const { data: task } = await supabase.from('tasks').select('id,title,assignee_id,project_id,status,due_date').eq('id', req.params.id).maybeSingle();
+    if (!task || task.assignee_id !== memberId) return res.status(404).json({ error: 'Task not found' });
+    if (task.project_id) {
+      const { data: proj } = await supabase.from('projects').select('name,payouts_finalized').eq('id', task.project_id).maybeSingle();
+      if (proj?.payouts_finalized) {
+        return res.status(403).json({ error: `"${proj.name}" has finalized payouts — this task is locked in CJA.` });
+      }
+    }
+    const { data, error } = await supabase.from('tasks').update(updates).eq('id', task.id).select().single();
+    if (error) throw error;
+
+    if (updates.status !== undefined) {
+      const { data: links } = await supabase.from('task_deliverables').select('deliverable_id').eq('task_id', task.id);
+      for (const l of links || []) {
+        // eslint-disable-next-line no-await-in-loop
+        await _recomputeDeliverableStatus(l.deliverable_id);
+      }
+    }
+
+    const { data: member } = await supabase.from('team_members').select('name').eq('id', memberId).maybeSingle();
+    const changes = {};
+    if (updates.status !== undefined) changes.status = { from: task.status, to: data.status };
+    if (updates.due_date !== undefined) changes.due_date = { from: task.due_date, to: data.due_date };
+    await auditLog({ sub: memberId, name: `${member?.name || 'Linked member'} (via Personal Ops)` },
+      'LINK_EDIT_TASK', 'tasks', task.id, { title: task.title, ...changes });
+
+    res.json({ id: data.id, status: data.status, due: data.due_date });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── START ────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => console.log(`CJ Agency API running on :${PORT}`));
 
