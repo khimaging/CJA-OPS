@@ -1062,12 +1062,14 @@ app.delete('/api/ops-disbursements/:id', requireAuth, requireAdmin, async (req, 
 // Helper: attach a signed image URL to an item that has a storage_path.
 // Signed URLs are time-limited; the frontend refetches a board if they expire.
 async function _attachImageUrl(item) {
-  if (!item.storage_path) return item;
+  // Accepts a raw row (storage_path) or a mapped item (storagePath)
+  const path = item.storage_path || item.storagePath;
+  if (!path) return item;
   try {
     const { data, error } = await supabase.storage
       .from('board-images')
-      .createSignedUrl(item.storage_path, 60 * 60 * 24); // 24h
-    if (error) console.error('[board image] sign failed for', item.storage_path, error.message);
+      .createSignedUrl(path, 60 * 60 * 24); // 24h
+    if (error) console.error('[board image] sign failed for', path, error.message);
     item.imageUrl = data ? data.signedUrl : null;
   } catch (e) { console.error('[board image] sign threw', e.message); item.imageUrl = null; }
   return item;
@@ -1355,6 +1357,152 @@ app.get('/api/boards/:id/image-urls', requireAuth, async (req, res) => {
     }
     res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOARD SHARE LINKS  (view-only public links, opened at /b/<token>)
+// ═══════════════════════════════════════════════════════════════════════════
+// A share link is an unguessable token tied to one board. Anyone holding it can
+// read that board (minus task cards) through /api/public/boards/:token — nothing
+// else. Links expire (default 30 days, or never) and can be deleted to revoke.
+const _shareCrypto = require('crypto');
+const SHARE_MAX_DAYS = 3650;   // "custom" expiry ceiling (10 years)
+// Item types a share link may expose. Task cards are deliberately excluded.
+const SHARE_ITEM_TYPES = new Set(['note', 'heading', 'text', 'image', 'link', 'swatch', 'frame']);
+
+function mapBoardShare(s) {
+  return {
+    id: s.id,
+    boardId: s.board_id,
+    token: s.token,
+    expiresAt: s.expires_at || null,
+    expired: !!(s.expires_at && new Date(s.expires_at).getTime() <= Date.now()),
+    createdBy: s.created_by_name || null,
+    createdAt: s.created_at,
+    viewCount: s.view_count || 0,
+    lastViewedAt: s.last_viewed_at || null,
+  };
+}
+
+// expiresAt: ISO date string, or null for "never". Returns { value } or { error }.
+function _parseShareExpiry(raw) {
+  if (raw === null) return { value: null };
+  if (raw === undefined) return { value: new Date(Date.now() + 30 * 864e5).toISOString() };
+  const t = new Date(raw).getTime();
+  if (!Number.isFinite(t)) return { error: 'Expiry must be a date, or null for never.' };
+  if (t <= Date.now()) return { error: 'Expiry must be in the future.' };
+  if (t > Date.now() + SHARE_MAX_DAYS * 864e5) return { error: 'Expiry can be at most 10 years away — or choose "Never".' };
+  return { value: new Date(t).toISOString() };
+}
+
+// ── List a board's share links ──
+app.get('/api/boards/:id/shares', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('board_shares')
+      .select('*').eq('board_id', req.params.id).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json((data || []).map(mapBoardShare));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Create a share link ──
+app.post('/api/boards/:id/shares', requireAuth, async (req, res) => {
+  try {
+    const { data: board } = await supabase.from('boards').select('id,name').eq('id', req.params.id).maybeSingle();
+    if (!board) return res.status(404).json({ error: 'Board not found.' });
+    const exp = _parseShareExpiry((req.body || {}).expiresAt);
+    if (exp.error) return res.status(400).json({ error: exp.error });
+    const token = _shareCrypto.randomBytes(18).toString('base64url');   // 24 chars, 144 bits
+    const { data, error } = await supabase.from('board_shares').insert({
+      board_id: board.id, token, expires_at: exp.value,
+      created_by: req.user.sub, created_by_name: req.user.name || null,
+    }).select().single();
+    if (error) throw error;
+    await auditLog(req.user, 'CREATE_BOARD_SHARE', 'board_shares', data.id, { board: board.name, expiresAt: exp.value });
+    res.json(mapBoardShare(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Change a link's expiry ──
+app.patch('/api/boards/:id/shares/:shareId', requireAuth, async (req, res) => {
+  try {
+    if (!('expiresAt' in (req.body || {}))) return res.status(400).json({ error: 'Send expiresAt (a date, or null for never).' });
+    const exp = _parseShareExpiry(req.body.expiresAt);
+    if (exp.error) return res.status(400).json({ error: exp.error });
+    const { data, error } = await supabase.from('board_shares').update({ expires_at: exp.value })
+      .eq('id', req.params.shareId).eq('board_id', req.params.id).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Share link not found.' });
+    await auditLog(req.user, 'UPDATE_BOARD_SHARE', 'board_shares', data.id, { expiresAt: exp.value });
+    res.json(mapBoardShare(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Delete (revoke) a link — it stops working immediately ──
+app.delete('/api/boards/:id/shares/:shareId', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('board_shares').delete()
+      .eq('id', req.params.shareId).eq('board_id', req.params.id).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Share link not found.' });
+    await auditLog(req.user, 'DELETE_BOARD_SHARE', 'board_shares', data.id, {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PUBLIC: read a shared board (no login) ──
+const _shareHits = new Map();   // ip → { count, resetAt }
+setInterval(() => { const now = Date.now(); _shareHits.forEach((v, k) => { if (now > v.resetAt) _shareHits.delete(k); }); }, 5 * 60 * 1000);
+
+app.get('/api/public/boards/:token', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  try {
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    let rec = _shareHits.get(ip);
+    if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + 60 * 1000 };
+    rec.count++; _shareHits.set(ip, rec);
+    if (rec.count > 60) return res.status(429).json({ error: 'Too many requests — wait a minute and try again.' });
+
+    const token = String(req.params.token || '');
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return res.status(404).json({ error: 'This link is not valid.' });
+    const { data: share } = await supabase.from('board_shares').select('*').eq('token', token).maybeSingle();
+    if (!share) return res.status(404).json({ error: 'This link is not valid or has been turned off.' });
+    if (share.expires_at && new Date(share.expires_at).getTime() <= now) {
+      return res.status(410).json({ error: 'This link has expired. Ask whoever sent it for a new one.' });
+    }
+    const { data: board } = await supabase.from('boards').select('*').eq('id', share.board_id).maybeSingle();
+    if (!board) return res.status(404).json({ error: 'This board no longer exists.' });
+    const { data: rows } = await supabase.from('board_items')
+      .select('*').eq('board_id', board.id).order('z', { ascending: true });
+
+    const items = [];
+    let lastEdit = board.updated_at;
+    for (const r of (rows || [])) {
+      if (r.updated_at && r.updated_at > lastEdit) lastEdit = r.updated_at;
+      if (!SHARE_ITEM_TYPES.has(r.item_type)) continue;
+      const it = mapBoardItem(r);
+      await _attachImageUrl(it);
+      items.push({
+        id: it.id, itemType: it.itemType, x: it.x, y: it.y, w: it.w, h: it.h, z: it.z,
+        seqOrder: it.seqOrder, title: it.title, body: it.body, color: it.color,
+        url: it.url, imageUrl: it.imageUrl || null, imageW: it.imageW, imageH: it.imageH,
+        fontSize: (it.meta && it.meta.fontSize) || null, createdAt: it.createdAt,
+      });
+    }
+    // Best-effort view counter
+    supabase.from('board_shares').update({ view_count: (share.view_count || 0) + 1, last_viewed_at: new Date().toISOString() })
+      .eq('id', share.id).then(() => {}, () => {});
+
+    res.json({
+      board: { name: board.name, client: board.client || '', description: board.description || '',
+               defaultView: board.default_view || 'canvas', updatedAt: lastEdit },
+      items,
+      expiresAt: share.expires_at || null,
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (e) { res.status(500).json({ error: 'Could not load this board right now.' }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

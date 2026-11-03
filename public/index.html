@@ -1391,6 +1391,22 @@
 </div>
 
 <!-- DELETE CONFIRMATION MODAL -->
+<!-- BOARD SHARE MODAL -->
+<div class="modal-overlay" id="share-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-title"><span id="share-title">Share board</span><button class="modal-close" onclick="closeModal('share-modal')">✕</button></div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.55;margin-bottom:16px">Creates a view-only link that opens on any phone without logging in. People with the link see this board only — task cards are hidden, and nothing else in the app is visible.</div>
+    <label class="form-label">New link expires</label>
+    <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap">
+      <div id="share-new" style="flex:1;min-width:220px"></div>
+      <button class="btn btn-primary" id="share-create-btn" onclick="_shareCreate()">Create link</button>
+    </div>
+    <div id="share-err" style="color:var(--red);font-size:12px;min-height:16px;margin:6px 0 10px"></div>
+    <label class="form-label">Links for this board</label>
+    <div id="share-list"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="delete-confirm-modal">
   <div class="modal" style="max-width:480px">
     <div class="modal-title" style="color:var(--red)">
@@ -5449,6 +5465,7 @@ function _renderBoardCanvas(){
       <div style="font-size:14px;font-weight:600;color:var(--text)" ondblclick="_boardRenamePrompt()">${_escapeHtml(b.name)}</div>
       <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--text3)">${b.client?_escapeHtml(b.client):''}</div>
       <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="bt-btn" onclick="openBoardShare()" title="Share a view-only link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v13"/></svg><span>Share</span></button>
         <div style="display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:7px;overflow:hidden">
           <button class="bt-btn" style="border:none;border-radius:0;background:${state.boardView==='canvas'?'var(--bg4)':'transparent'}" onclick="_boardSetView('canvas')">Canvas</button>
           <button class="bt-btn" style="border:none;border-radius:0;background:${state.boardView==='sequence'?'var(--bg4)':'transparent'}" onclick="_boardSetView('sequence')">Storyboard</button>
@@ -5735,6 +5752,110 @@ function _boardItemInner(it){
     default: return '';
   }
 }
+// ── Board share links (view-only public links at /b/<token>) ──
+let _shareBoardId=null, _shareList=[], _shareEditing=null;
+function _shareUrl(s){ return location.origin+'/b/'+s.token; }
+function _shareFmtDate(iso){ return new Date(iso).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}); }
+function _shareAgo(iso){ const s=(Date.now()-new Date(iso).getTime())/1000; if(s<60) return 'just now'; if(s<3600) return Math.floor(s/60)+'m ago'; if(s<86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
+// Expiry picker markup; prefix keeps ids unique between the "new link" picker and a row being edited
+function _shareExpiryPicker(prefix,cur){
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <select class="form-input" id="${prefix}-exp" style="flex:1;min-width:150px" onchange="document.getElementById('${prefix}-custom').style.display=this.value==='custom'?'':'none'">
+      <option value="7">7 days</option>
+      <option value="30" ${cur==null?'selected':''}>30 days</option>
+      <option value="90">90 days</option>
+      <option value="never" ${cur==='never'?'selected':''}>Never expires</option>
+      <option value="custom">Custom date…</option>
+    </select>
+    <input type="date" class="form-input" id="${prefix}-custom" style="display:none;flex:1;min-width:150px" min="${new Date(Date.now()+864e5).toISOString().slice(0,10)}">
+  </div>`;
+}
+// Returns { expiresAt } (ISO or null for never) or { error }
+function _shareReadExpiry(prefix){
+  const v=document.getElementById(prefix+'-exp').value;
+  if(v==='never') return {expiresAt:null};
+  if(v==='custom'){
+    const d=document.getElementById(prefix+'-custom').value;
+    if(!d) return {error:'Pick a date for the link to expire.'};
+    const t=new Date(d+'T23:59:59');            // end of that day, local time
+    if(!(t.getTime()>Date.now())) return {error:'Pick a date in the future.'};
+    return {expiresAt:t.toISOString()};
+  }
+  return {expiresAt:new Date(Date.now()+Number(v)*864e5).toISOString()};
+}
+async function openBoardShare(){
+  if(!state.activeBoard) return;
+  _shareBoardId=state.activeBoard.id; _shareEditing=null;
+  document.getElementById('share-title').textContent='Share “'+state.activeBoard.name+'”';
+  document.getElementById('share-new').innerHTML=_shareExpiryPicker('share-new');
+  document.getElementById('share-err').textContent='';
+  document.getElementById('share-list').innerHTML='<div style="color:var(--text3);font-size:12px">Loading…</div>';
+  openModal('share-modal');
+  try{ _shareList=await api('GET','/boards/'+_shareBoardId+'/shares'); _shareRender(); }
+  catch(e){ document.getElementById('share-list').innerHTML=`<div style="color:var(--red);font-size:12px">${_escapeHtml(e.message)}</div>`; }
+}
+function _shareRender(){
+  const el=document.getElementById('share-list');
+  if(!_shareList.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;line-height:1.5">No links yet. Anyone you send a link to can view this board on their phone without logging in.</div>'; return; }
+  const canNativeShare=!!navigator.share;
+  el.innerHTML=_shareList.map(s=>{
+    const status=s.expired?`<span style="color:var(--red)">Expired ${_shareFmtDate(s.expiresAt)}</span>`
+      : s.expiresAt?`Expires ${_shareFmtDate(s.expiresAt)}`:'Never expires';
+    const views=s.viewCount?`Opened ${s.viewCount} time${s.viewCount===1?'':'s'}${s.lastViewedAt?' · last '+_shareAgo(s.lastViewedAt):''}`:'Not opened yet';
+    const editing=_shareEditing===s.id;
+    return `<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--bg3)">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="form-input" readonly value="${_escapeHtml(_shareUrl(s))}" onclick="this.select()" style="flex:1;min-width:0;font-family:'DM Mono',monospace;font-size:11px;${s.expired?'opacity:.5':''}">
+        <button class="btn btn-sm btn-primary" onclick="_shareCopy('${s.id}')" ${s.expired?'disabled':''}>Copy</button>
+        ${canNativeShare&&!s.expired?`<button class="btn btn-sm" onclick="_shareNative('${s.id}')">Send…</button>`:''}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;font-size:11px;color:var(--text3);flex-wrap:wrap">
+        <span>${status}</span><span>·</span><span>${views}</span>${s.createdBy?`<span>·</span><span>by ${_escapeHtml(s.createdBy)}</span>`:''}
+        <span style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="_shareEdit('${s.id}')">${editing?'Cancel':'Change expiry'}</button>
+          <button class="btn btn-sm btn-danger" onclick="_shareRevoke('${s.id}')">Turn off</button>
+        </span>
+      </div>
+      ${editing?`<div style="margin-top:10px;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:220px">${_shareExpiryPicker('share-edit',s.expiresAt?null:'never')}</div><button class="btn btn-sm btn-primary" style="margin-top:4px" onclick="_shareSaveExpiry('${s.id}')">Save</button></div>`:''}
+    </div>`;
+  }).join('');
+}
+async function _shareCreate(){
+  const err=document.getElementById('share-err'); err.textContent='';
+  const ex=_shareReadExpiry('share-new'); if(ex.error){ err.textContent=ex.error; return; }
+  const btn=document.getElementById('share-create-btn'); btn.disabled=true;
+  try{
+    const s=await api('POST','/boards/'+_shareBoardId+'/shares',{expiresAt:ex.expiresAt});
+    _shareList.unshift(s); _shareRender();
+    _shareCopy(s.id,true);
+  }catch(e){ err.textContent=e.message; }
+  finally{ btn.disabled=false; }
+}
+function _shareCopy(id,fresh){
+  const s=_shareList.find(x=>x.id===id); if(!s) return;
+  const url=_shareUrl(s);
+  const done=()=>notify(fresh?'Link created and copied':'Link copied');
+  if(navigator.clipboard&&window.isSecureContext) navigator.clipboard.writeText(url).then(done,()=>notify(fresh?'Link created — tap Copy':'Select the link to copy it'));
+  else { const ta=document.createElement('textarea'); ta.value=url; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); done(); }catch(e){} ta.remove(); }
+}
+function _shareNative(id){
+  const s=_shareList.find(x=>x.id===id); if(!s||!navigator.share) return;
+  navigator.share({title:state.activeBoard?state.activeBoard.name:'Board',url:_shareUrl(s)}).catch(()=>{});
+}
+function _shareEdit(id){ _shareEditing=_shareEditing===id?null:id; _shareRender(); }
+async function _shareSaveExpiry(id){
+  const ex=_shareReadExpiry('share-edit'); if(ex.error){ notify(ex.error); return; }
+  try{
+    const s=await api('PATCH','/boards/'+_shareBoardId+'/shares/'+id,{expiresAt:ex.expiresAt});
+    _shareList=_shareList.map(x=>x.id===id?s:x); _shareEditing=null; _shareRender(); notify('Expiry updated');
+  }catch(e){ notify(e.message); }
+}
+async function _shareRevoke(id){
+  if(!confirm('Turn off this link? Anyone who has it will no longer be able to open the board.')) return;
+  try{ await api('DELETE','/boards/'+_shareBoardId+'/shares/'+id); _shareList=_shareList.filter(x=>x.id!==id); _shareRender(); notify('Link turned off'); }
+  catch(e){ notify(e.message); }
+}
+
 function _boardBg(col){ if(col&&col.startsWith('#')) return col+'22'; return col||'var(--bg2)'; }
 
 // If a board image fails to load (expired/invalid signed URL), fetch fresh URLs

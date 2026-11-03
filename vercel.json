@@ -20,6 +20,22 @@
       "dest": "public/portal.html"
     },
     {
+      "src": "/share-sw.js",
+      "dest": "public/share-sw.js",
+      "headers": {
+        "Cache-Control": "no-cache",
+        "Service-Worker-Allowed": "/b/"
+      }
+    },
+    {
+      "src": "/b/[^/]+/?",
+      "dest": "public/share.html",
+      "headers": {
+        "X-Robots-Tag": "noindex, nofollow",
+        "Cache-Control": "no-cache"
+      }
+    },
+    {
       "src": "/(.*)",
       "dest": "public/$1"
     }
